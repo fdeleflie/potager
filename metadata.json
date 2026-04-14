@@ -1,0 +1,5 @@
+{
+  "name": "Potager migration web",
+  "description": "Application de gestion de semis et potager avec suivi, journal, statistiques et sauvegarde.",
+  "requestFramePermissions": []
+}
