@@ -1,1 +1,39 @@
+name: Déploiement automatique sur GitHub Pages
 
+on:
+  # Déclenche le déploiement à chaque fois que vous poussez du code sur la branche principale
+  push:
+    branches: ["main", "master"]
+
+# Autorisations nécessaires pour que GitHub puisse publier le site
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupération du code
+        uses: actions/checkout@v4
+
+      - name: Installation de Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Installation des dépendances
+        run: npm install
+
+      - name: Construction du site (Build)
+        # C'est ici qu'on ajoute la base magique pour GitHub Pages !
+        run: npm run build -- --base=/potager/
+
+      - name: Préparation des fichiers
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./dist
+
+      - name: Déploiement sur GitHub Pages
+        uses: actions/deploy-pages@v4
