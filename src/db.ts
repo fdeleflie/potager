@@ -200,6 +200,57 @@ export class GardenDB extends Dexie {
 
 export const db = new GardenDB();
 
+export const pendingDeletesFromFirestore = new Set<string>();
+
+import { auth, db as firestoreDb } from './firebase';
+import { doc, setDoc, deleteDoc } from 'firebase/firestore';
+
+const tables = [
+  'seedlings', 'journal', 'config', 'trees', 'structures', 
+  'tasks', 'encyclopedia', 'healthIssues', 'expenses'
+];
+
+tables.forEach(tableName => {
+  db.table(tableName).hook('creating', (primKey, obj, trans) => {
+    if (obj._fromFirestore) {
+      delete obj._fromFirestore;
+      return;
+    }
+    trans.on('complete', () => {
+      const user = auth?.currentUser;
+      if (!user) return;
+      const cleanObj = Object.fromEntries(Object.entries(obj).filter(([_, v]) => v !== undefined));
+      setDoc(doc(firestoreDb, `users/${user.uid}/${tableName}`, primKey), cleanObj).catch(console.error);
+    });
+  });
+
+  db.table(tableName).hook('updating', (mods, primKey, obj, trans) => {
+    if (mods._fromFirestore) {
+      return { _fromFirestore: undefined };
+    }
+    trans.on('complete', () => {
+      const user = auth?.currentUser;
+      if (!user) return;
+      const updatedObj = { ...obj, ...mods };
+      delete updatedObj._fromFirestore;
+      const cleanObj = Object.fromEntries(Object.entries(updatedObj).filter(([_, v]) => v !== undefined));
+      setDoc(doc(firestoreDb, `users/${user.uid}/${tableName}`, primKey), cleanObj, { merge: true }).catch(console.error);
+    });
+  });
+
+  db.table(tableName).hook('deleting', (primKey, obj, trans) => {
+    if (pendingDeletesFromFirestore.has(primKey)) {
+      pendingDeletesFromFirestore.delete(primKey);
+      return;
+    }
+    trans.on('complete', () => {
+      const user = auth?.currentUser;
+      if (!user) return;
+      deleteDoc(doc(firestoreDb, `users/${user.uid}/${tableName}`, primKey)).catch(console.error);
+    });
+  });
+});
+
 // Initial data population if empty
 db.on('populate', () => {
   db.config.bulkAdd([

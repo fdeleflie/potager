@@ -22,9 +22,25 @@ import { EncyclopediaView } from './views/EncyclopediaView';
 import { backupService } from './backupService';
 import { db } from './db';
 import { v4 as uuidv4 } from 'uuid';
+import { auth } from './firebase';
+import { onAuthStateChanged } from 'firebase/auth';
+import { startSync, stopSync, clearLocalDb } from './sync';
 
 export default function App() {
   const [currentView, setCurrentView] = useState('dashboard');
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        startSync(user.uid);
+      } else {
+        stopSync();
+        // Optionnel : vider la base locale à la déconnexion pour la confidentialité
+        // await clearLocalDb();
+      }
+    });
+    return () => unsubscribe();
+  }, []);
 
   // Handle navigation with history
   const handleNavigate = (view: string, replace = false) => {

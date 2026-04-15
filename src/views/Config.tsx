@@ -211,7 +211,6 @@ export function Config({ onNavigate }: { onNavigate?: (view: any) => void }) {
     { id: 'variety_option', label: 'Options de Champs' },
     { id: 'weather', label: 'Météo & Alertes' },
     { id: 'expense_category', label: 'Dépenses' },
-    { id: 'cloud', label: 'Cloud & Migration' },
   ] as const;
 
   const varietyOptions = config.filter(c => c.type === 'variety_option');
