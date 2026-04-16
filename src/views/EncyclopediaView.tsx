@@ -964,104 +964,131 @@ export function EncyclopediaView() {
                               <div key={variety.id} className="bg-stone-50 rounded-xl border border-stone-100 overflow-hidden">
                                 {editingVarietyId === variety.id ? (
                                   <form onSubmit={handleSaveVariety} className="p-4 space-y-4">
-                                    <div>
-                                      <label className="block text-xs font-medium text-stone-500 mb-1">Nom de la variété</label>
-                                      <input
-                                        type="text"
-                                        value={varietyEditForm.name}
-                                        onChange={e => setVarietyEditForm(prev => ({ ...prev, name: e.target.value }))}
-                                        className="w-full px-3 py-2 bg-white border border-stone-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
-                                        required
-                                      />
-                                    </div>
-                                    
-                                    {varietyAttrTypes.map(attrType => {
-                                      const options = varietyOptions.filter(o => o.parentId === attrType.id);
-                                      const isEmoji = attrType.value.toLowerCase().includes('emoji');
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                      <div className="md:col-span-2">
+                                        <label className="block text-xs font-medium text-stone-500 mb-1">Nom de la variété</label>
+                                        <input
+                                          type="text"
+                                          value={varietyEditForm.name}
+                                          onChange={e => setVarietyEditForm(prev => ({ ...prev, name: e.target.value }))}
+                                          className="w-full px-3 py-2 bg-white border border-stone-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                                          required
+                                        />
+                                      </div>
+                                      
+                                      {varietyAttrTypes.map(attrType => {
+                                        const options = varietyOptions.filter(o => o.parentId === attrType.id);
+                                        const isEmoji = attrType.value.toLowerCase().includes('emoji');
 
-                                      return (
-                                        <div key={attrType.id} className="space-y-1">
-                                          <div className="flex items-center justify-between">
-                                            <label className="block text-xs font-medium text-stone-500">{attrType.value}</label>
-                                            {isEmoji && (
-                                              <button
-                                                type="button"
-                                                onClick={() => {
-                                                  if (isEmoji) {
-                                                    const allEmojis = GARDEN_EMOJI_CATEGORIES.flatMap(c => c.emojis);
-                                                    const randomEmoji = allEmojis[Math.floor(Math.random() * allEmojis.length)];
-                                                    setVarietyEditForm(prev => ({
-                                                      ...prev,
-                                                      attributes: { ...prev.attributes, [attrType.id]: randomEmoji }
-                                                    }));
-                                                  }
-                                                }}
-                                                className="text-[10px] text-emerald-600 hover:text-emerald-700 font-medium flex items-center gap-1"
-                                              >
-                                                <Wand2 className="w-3 h-3" />
-                                                Auto
-                                              </button>
+                                        return (
+                                          <div key={attrType.id} className="space-y-1">
+                                            <div className="flex items-center justify-between">
+                                              <label className="block text-xs font-medium text-stone-500">{attrType.value}</label>
+                                              {isEmoji && (
+                                                <button
+                                                  type="button"
+                                                  onClick={() => {
+                                                    if (isEmoji) {
+                                                      const allEmojis = GARDEN_EMOJI_CATEGORIES.flatMap(c => c.emojis);
+                                                      const randomEmoji = allEmojis[Math.floor(Math.random() * allEmojis.length)];
+                                                      setVarietyEditForm(prev => ({
+                                                        ...prev,
+                                                        attributes: { ...prev.attributes, [attrType.id]: randomEmoji }
+                                                      }));
+                                                    }
+                                                  }}
+                                                  className="text-[10px] text-emerald-600 hover:text-emerald-700 font-medium flex items-center gap-1"
+                                                >
+                                                  <Wand2 className="w-3 h-3" />
+                                                  Auto
+                                                </button>
+                                              )}
+                                            </div>
+                                            
+                                            {isEmoji ? (
+                                              <div className="space-y-2">
+                                                <div className="flex flex-wrap gap-1 p-2 bg-white border border-stone-200 rounded-lg max-h-32 overflow-y-auto">
+                                                  {GARDEN_EMOJI_CATEGORIES.map(cat => (
+                                                    <div key={cat.id} className="w-full mb-1">
+                                                      <div className="text-[10px] text-stone-400 mb-1">{cat.label}</div>
+                                                      <div className="flex flex-wrap gap-1">
+                                                        {cat.emojis.slice(0, 15).map(emoji => (
+                                                          <button
+                                                            key={emoji}
+                                                            type="button"
+                                                            onClick={() => setVarietyEditForm(prev => ({
+                                                              ...prev,
+                                                              attributes: { ...prev.attributes, [attrType.id]: emoji }
+                                                            }))}
+                                                            className={`w-7 h-7 flex items-center justify-center rounded hover:bg-stone-100 transition-colors ${varietyEditForm.attributes[attrType.id] === emoji ? 'bg-emerald-100 ring-1 ring-emerald-500' : ''}`}
+                                                          >
+                                                            {emoji}
+                                                          </button>
+                                                        ))}
+                                                      </div>
+                                                    </div>
+                                                  ))}
+                                                </div>
+                                                <input
+                                                  type="text"
+                                                  value={varietyEditForm.attributes[attrType.id] || ''}
+                                                  onChange={e => setVarietyEditForm(prev => ({
+                                                    ...prev,
+                                                    attributes: { ...prev.attributes, [attrType.id]: e.target.value }
+                                                  }))}
+                                                  placeholder="Ou saisir un emoji..."
+                                                  className="w-full px-3 py-1.5 bg-white border border-stone-200 rounded-lg text-sm"
+                                                />
+                                              </div>
+                                            ) : (
+                                              <div className="space-y-2">
+                                                {options.length > 0 && (
+                                                  <div className="flex flex-wrap gap-1">
+                                                    {options.map(opt => {
+                                                      const currentValue = varietyEditForm.attributes[attrType.id] || '';
+                                                      const currentOptions = currentValue.split(',').map((s: string) => s.trim()).filter(Boolean);
+                                                      const isSelected = currentOptions.includes(opt.value);
+                                                      return (
+                                                        <button
+                                                          key={opt.id}
+                                                          type="button"
+                                                          onClick={() => {
+                                                            const nextValue = isSelected 
+                                                              ? currentOptions.filter((o: string) => o !== opt.value).join(', ')
+                                                              : [...currentOptions, opt.value].join(', ');
+                                                            setVarietyEditForm(prev => ({
+                                                              ...prev,
+                                                              attributes: { ...prev.attributes, [attrType.id]: nextValue }
+                                                            }));
+                                                          }}
+                                                          className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${
+                                                            isSelected 
+                                                              ? 'bg-emerald-600 text-white' 
+                                                              : 'bg-white text-stone-600 border border-stone-200 hover:border-emerald-300'
+                                                          }`}
+                                                        >
+                                                          {opt.value}
+                                                        </button>
+                                                      );
+                                                    })}
+                                                  </div>
+                                                )}
+                                                <input
+                                                  type="text"
+                                                  value={varietyEditForm.attributes[attrType.id] || ''}
+                                                  onChange={e => setVarietyEditForm(prev => ({
+                                                    ...prev,
+                                                    attributes: { ...prev.attributes, [attrType.id]: e.target.value }
+                                                  }))}
+                                                  placeholder={`Saisir des options...`}
+                                                  className="w-full px-3 py-2 bg-white border border-stone-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                                                />
+                                              </div>
                                             )}
                                           </div>
-                                          
-                                          {isEmoji ? (
-                                            <div className="space-y-2">
-                                              <div className="flex flex-wrap gap-1 p-2 bg-white border border-stone-200 rounded-lg max-h-32 overflow-y-auto">
-                                                {GARDEN_EMOJI_CATEGORIES.map(cat => (
-                                                  <div key={cat.id} className="w-full mb-1">
-                                                    <div className="text-[10px] text-stone-400 mb-1">{cat.label}</div>
-                                                    <div className="flex flex-wrap gap-1">
-                                                      {cat.emojis.slice(0, 15).map(emoji => (
-                                                        <button
-                                                          key={emoji}
-                                                          type="button"
-                                                          onClick={() => setVarietyEditForm(prev => ({
-                                                            ...prev,
-                                                            attributes: { ...prev.attributes, [attrType.id]: emoji }
-                                                          }))}
-                                                          className={`w-7 h-7 flex items-center justify-center rounded hover:bg-stone-100 transition-colors ${varietyEditForm.attributes[attrType.id] === emoji ? 'bg-emerald-100 ring-1 ring-emerald-500' : ''}`}
-                                                        >
-                                                          {emoji}
-                                                        </button>
-                                                      ))}
-                                                    </div>
-                                                  </div>
-                                                ))}
-                                              </div>
-                                              <input
-                                                type="text"
-                                                value={varietyEditForm.attributes[attrType.id] || ''}
-                                                onChange={e => setVarietyEditForm(prev => ({
-                                                  ...prev,
-                                                  attributes: { ...prev.attributes, [attrType.id]: e.target.value }
-                                                }))}
-                                                placeholder="Ou saisir un emoji..."
-                                                className="w-full px-3 py-1.5 bg-white border border-stone-200 rounded-lg text-sm"
-                                              />
-                                            </div>
-                                          ) : (
-                                            <>
-                                              <input
-                                                type="text"
-                                                list={`options-${attrType.id}`}
-                                                value={varietyEditForm.attributes[attrType.id] || ''}
-                                                onChange={e => setVarietyEditForm(prev => ({
-                                                  ...prev,
-                                                  attributes: { ...prev.attributes, [attrType.id]: e.target.value }
-                                                }))}
-                                                placeholder={`Sélectionner ou saisir des options (séparées par des virgules)`}
-                                                className="w-full px-3 py-2 bg-white border border-stone-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
-                                              />
-                                              <datalist id={`options-${attrType.id}`}>
-                                                {options.map(opt => (
-                                                  <option key={opt.id} value={opt.value} />
-                                                ))}
-                                              </datalist>
-                                            </>
-                                          )}
-                                        </div>
-                                      );
-                                    })}
+                                        );
+                                      })}
+                                    </div>
                                     
                                     <div className="flex justify-end gap-2 pt-2">
                                       <button
