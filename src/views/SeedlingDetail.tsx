@@ -3,7 +3,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db, Note, Seedling, HarvestEvent } from '../db';
 import { v4 as uuidv4 } from 'uuid';
 import { ArrowLeft, Edit, Archive, Trash2, Plus, Camera, CheckCircle2, XCircle, Printer, Split, ShoppingBag, BookOpen } from 'lucide-react';
-import { ConfirmModal, PromptModal, SellModal, HarvestModal } from '../components/Modals';
+import { ConfirmModal, PromptModal, SellModal, HarvestModal, AlertModal } from '../components/Modals';
 import { getSeedlingDisplayPhoto } from '../utils/seedling';
 
 import { printElement } from '../utils/print';
@@ -18,24 +18,24 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
   const varietyConfig = varieties?.find(v => {
     if (v.value !== seedling?.variety) return false;
     
-    const vegEnc = encyclopedia?.find(e => e.name.toLowerCase().trim() === seedling?.vegetable.toLowerCase().trim());
-    const vegConfig = vegetables?.find(c => c.value.toLowerCase().trim() === seedling?.vegetable.toLowerCase().trim());
+    const vegEnc = encyclopedia?.find(e => e.name?.toLowerCase().trim() === seedling?.vegetable?.toLowerCase().trim());
+    const vegConfig = vegetables?.find(c => c.value?.toLowerCase().trim() === seedling?.vegetable?.toLowerCase().trim());
     
     // 1. Direct ID match
     if (v.parentId === vegEnc?.id || v.parentId === vegConfig?.id) return true;
     
     // 2. Name match
-    if (seedling?.vegetable && v.parentId?.toLowerCase().trim() === seedling.vegetable.toLowerCase().trim()) return true;
+    if (seedling?.vegetable && v.parentId?.toLowerCase().trim() === seedling.vegetable?.toLowerCase().trim()) return true;
     
     // 3. Match via parent vegetable config item
     const parentVegConfig = vegetables?.find(c => c.id === v.parentId);
-    if (parentVegConfig && parentVegConfig.value.toLowerCase().trim() === seedling?.vegetable.toLowerCase().trim()) {
+    if (parentVegConfig && parentVegConfig.value?.toLowerCase().trim() === seedling?.vegetable?.toLowerCase().trim()) {
       return true;
     }
     
     // 4. Match via parent encyclopedia entry
     const parentVegEnc = encyclopedia?.find(e => e.id === v.parentId);
-    if (parentVegEnc && parentVegEnc.name.toLowerCase().trim() === seedling?.vegetable.toLowerCase().trim()) {
+    if (parentVegEnc && parentVegEnc.name?.toLowerCase().trim() === seedling?.vegetable?.toLowerCase().trim()) {
       return true;
     }
     
@@ -82,13 +82,23 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
     onSubmit: (data: { date: string, quantity: number, unit: string, notes: string }) => void;
   }>({ isOpen: false, onSubmit: () => {} });
 
+  const [alertState, setAlertState] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+  }>({ isOpen: false, title: '', message: '' });
+
   const handleSplitBatch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!seedling || splitQuantity === '' || splitQuantity <= 0) return;
 
     const currentTotal = seedling.quantity || 0;
     if (splitQuantity >= currentTotal) {
-      alert("La quantité à extraire doit être inférieure à la quantité totale du lot.");
+      setAlertState({
+        isOpen: true,
+        title: "Quantité invalide",
+        message: "La quantité à extraire doit être inférieure à la quantité totale du lot."
+      });
       return;
     }
 
@@ -751,7 +761,13 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
             <span className="hidden sm:inline">Guide</span>
           </button>
           <button 
-            onClick={() => printElement('seedling-detail-print-area', `Fiche Semis - ${seedling.vegetable}`)}
+            onClick={() => printElement('seedling-detail-print-area', `Fiche Semis - ${seedling.vegetable}`, 100, () => {
+              setAlertState({
+                isOpen: true,
+                title: "Pop-ups bloqués",
+                message: "Veuillez autoriser les pop-ups pour imprimer."
+              });
+            })}
             className="p-1.5 text-stone-600 hover:bg-stone-200 rounded-lg transition-colors print:hidden"
             title="Imprimer la fiche"
           >
@@ -1222,6 +1238,13 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
         isOpen={harvestModalState.isOpen}
         onClose={() => setHarvestModalState(prev => ({ ...prev, isOpen: false }))}
         onSubmit={harvestModalState.onSubmit}
+      />
+
+      <AlertModal
+        isOpen={alertState.isOpen}
+        onClose={() => setAlertState(prev => ({ ...prev, isOpen: false }))}
+        title={alertState.title}
+        message={alertState.message}
       />
     </div>
   );

@@ -176,10 +176,11 @@ export default function App() {
       const toDelete: string[] = [];
       
       allEntries.forEach(entry => {
-        if (seen.has(entry.name)) {
+        const nameKey = entry.name?.toLowerCase().trim();
+        if (seen.has(nameKey)) {
           toDelete.push(entry.id);
         } else {
-          seen.add(entry.name);
+          seen.add(nameKey);
         }
       });
 
@@ -192,10 +193,11 @@ export default function App() {
       const toDeleteHealth: string[] = [];
 
       allHealth.forEach(entry => {
-        if (seenHealth.has(entry.name)) {
+        const nameKey = entry.name?.toLowerCase().trim();
+        if (seenHealth.has(nameKey)) {
           toDeleteHealth.push(entry.id);
         } else {
-          seenHealth.add(entry.name);
+          seenHealth.add(nameKey);
         }
       });
 
@@ -449,7 +451,7 @@ export default function App() {
       const encyclopediaEntries = await db.encyclopedia.toArray();
       
       for (const configVeg of configVegetables) {
-        const existingEntry = encyclopediaEntries.find(e => e.name.toLowerCase() === configVeg.value.toLowerCase());
+        const existingEntry = encyclopediaEntries.find(e => e.name?.toLowerCase() === configVeg.value?.toLowerCase());
         
         if (existingEntry) {
           // Update existing entry with color and icon
@@ -510,7 +512,7 @@ export default function App() {
           // 1. Try to find matching seedling to discover parent vegetable
           const matchingSeedling = seedlings.find(s => s.variety === v.value);
           if (matchingSeedling) {
-            const parentEnc = encyclopedia.find(e => e.name.toLowerCase().trim() === matchingSeedling.vegetable.toLowerCase().trim());
+            const parentEnc = encyclopedia.find(e => e.name?.toLowerCase().trim() === matchingSeedling.vegetable?.toLowerCase().trim());
             if (parentEnc) {
               await db.config.update(v.id, { parentId: parentEnc.id });
               continue;
@@ -520,7 +522,7 @@ export default function App() {
           // 2. Try to find matching tree to discover parent species
           const matchingTree = trees.find(t => t.variety === v.value);
           if (matchingTree && matchingTree.species) {
-            const parentEnc = encyclopedia.find(e => e.name.toLowerCase().trim() === matchingTree.species.toLowerCase().trim());
+            const parentEnc = encyclopedia.find(e => e.name?.toLowerCase().trim() === matchingTree.species?.toLowerCase().trim());
             if (parentEnc) {
               await db.config.update(v.id, { parentId: parentEnc.id });
               continue;
@@ -528,7 +530,7 @@ export default function App() {
           }
           
           // 3. If parentId is a string that matches an encyclopedia name, update it to the ID
-          const parentByName = encyclopedia.find(e => e.name.toLowerCase().trim() === String(v.parentId).toLowerCase().trim());
+          const parentByName = encyclopedia.find(e => e.name?.toLowerCase().trim() === String(v.parentId)?.toLowerCase().trim());
           if (parentByName) {
              await db.config.update(v.id, { parentId: parentByName.id });
           }

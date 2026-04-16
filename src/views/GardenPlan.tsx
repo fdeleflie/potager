@@ -206,13 +206,13 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
   
   const vegetablesInPlan = Array.from(new Set(seedlings.map(s => s.vegetable))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
   const legendColors = vegetablesInPlan.reduce((acc, veg) => {
-    const encEntry = encyclopedia?.find(e => e.name.toLowerCase().trim() === veg.toLowerCase().trim());
+    const encEntry = encyclopedia?.find(e => e.name?.toLowerCase().trim() === veg?.toLowerCase().trim());
     acc[veg] = encEntry?.color || stringToColor(veg);
     return acc;
   }, {} as Record<string, string>);
 
   const legendIcons = vegetablesInPlan.reduce((acc, veg) => {
-    const encEntry = encyclopedia?.find(e => e.name.toLowerCase().trim() === veg.toLowerCase().trim());
+    const encEntry = encyclopedia?.find(e => e.name?.toLowerCase().trim() === veg?.toLowerCase().trim());
     acc[veg] = ICON_MAP[encEntry?.icon || ''] || Sprout;
     return acc;
   }, {} as Record<string, any>);

@@ -70,8 +70,8 @@ export function SeedlingForm({ setCurrentView, seedlingId, onBack }: { setCurren
   const encyclopediaVegetables = encyclopedia.map(e => e.name);
   const allVegetables = Array.from(new Set([...encyclopediaVegetables, ...catalogVegetables])).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
 
-  const selectedVegEntry = encyclopedia.find(e => e.name.toLowerCase().trim() === vegetable.toLowerCase().trim());
-  const selectedVegConfig = config.find(c => c.type === 'vegetable' && c.value.toLowerCase().trim() === vegetable.toLowerCase().trim());
+  const selectedVegEntry = encyclopedia.find(e => e.name?.toLowerCase().trim() === vegetable?.toLowerCase().trim());
+  const selectedVegConfig = config.find(c => c.type === 'vegetable' && c.value?.toLowerCase().trim() === vegetable?.toLowerCase().trim());
   
   const configuredVarieties = config.filter(c => {
     if (c.type !== 'variety') return false;
@@ -80,17 +80,17 @@ export function SeedlingForm({ setCurrentView, seedlingId, onBack }: { setCurren
     if (c.parentId === selectedVegEntry?.id || c.parentId === selectedVegConfig?.id) return true;
     
     // 2. Name match (if parentId is actually the name of the vegetable)
-    if (vegetable && c.parentId?.toLowerCase().trim() === vegetable.toLowerCase().trim()) return true;
+    if (vegetable && c.parentId?.toLowerCase().trim() === vegetable?.toLowerCase().trim()) return true;
     
     // 3. Match via parent vegetable config item
     const parentVegConfig = config.find(v => v.id === c.parentId && v.type === 'vegetable');
-    if (parentVegConfig && parentVegConfig.value.toLowerCase().trim() === vegetable.toLowerCase().trim()) {
+    if (parentVegConfig && parentVegConfig.value?.toLowerCase().trim() === vegetable?.toLowerCase().trim()) {
       return true;
     }
     
     // 4. Match via parent encyclopedia entry
     const parentVegEnc = encyclopedia.find(e => e.id === c.parentId);
-    if (parentVegEnc && parentVegEnc.name.toLowerCase().trim() === vegetable.toLowerCase().trim()) {
+    if (parentVegEnc && parentVegEnc.name?.toLowerCase().trim() === vegetable?.toLowerCase().trim()) {
       return true;
     }
     
@@ -105,7 +105,7 @@ export function SeedlingForm({ setCurrentView, seedlingId, onBack }: { setCurren
   const handleDateTransplantedChange = (val: string) => {
     setDateTransplanted(val);
     if (val) {
-      const repiquageState = states.find(s => s.value.toLowerCase().includes('repiquage') || s.value.toLowerCase().includes('repiqué'));
+      const repiquageState = states.find(s => s.value?.toLowerCase().includes('repiquage') || s.value?.toLowerCase().includes('repiqué'));
       if (repiquageState && !datePlanted && !quantityPlanted) {
         setState(repiquageState.value);
       }
@@ -115,7 +115,7 @@ export function SeedlingForm({ setCurrentView, seedlingId, onBack }: { setCurren
   const handleDatePlantedChange = (val: string) => {
     setDatePlanted(val);
     if (val) {
-      const plantedState = states.find(s => s.value.toLowerCase().includes('terre') || s.value.toLowerCase().includes('planté') || s.value.toLowerCase().includes('plantation'));
+      const plantedState = states.find(s => s.value?.toLowerCase().includes('terre') || s.value?.toLowerCase().includes('planté') || s.value?.toLowerCase().includes('plantation'));
       if (plantedState) {
         setState(plantedState.value);
       }
@@ -125,7 +125,7 @@ export function SeedlingForm({ setCurrentView, seedlingId, onBack }: { setCurren
   const handleQuantityTransplantedChange = (val: number | '') => {
     setQuantityTransplanted(val);
     if (val !== '') {
-      const repiquageState = states.find(s => s.value.toLowerCase().includes('repiquage') || s.value.toLowerCase().includes('repiqué'));
+      const repiquageState = states.find(s => s.value?.toLowerCase().includes('repiquage') || s.value?.toLowerCase().includes('repiqué'));
       if (repiquageState && !datePlanted && !quantityPlanted) {
         setState(repiquageState.value);
       }
@@ -135,7 +135,7 @@ export function SeedlingForm({ setCurrentView, seedlingId, onBack }: { setCurren
   const handleQuantityPlantedChange = (val: number | '') => {
     setQuantityPlanted(val);
     if (val !== '') {
-      const plantedState = states.find(s => s.value.toLowerCase().includes('terre') || s.value.toLowerCase().includes('planté') || s.value.toLowerCase().includes('plantation'));
+      const plantedState = states.find(s => s.value?.toLowerCase().includes('terre') || s.value?.toLowerCase().includes('planté') || s.value?.toLowerCase().includes('plantation'));
       if (plantedState) {
         setState(plantedState.value);
       }
@@ -161,7 +161,7 @@ export function SeedlingForm({ setCurrentView, seedlingId, onBack }: { setCurren
       setError("Veuillez indiquer une date de repiquage si vous avez saisi une quantité repiquée.");
       return;
     }
-    if (state.toLowerCase().includes('repiquage') && !dateTransplanted) {
+    if (state?.toLowerCase().includes('repiquage') && !dateTransplanted) {
       setError("Veuillez indiquer une date de repiquage pour l'état 'Repiquage'.");
       return;
     }
@@ -169,7 +169,7 @@ export function SeedlingForm({ setCurrentView, seedlingId, onBack }: { setCurren
       setError("Veuillez indiquer une date de plantation si vous avez saisi une quantité plantée.");
       return;
     }
-    if (state.toLowerCase().includes('terre') && !datePlanted) {
+    if (state?.toLowerCase().includes('terre') && !datePlanted) {
       setError("Veuillez indiquer une date de plantation pour l'état 'Mise en terre'.");
       return;
     }
@@ -206,10 +206,10 @@ export function SeedlingForm({ setCurrentView, seedlingId, onBack }: { setCurren
     }
 
     // Add new vegetable to encyclopedia if it doesn't exist
-    let currentVegetableId = encyclopedia.find(e => e.name.toLowerCase().trim() === vegetable.toLowerCase().trim())?.id;
+    let currentVegetableId = encyclopedia.find(e => e.name?.toLowerCase().trim() === vegetable?.toLowerCase().trim())?.id;
     if (vegetable.trim() && !currentVegetableId) {
       currentVegetableId = uuidv4();
-      const catalogItem = PLANT_CATALOG.find(p => p.name.toLowerCase() === vegetable.trim().toLowerCase());
+      const catalogItem = PLANT_CATALOG.find(p => p.name?.toLowerCase() === vegetable.trim()?.toLowerCase());
       const existingColors = encyclopedia.map(v => v.color).filter(Boolean) as string[] || [];
       await db.encyclopedia.add({
         id: currentVegetableId,
@@ -234,12 +234,12 @@ export function SeedlingForm({ setCurrentView, seedlingId, onBack }: { setCurren
     if (variety.trim() && currentVegetableId) {
       const existingVariety = config.find(v => {
         if (v.type !== 'variety') return false;
-        if (v.value.toLowerCase().trim() !== variety.toLowerCase().trim()) return false;
+        if (v.value?.toLowerCase().trim() !== variety?.toLowerCase().trim()) return false;
         
         if (v.parentId === currentVegetableId) return true;
         
         const parentVeg = config.find(c => c.id === v.parentId && c.type === 'vegetable');
-        if (parentVeg && parentVeg.value.toLowerCase().trim() === vegetable.toLowerCase().trim()) {
+        if (parentVeg && parentVeg.value?.toLowerCase().trim() === vegetable?.toLowerCase().trim()) {
           return true;
         }
         

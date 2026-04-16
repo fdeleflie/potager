@@ -3,7 +3,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db, ConfigItem } from '../db';
 import { v4 as uuidv4 } from 'uuid';
 import { Settings, Plus, Trash2, Edit2, Palette, XCircle, CheckCircle2, Trees, BookOpen, Info } from 'lucide-react';
-import { ConfirmModal } from '../components/Modals';
+import { ConfirmModal, AlertModal } from '../components/Modals';
 import { ICON_LIST, ICON_MAP, GARDEN_EMOJIS, GARDEN_EMOJI_CATEGORIES } from '../constants';
 import { getDistinctColor } from '../utils/colors';
 import { PLANT_CATALOG } from '../catalog';
@@ -37,6 +37,12 @@ export function Config({ onNavigate }: { onNavigate?: (view: any) => void }) {
     onConfirm: () => void;
     isDanger?: boolean;
   }>({ isOpen: false, title: '', message: '', onConfirm: () => {} });
+
+  const [alertState, setAlertState] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+  }>({ isOpen: false, title: '', message: '' });
 
   const varietyAttrTypes = React.useMemo(() => 
     config?.filter(c => c.type === 'variety_attr_type').sort((a, b) => a.value.localeCompare(b.value)) || []
@@ -77,13 +83,17 @@ export function Config({ onNavigate }: { onNavigate?: (view: any) => void }) {
     // Duplicate check
     const isDuplicate = config.some(c => 
       c.type === activeTab && 
-      c.value.toLowerCase().trim() === newValue.toLowerCase().trim() &&
+      c.value?.toLowerCase().trim() === newValue?.toLowerCase().trim() &&
       
       (activeTab !== 'variety_option' || c.parentId === selectedAttrType)
     );
 
     if (isDuplicate) {
-      alert(`Cet élément existe déjà dans la catégorie ${tabs.find(t => t.id === activeTab)?.label}.`);
+      setAlertState({
+        isOpen: true,
+        title: "Élément en double",
+        message: `Cet élément existe déjà dans la catégorie ${tabs.find(t => t.id === activeTab)?.label}.`
+      });
       return;
     }
 
@@ -95,7 +105,7 @@ export function Config({ onNavigate }: { onNavigate?: (view: any) => void }) {
       attributes: activeTab === 'terrain' ? { width: 1000, height: 1000 } : 
                   false ? { 
                     color: getDistinctColor(config.filter(c => c.type === 'vegetable').map(v => v.attributes?.color).filter(Boolean)),
-                    icon: PLANT_CATALOG.find(p => p.name.toLowerCase() === newValue.trim().toLowerCase())?.emoji || 'Sprout' 
+                    icon: PLANT_CATALOG.find(p => p.name?.toLowerCase() === newValue.trim()?.toLowerCase())?.emoji || 'Sprout' 
                   } : undefined
     };
 
@@ -160,7 +170,7 @@ export function Config({ onNavigate }: { onNavigate?: (view: any) => void }) {
   
   // Real-time duplicate check for UI feedback
   const isCurrentValueDuplicate = newValue.trim() !== '' && items.some(i => 
-    i.value.toLowerCase().trim() === newValue.toLowerCase().trim() &&
+    i.value?.toLowerCase().trim() === newValue?.toLowerCase().trim() &&
     
     (activeTab !== 'variety_option' || i.parentId === selectedAttrType)
   );
@@ -214,6 +224,12 @@ export function Config({ onNavigate }: { onNavigate?: (view: any) => void }) {
         onConfirm={confirmState.onConfirm}
         isDanger={confirmState.isDanger}
         confirmText="Supprimer"
+      />
+      <AlertModal
+        isOpen={alertState.isOpen}
+        onClose={() => setAlertState(prev => ({ ...prev, isOpen: false }))}
+        title={alertState.title}
+        message={alertState.message}
       />
       <header>
         <div className="flex justify-between items-start">
@@ -284,7 +300,7 @@ export function Config({ onNavigate }: { onNavigate?: (view: any) => void }) {
                     
                     value={newValue}
                     onChange={e => setNewValue(e.target.value)}
-                    placeholder={`Ajouter un élément (${tabs.find(t => t.id === activeTab)?.label.toLowerCase()})`}
+                    placeholder={`Ajouter un élément (${tabs.find(t => t.id === activeTab)?.label?.toLowerCase()})`}
                     className={`w-full px-3 py-1.5 text-sm rounded-md border focus:ring-2 outline-none transition-all ${
                       isCurrentValueDuplicate 
                         ? 'border-red-300 focus:ring-red-500 bg-red-50' 

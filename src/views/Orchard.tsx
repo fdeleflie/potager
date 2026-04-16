@@ -114,8 +114,8 @@ export function Orchard() {
 
     // 2. From config table (catalog)
     if (config) {
-      const speciesEnc = encyclopedia?.find(e => e.name.toLowerCase().trim() === species.toLowerCase().trim());
-      const speciesConfig = config.find(c => c.type === 'vegetable' && c.value.toLowerCase().trim() === species.toLowerCase().trim());
+      const speciesEnc = encyclopedia?.find(e => e.name?.toLowerCase().trim() === species?.toLowerCase().trim());
+      const speciesConfig = config.find(c => c.type === 'vegetable' && c.value?.toLowerCase().trim() === species?.toLowerCase().trim());
       
       config.filter(c => {
         if (c.type !== 'variety') return false;
@@ -124,17 +124,17 @@ export function Orchard() {
         if (c.parentId === speciesEnc?.id || c.parentId === speciesConfig?.id) return true;
         
         // Match by Name
-        if (c.parentId?.toLowerCase().trim() === species.toLowerCase().trim()) return true;
+        if (c.parentId?.toLowerCase().trim() === species?.toLowerCase().trim()) return true;
         
         // Match via parent config item
         const parentVegConfig = config.find(v => v.id === c.parentId && v.type === 'vegetable');
-        if (parentVegConfig && parentVegConfig.value.toLowerCase().trim() === species.toLowerCase().trim()) {
+        if (parentVegConfig && parentVegConfig.value?.toLowerCase().trim() === species?.toLowerCase().trim()) {
           return true;
         }
 
         // Match via parent encyclopedia entry
         const parentVegEnc = encyclopedia?.find(e => e.id === c.parentId);
-        if (parentVegEnc && parentVegEnc.name.toLowerCase().trim() === species.toLowerCase().trim()) {
+        if (parentVegEnc && parentVegEnc.name?.toLowerCase().trim() === species?.toLowerCase().trim()) {
           return true;
         }
 
@@ -606,7 +606,7 @@ export function Orchard() {
     if (!selectedTerrainId || !newTree.species || newTree.positionX === undefined) return;
 
     // Check if species exists in encyclopedia, if not add it
-    let encEntry = encyclopedia?.find(e => e.name.toLowerCase().trim() === newTree.species.toLowerCase().trim());
+    let encEntry = encyclopedia?.find(e => e.name?.toLowerCase().trim() === newTree.species?.toLowerCase().trim());
     let speciesId = encEntry?.id;
     if (!speciesId) {
       speciesId = uuidv4();
@@ -634,18 +634,18 @@ export function Orchard() {
     if (newTree.variety && speciesId) {
       const existingVariety = config?.find(c => {
         if (c.type !== 'variety') return false;
-        if (c.value.toLowerCase().trim() !== newTree.variety.toLowerCase().trim()) return false;
+        if (c.value?.toLowerCase().trim() !== newTree.variety?.toLowerCase().trim()) return false;
         if (c.parentId === speciesId) return true;
         
         // Check if parent is a vegetable config item with the same name
         const parentVegConfig = config.find(v => v.id === c.parentId && v.type === 'vegetable');
-        if (parentVegConfig && parentVegConfig.value.toLowerCase().trim() === newTree.species.toLowerCase().trim()) {
+        if (parentVegConfig && parentVegConfig.value?.toLowerCase().trim() === newTree.species?.toLowerCase().trim()) {
           return true;
         }
 
         // Check if parent is an encyclopedia entry with the same name
         const parentVegEnc = encyclopedia?.find(e => e.id === c.parentId);
-        if (parentVegEnc && parentVegEnc.name.toLowerCase().trim() === newTree.species.toLowerCase().trim()) {
+        if (parentVegEnc && parentVegEnc.name?.toLowerCase().trim() === newTree.species?.toLowerCase().trim()) {
           return true;
         }
         
@@ -688,7 +688,7 @@ export function Orchard() {
     if (!id || !editTreeData.species) return;
 
     // Check if species exists in encyclopedia, if not add it
-    let encEntry = encyclopedia?.find(e => e.name.toLowerCase().trim() === editTreeData.species.toLowerCase().trim());
+    let encEntry = encyclopedia?.find(e => e.name?.toLowerCase().trim() === editTreeData.species?.toLowerCase().trim());
     let speciesId = encEntry?.id;
     if (!speciesId) {
       speciesId = uuidv4();
@@ -716,18 +716,18 @@ export function Orchard() {
     if (editTreeData.variety && speciesId) {
       const existingVariety = config?.find(c => {
         if (c.type !== 'variety') return false;
-        if (c.value.toLowerCase().trim() !== editTreeData.variety.toLowerCase().trim()) return false;
+        if (c.value?.toLowerCase().trim() !== editTreeData.variety?.toLowerCase().trim()) return false;
         if (c.parentId === speciesId) return true;
         
         // Check if parent is a vegetable config item with the same name
         const parentVegConfig = config.find(v => v.id === c.parentId && v.type === 'vegetable');
-        if (parentVegConfig && parentVegConfig.value.toLowerCase().trim() === editTreeData.species.toLowerCase().trim()) {
+        if (parentVegConfig && parentVegConfig.value?.toLowerCase().trim() === editTreeData.species?.toLowerCase().trim()) {
           return true;
         }
 
         // Check if parent is an encyclopedia entry with the same name
         const parentVegEnc = encyclopedia?.find(e => e.id === c.parentId);
-        if (parentVegEnc && parentVegEnc.name.toLowerCase().trim() === editTreeData.species.toLowerCase().trim()) {
+        if (parentVegEnc && parentVegEnc.name?.toLowerCase().trim() === editTreeData.species?.toLowerCase().trim()) {
           return true;
         }
         
@@ -1385,7 +1385,7 @@ export function Orchard() {
 
                 {/* Render trees */}
                 {treesInCurrentTerrain.map(tree => {
-                  const encEntry = encyclopedia?.find(e => e.name.toLowerCase().trim() === tree.species.toLowerCase().trim());
+                  const encEntry = encyclopedia?.find(e => e.name?.toLowerCase().trim() === tree.species?.toLowerCase().trim());
                   const spacing = tree.spacing || (encEntry?.spacing ? parseInt(encEntry.spacing) : 200); // Use tree-specific spacing if available
                   const radius = (spacing / 2) * zoom;
                   const customColor = encEntry?.color || '#059669';
@@ -1503,7 +1503,7 @@ export function Orchard() {
                     style={
                       draggingTreeId ? (() => {
                         const tree = trees?.find(t => t.id === draggingTreeId);
-                        const encEntry = encyclopedia?.find(e => e.name.toLowerCase().trim() === tree?.species.toLowerCase().trim());
+                        const encEntry = encyclopedia?.find(e => e.name?.toLowerCase().trim() === tree?.species?.toLowerCase().trim());
                         const spacing = tree?.spacing || (encEntry?.spacing ? parseInt(encEntry.spacing) : 200);
                         const color = encEntry?.color || '#10b981';
                         return {
@@ -1535,7 +1535,7 @@ export function Orchard() {
                         border: `2px dashed ${newStructure.color}`,
                         borderRadius: '8px'
                       } : (toolMode === 'add' || isAddingTree || isMovingTree || isCopyingTree) ? (() => {
-                        const encEntry = encyclopedia?.find(e => e.name.toLowerCase().trim() === newTree.species.toLowerCase().trim());
+                        const encEntry = encyclopedia?.find(e => e.name?.toLowerCase().trim() === newTree.species?.toLowerCase().trim());
                         const spacing = newTree.spacing || (encEntry?.spacing ? parseInt(encEntry.spacing) : 200);
                         return {
                           left: mousePos.x - (spacing / 2) * zoom,
@@ -1551,7 +1551,7 @@ export function Orchard() {
                   >
                     {draggingTreeId && (() => {
                       const tree = trees?.find(t => t.id === draggingTreeId);
-                      const encEntry = encyclopedia?.find(e => e.name.toLowerCase().trim() === tree?.species.toLowerCase().trim());
+                      const encEntry = encyclopedia?.find(e => e.name?.toLowerCase().trim() === tree?.species?.toLowerCase().trim());
                       const color = encEntry?.color || '#10b981';
                       const icon = encEntry?.icon || 'Trees';
                       return (
@@ -1584,7 +1584,7 @@ export function Orchard() {
                           <span>Bord G: {Math.round((mousePos.x - getTerrainBoundsAtPoint(mousePos.x / zoom, mousePos.y / zoom).minX * zoom - (() => {
                             if (draggingTreeId) {
                               const tree = trees?.find(t => t.id === draggingTreeId);
-                              const encEntry = encyclopedia?.find(e => e.name.toLowerCase().trim() === tree?.species?.toLowerCase().trim());
+                              const encEntry = encyclopedia?.find(e => e.name?.toLowerCase().trim() === tree?.species?.toLowerCase().trim());
                               return ((tree?.spacing || (encEntry?.spacing ? parseInt(encEntry.spacing) : 200)) / 2) * zoom;
                             }
                             if (draggingStructureId) {
@@ -1592,12 +1592,12 @@ export function Orchard() {
                               return ((structure?.width || 200) / 2) * zoom;
                             }
                             if (isAddingStructure) return ((newStructure.width || 200) / 2) * zoom;
-                            return ((newTree.spacing || (newTree.species ? (encyclopedia?.find(e => e.name.toLowerCase().trim() === newTree.species.toLowerCase().trim())?.spacing ? parseInt(encyclopedia.find(e => e.name.toLowerCase().trim() === newTree.species.toLowerCase().trim())!.spacing!) : 200) : 200)) / 2) * zoom;
+                            return ((newTree.spacing || (newTree.species ? (encyclopedia?.find(e => e.name?.toLowerCase().trim() === newTree.species?.toLowerCase().trim())?.spacing ? parseInt(encyclopedia.find(e => e.name?.toLowerCase().trim() === newTree.species?.toLowerCase().trim())!.spacing!) : 200) : 200)) / 2) * zoom;
                           })()) / zoom)}cm</span>
                           <span>Bord D: {Math.round((getTerrainBoundsAtPoint(mousePos.x / zoom, mousePos.y / zoom).maxX * zoom - (mousePos.x + (() => {
                             if (draggingTreeId) {
                               const tree = trees?.find(t => t.id === draggingTreeId);
-                              const encEntry = encyclopedia?.find(e => e.name.toLowerCase().trim() === tree?.species?.toLowerCase().trim());
+                              const encEntry = encyclopedia?.find(e => e.name?.toLowerCase().trim() === tree?.species?.toLowerCase().trim());
                               return ((tree?.spacing || (encEntry?.spacing ? parseInt(encEntry.spacing) : 200)) / 2) * zoom;
                             }
                             if (draggingStructureId) {
@@ -1605,14 +1605,14 @@ export function Orchard() {
                               return ((structure?.width || 200) / 2) * zoom;
                             }
                             if (isAddingStructure) return ((newStructure.width || 200) / 2) * zoom;
-                            return ((newTree.spacing || (newTree.species ? (encyclopedia?.find(e => e.name.toLowerCase().trim() === newTree.species.toLowerCase().trim())?.spacing ? parseInt(encyclopedia.find(e => e.name.toLowerCase().trim() === newTree.species.toLowerCase().trim())!.spacing!) : 200) : 200)) / 2) * zoom;
+                            return ((newTree.spacing || (newTree.species ? (encyclopedia?.find(e => e.name?.toLowerCase().trim() === newTree.species?.toLowerCase().trim())?.spacing ? parseInt(encyclopedia.find(e => e.name?.toLowerCase().trim() === newTree.species?.toLowerCase().trim())!.spacing!) : 200) : 200)) / 2) * zoom;
                           })())) / zoom)}cm</span>
                         </div>
                         <div className="flex justify-between gap-4">
                           <span>Bord H: {Math.round((mousePos.y - getTerrainBoundsAtPoint(mousePos.x / zoom, mousePos.y / zoom).minY * zoom - (() => {
                             if (draggingTreeId) {
                               const tree = trees?.find(t => t.id === draggingTreeId);
-                              const encEntry = encyclopedia?.find(e => e.name.toLowerCase().trim() === tree?.species?.toLowerCase().trim());
+                              const encEntry = encyclopedia?.find(e => e.name?.toLowerCase().trim() === tree?.species?.toLowerCase().trim());
                               return ((tree?.spacing || (encEntry?.spacing ? parseInt(encEntry.spacing) : 200)) / 2) * zoom;
                             }
                             if (draggingStructureId) {
@@ -1620,12 +1620,12 @@ export function Orchard() {
                               return ((structure?.height || 200) / 2) * zoom;
                             }
                             if (isAddingStructure) return ((newStructure.height || 200) / 2) * zoom;
-                            return ((newTree.spacing || (newTree.species ? (encyclopedia?.find(e => e.name.toLowerCase().trim() === newTree.species.toLowerCase().trim())?.spacing ? parseInt(encyclopedia.find(e => e.name.toLowerCase().trim() === newTree.species.toLowerCase().trim())!.spacing!) : 200) : 200)) / 2) * zoom;
+                            return ((newTree.spacing || (newTree.species ? (encyclopedia?.find(e => e.name?.toLowerCase().trim() === newTree.species?.toLowerCase().trim())?.spacing ? parseInt(encyclopedia.find(e => e.name?.toLowerCase().trim() === newTree.species?.toLowerCase().trim())!.spacing!) : 200) : 200)) / 2) * zoom;
                           })()) / zoom)}cm</span>
                           <span>Bord B: {Math.round((getTerrainBoundsAtPoint(mousePos.x / zoom, mousePos.y / zoom).maxY * zoom - (mousePos.y + (() => {
                             if (draggingTreeId) {
                               const tree = trees?.find(t => t.id === draggingTreeId);
-                              const encEntry = encyclopedia?.find(e => e.name.toLowerCase().trim() === tree?.species?.toLowerCase().trim());
+                              const encEntry = encyclopedia?.find(e => e.name?.toLowerCase().trim() === tree?.species?.toLowerCase().trim());
                               return ((tree?.spacing || (encEntry?.spacing ? parseInt(encEntry.spacing) : 200)) / 2) * zoom;
                             }
                             if (draggingStructureId) {
@@ -1633,7 +1633,7 @@ export function Orchard() {
                               return ((structure?.height || 200) / 2) * zoom;
                             }
                             if (isAddingStructure) return ((newStructure.height || 200) / 2) * zoom;
-                            return ((newTree.spacing || (newTree.species ? (encyclopedia?.find(e => e.name.toLowerCase().trim() === newTree.species.toLowerCase().trim())?.spacing ? parseInt(encyclopedia.find(e => e.name.toLowerCase().trim() === newTree.species.toLowerCase().trim())!.spacing!) : 200) : 200)) / 2) * zoom;
+                            return ((newTree.spacing || (newTree.species ? (encyclopedia?.find(e => e.name?.toLowerCase().trim() === newTree.species?.toLowerCase().trim())?.spacing ? parseInt(encyclopedia.find(e => e.name?.toLowerCase().trim() === newTree.species?.toLowerCase().trim())!.spacing!) : 200) : 200)) / 2) * zoom;
                           })())) / zoom)}cm</span>
                         </div>
                         {(() => {
@@ -1661,7 +1661,7 @@ export function Orchard() {
               <h3 className="text-lg font-medium text-stone-900 mb-4">Légende</h3>
               <div className="grid grid-cols-2 gap-4">
                 {speciesLegend.map((species, idx) => {
-                  const encEntry = encyclopedia?.find(e => e.name.toLowerCase().trim() === species.toLowerCase().trim());
+                  const encEntry = encyclopedia?.find(e => e.name?.toLowerCase().trim() === species?.toLowerCase().trim());
                   const customColor = encEntry?.color || '#10b981';
                   const IconComponent = ICON_MAP[encEntry?.icon || ''] || Trees;
                   return (
@@ -1688,7 +1688,7 @@ export function Orchard() {
                 <h3 className="text-sm font-medium text-stone-900 mb-4 uppercase tracking-wider">Légende des espèces</h3>
                 <div className="flex flex-wrap gap-3">
                   {speciesLegend.map((species, idx) => {
-                    const encEntry = encyclopedia?.find(e => e.name.toLowerCase().trim() === species.toLowerCase().trim());
+                    const encEntry = encyclopedia?.find(e => e.name?.toLowerCase().trim() === species?.toLowerCase().trim());
                     const customColor = encEntry?.color || '#10b981';
                     const IconComponent = ICON_MAP[encEntry?.icon || ''] || Trees;
 
@@ -1733,7 +1733,7 @@ export function Orchard() {
                           value={newTree.species || ''}
                           onChange={e => {
                             const val = e.target.value;
-                            const existing = encyclopedia?.find(c => c.name.toLowerCase() === val.toLowerCase());
+                            const existing = encyclopedia?.find(c => c.name?.toLowerCase() === val?.toLowerCase());
                             if (existing) {
                               setNewTree({
                                 ...newTree, 
@@ -1748,9 +1748,9 @@ export function Orchard() {
                           placeholder="ex: Pommier, Poirier..."
                           className="w-full px-4 py-2 rounded-xl border border-stone-200 focus:ring-2 focus:ring-emerald-500 outline-none"
                         />
-                        {encyclopedia?.filter(c => c.name.toLowerCase().includes(newTree.species?.toLowerCase() || '')).length > 0 && newTree.species && !encyclopedia.find(c => c.name.toLowerCase() === newTree.species.toLowerCase()) && (
+                        {encyclopedia?.filter(c => c.name?.toLowerCase().includes(newTree.species?.toLowerCase() || '')).length > 0 && newTree.species && !encyclopedia.find(c => c.name?.toLowerCase() === newTree.species?.toLowerCase()) && (
                           <div className="absolute z-10 w-full mt-1 bg-white border border-stone-200 rounded-xl shadow-lg max-h-40 overflow-y-auto">
-                            {encyclopedia.filter(c => c.name.toLowerCase().includes(newTree.species.toLowerCase()))
+                            {encyclopedia.filter(c => c.name?.toLowerCase().includes(newTree.species?.toLowerCase()))
                               .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
                               .map(c => (
                               <button
@@ -1892,8 +1892,8 @@ export function Orchard() {
                     />
                     {newTree.species && (() => {
                       const speciesVarieties = getVarietiesForSpecies(newTree.species);
-                      const filtered = speciesVarieties.filter(v => v.toLowerCase().includes((newTree.variety || '').toLowerCase()));
-                      const exactMatch = speciesVarieties.some(v => v.toLowerCase() === (newTree.variety || '').toLowerCase());
+                      const filtered = speciesVarieties.filter(v => v?.toLowerCase().includes((newTree.variety || '')?.toLowerCase()));
+                      const exactMatch = speciesVarieties.some(v => v?.toLowerCase() === (newTree.variety || '')?.toLowerCase());
                       
                       if (newTree.variety && filtered.length > 0 && !exactMatch) {
                         return (
@@ -2019,7 +2019,7 @@ export function Orchard() {
                           value={editTreeData.species || ''}
                           onChange={e => {
                             const val = e.target.value;
-                            const existing = encyclopedia?.find(c => c.name.toLowerCase() === val.toLowerCase());
+                            const existing = encyclopedia?.find(c => c.name?.toLowerCase() === val?.toLowerCase());
                             setEditTreeData({
                               ...editTreeData,
                               species: val,
@@ -2042,7 +2042,19 @@ export function Orchard() {
                                 onChange={e => setEditTreeData({...editTreeData, color: e.target.value})}
                                 className="h-8 w-12 rounded border border-stone-200 bg-white p-0.5 cursor-pointer"
                               />
-                              <div className="grid grid-cols-7 gap-1 flex-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const existingColors = encyclopedia?.map(v => v.color).filter(Boolean) as string[] || [];
+                                  setEditTreeData({...editTreeData, color: getDistinctColor(existingColors)});
+                                }}
+                                className="p-1.5 text-stone-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-md border border-stone-200 transition-all flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-tight"
+                                title="Proposer la couleur la plus éloignée"
+                              >
+                                <Palette className="w-3.5 h-3.5" />
+                                Suggérer
+                              </button>
+                              <div className="grid grid-cols-7 gap-1 flex-1 ml-2">
                                 {ICON_LIST.slice(0, 14).map(({ id, icon: Icon }) => (
                                   <button
                                     key={id}
@@ -2111,8 +2123,8 @@ export function Orchard() {
                         />
                         {editTreeData.species && (() => {
                           const speciesVarieties = getVarietiesForSpecies(editTreeData.species);
-                          const filtered = speciesVarieties.filter(v => v.toLowerCase().includes((editTreeData.variety || '').toLowerCase()));
-                          const exactMatch = speciesVarieties.some(v => v.toLowerCase() === (editTreeData.variety || '').toLowerCase());
+                          const filtered = speciesVarieties.filter(v => v?.toLowerCase().includes((editTreeData.variety || '')?.toLowerCase()));
+                          const exactMatch = speciesVarieties.some(v => v?.toLowerCase() === (editTreeData.variety || '')?.toLowerCase());
                           
                           if (editTreeData.variety && filtered.length > 0 && !exactMatch) {
                             return (
@@ -2262,7 +2274,7 @@ export function Orchard() {
                         <div className="flex gap-2">
                           <button
                             onClick={() => {
-                              const encEntry = encyclopedia?.find(e => e.name.toLowerCase().trim() === selectedTreeDetails.species.toLowerCase().trim());
+                              const encEntry = encyclopedia?.find(e => e.name?.toLowerCase().trim() === selectedTreeDetails.species?.toLowerCase().trim());
                               setIsEditingTree(true);
                               setEditTreeData({
                                 ...selectedTreeDetails,
@@ -2476,7 +2488,7 @@ export function Orchard() {
                   return acc;
                 }, {} as Record<string, { species: string, count: number, varieties: Set<string> }>)
               ).map(([species, data]: [string, any]) => {
-                const encEntry = encyclopedia?.find(e => e.name.toLowerCase().trim() === species.toLowerCase().trim());
+                const encEntry = encyclopedia?.find(e => e.name?.toLowerCase().trim() === species?.toLowerCase().trim());
                 const color = encEntry?.color || '#10b981';
                 const Icon = ICON_MAP[encEntry?.icon || ''] || Trees;
                 

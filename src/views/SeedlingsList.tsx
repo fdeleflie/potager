@@ -232,13 +232,13 @@ export function SeedlingsList({ setCurrentView, initialFilter = 'active' }: { se
   )).sort();
 
   const filtered = Array.from(new Map<string, any>(seedlings.filter(s => {
-    const matchesSearch = s.vegetable.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                          s.variety.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSearch = s.vegetable?.toLowerCase().includes(searchTerm?.toLowerCase()) || 
+                          s.variety?.toLowerCase().includes(searchTerm?.toLowerCase());
     const matchesState = filterState === 'all' || s.state === filterState;
     const matchesVegetable = filterVegetable === 'all' || s.vegetable === filterVegetable;
     
     // Category filtering
-    const encEntry = encyclopedia.find(e => e.name.toLowerCase().trim() === s.vegetable.toLowerCase().trim());
+    const encEntry = encyclopedia.find(e => e.name?.toLowerCase().trim() === s.vegetable?.toLowerCase().trim());
     const matchesCategory = filterCategory === 'all' || (encEntry && encEntry.category === filterCategory);
 
     const matchesArchived = filterArchived === 'all' || 
@@ -251,7 +251,7 @@ export function SeedlingsList({ setCurrentView, initialFilter = 'active' }: { se
     const matchesVariety = filterVariety === 'all' || s.variety === filterVariety;
 
     // Advanced attributes filtering
-    const vegEnc = encyclopedia.find(e => e.name.toLowerCase().trim() === s.vegetable.toLowerCase().trim());
+    const vegEnc = encyclopedia.find(e => e.name?.toLowerCase().trim() === s.vegetable?.toLowerCase().trim());
     const vegConfig = vegetablesConfig.find(v => v.value === s.vegetable);
     const variety = varietiesConfig.find(v => {
       if (v.value !== s.variety) return false;
@@ -260,17 +260,17 @@ export function SeedlingsList({ setCurrentView, initialFilter = 'active' }: { se
       if (v.parentId === vegConfig?.id || v.parentId === vegEnc?.id) return true;
       
       // 2. Name match
-      if (s.vegetable && v.parentId?.toLowerCase().trim() === s.vegetable.toLowerCase().trim()) return true;
+      if (s.vegetable && v.parentId?.toLowerCase().trim() === s.vegetable?.toLowerCase().trim()) return true;
 
       // 3. Match via parent vegetable config item
       const parentVegConfig = vegetablesConfig.find(c => c.id === v.parentId);
-      if (parentVegConfig && parentVegConfig.value.toLowerCase().trim() === s.vegetable.toLowerCase().trim()) {
+      if (parentVegConfig && parentVegConfig.value?.toLowerCase().trim() === s.vegetable?.toLowerCase().trim()) {
         return true;
       }
 
       // 4. Match via parent encyclopedia entry
       const parentVegEnc = encyclopedia.find(e => e.id === v.parentId);
-      if (parentVegEnc && parentVegEnc.name.toLowerCase().trim() === s.vegetable.toLowerCase().trim()) {
+      if (parentVegEnc && parentVegEnc.name?.toLowerCase().trim() === s.vegetable?.toLowerCase().trim()) {
         return true;
       }
       
@@ -280,8 +280,8 @@ export function SeedlingsList({ setCurrentView, initialFilter = 'active' }: { se
     const matchesAttributes = Object.entries(selectedAttributes).every(([attrTypeId, selectedValues]) => {
       if (!selectedValues || selectedValues.length === 0) return true;
       const varietyAttrValue = variety?.attributes?.[attrTypeId] || '';
-      const varietyTags = varietyAttrValue.split(',').map((t: string) => t.trim().toLowerCase());
-      return selectedValues.some(sv => varietyTags.includes(sv.toLowerCase()));
+      const varietyTags = varietyAttrValue.split(',').map((t: string) => t.trim()?.toLowerCase());
+      return selectedValues.some(sv => varietyTags.includes(sv?.toLowerCase()));
     });
 
     const matchesTaste = filterTasteRating === 'all' || 
@@ -948,7 +948,7 @@ export function SeedlingsList({ setCurrentView, initialFilter = 'active' }: { se
                 <div className="flex justify-between items-start mb-1">
                   <div className="flex gap-2 items-start">
                     {(() => {
-                      const encEntry = encyclopedia?.find(e => e.name.toLowerCase().trim() === s.vegetable.toLowerCase().trim());
+                      const encEntry = encyclopedia?.find(e => e.name?.toLowerCase().trim() === s.vegetable?.toLowerCase().trim());
                       const color = encEntry?.color || '#10b981';
                       const Icon = ICON_MAP[encEntry?.icon || ''] || ICON_MAP['Trees'];
                       return (
@@ -1146,7 +1146,21 @@ export function SeedlingsList({ setCurrentView, initialFilter = 'active' }: { se
         </div>
       ) : (
         <div className="flex gap-4 overflow-x-auto pb-4 snap-x items-start">
-          {[...states, { id: 'vendu-donne', value: 'Vendu / Donné', type: 'state' }].map(state => {
+          {(() => {
+            // Ensure states are unique by value to prevent duplicate columns and keys
+            const uniqueStatesMap = new Map<string, any>();
+            states.forEach(s => {
+              if (!uniqueStatesMap.has(s.value)) {
+                uniqueStatesMap.set(s.value, s);
+              }
+            });
+            
+            const kanbanStates = Array.from(uniqueStatesMap.values());
+            if (!kanbanStates.find(s => s.value === 'Vendu / Donné')) {
+              kanbanStates.push({ id: 'vendu-donne', value: 'Vendu / Donné', type: 'state' } as any);
+            }
+            return kanbanStates;
+          })().map(state => {
             const stateSeedlings = filtered.filter(s => s.state === state.value);
             return (
               <div 

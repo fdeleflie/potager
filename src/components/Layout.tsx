@@ -57,11 +57,11 @@ export function Layout({ children, currentView, setCurrentView, onBack, canGoBac
         </div>
 
         {/* Desktop Header (Optional, but helpful) */}
-        <div className="hidden lg:flex items-center mb-4 gap-4 sticky top-0 z-30">
+        <div className="hidden lg:flex items-center mb-4 gap-4 sticky top-0 z-30 pointer-events-none">
           {canGoBack && (
             <button
               onClick={onBack}
-              className="flex items-center gap-1.5 text-stone-500 hover:text-emerald-600 transition-colors text-sm font-medium group bg-white/50 backdrop-blur-sm px-3 py-1.5 rounded-lg border border-stone-200/60"
+              className="flex items-center gap-1.5 text-stone-500 hover:text-emerald-600 transition-colors text-sm font-medium group bg-white/50 backdrop-blur-sm px-3 py-1.5 rounded-lg border border-stone-200/60 pointer-events-auto"
             >
               <ChevronLeft className="w-4 h-4" />
               Retour

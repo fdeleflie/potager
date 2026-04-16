@@ -25,7 +25,7 @@ export const reconcileVegetables = async () => {
     // 1. Ensure all config vegetables have an encyclopedia entry
     for (const configVeg of configVegetables) {
       const existsInEncyclopedia = encyclopediaEntries.some(
-        e => e.name.toLowerCase().trim() === configVeg.value.toLowerCase().trim()
+        e => e.name?.toLowerCase().trim() === configVeg.value?.toLowerCase().trim()
       );
 
       if (!existsInEncyclopedia) {
@@ -50,12 +50,12 @@ export const reconcileVegetables = async () => {
     // 2. Ensure all encyclopedia entries (that are vegetables) have a config entry
     for (const entry of encyclopediaEntries) {
       // Assuming all encyclopedia entries are vegetables for now, or check category
-      if (entry.category.toLowerCase() !== 'légume' && entry.category.toLowerCase() !== 'legume') {
+      if (entry.category?.toLowerCase() !== 'légume' && entry.category?.toLowerCase() !== 'legume') {
         continue; // Skip non-vegetables if any
       }
 
       const existsInConfig = configVegetables.some(
-        c => c.value.toLowerCase().trim() === entry.name.toLowerCase().trim()
+        c => c.value?.toLowerCase().trim() === entry.name?.toLowerCase().trim()
       );
 
       if (!existsInConfig) {
