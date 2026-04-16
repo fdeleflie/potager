@@ -11,8 +11,36 @@ import { printElement } from '../utils/print';
 export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurrentView: (v: string) => void, seedlingId: string, onBack?: () => void }) {
   const seedling = useLiveQuery(() => db.seedlings.get(seedlingId), [seedlingId]);
   const varieties = useLiveQuery(() => db.config.where('type').equals('variety').toArray());
+  const vegetables = useLiveQuery(() => db.config.where('type').equals('vegetable').toArray());
+  const encyclopedia = useLiveQuery(() => db.encyclopedia.toArray());
   const varietyAttrTypes = useLiveQuery(() => db.config.where('type').equals('variety_attr_type').toArray());
-  const varietyConfig = varieties?.find(v => v.value === seedling?.variety);
+  
+  const varietyConfig = varieties?.find(v => {
+    if (v.value !== seedling?.variety) return false;
+    
+    const vegEnc = encyclopedia?.find(e => e.name.toLowerCase().trim() === seedling?.vegetable.toLowerCase().trim());
+    const vegConfig = vegetables?.find(c => c.value.toLowerCase().trim() === seedling?.vegetable.toLowerCase().trim());
+    
+    // 1. Direct ID match
+    if (v.parentId === vegEnc?.id || v.parentId === vegConfig?.id) return true;
+    
+    // 2. Name match
+    if (seedling?.vegetable && v.parentId?.toLowerCase().trim() === seedling.vegetable.toLowerCase().trim()) return true;
+    
+    // 3. Match via parent vegetable config item
+    const parentVegConfig = vegetables?.find(c => c.id === v.parentId);
+    if (parentVegConfig && parentVegConfig.value.toLowerCase().trim() === seedling?.vegetable.toLowerCase().trim()) {
+      return true;
+    }
+    
+    // 4. Match via parent encyclopedia entry
+    const parentVegEnc = encyclopedia?.find(e => e.id === v.parentId);
+    if (parentVegEnc && parentVegEnc.name.toLowerCase().trim() === seedling?.vegetable.toLowerCase().trim()) {
+      return true;
+    }
+    
+    return false;
+  });
   const varietyAttrs = varietyConfig?.attributes;
   const [newNoteText, setNewNoteText] = useState('');
   const [newNotePhotos, setNewNotePhotos] = useState<string[]>([]);

@@ -253,7 +253,29 @@ export function SeedlingsList({ setCurrentView, initialFilter = 'active' }: { se
     // Advanced attributes filtering
     const vegEnc = encyclopedia.find(e => e.name.toLowerCase().trim() === s.vegetable.toLowerCase().trim());
     const vegConfig = vegetablesConfig.find(v => v.value === s.vegetable);
-    const variety = varietiesConfig.find(v => v.value === s.variety && (v.parentId === vegConfig?.id || v.parentId === vegEnc?.id));
+    const variety = varietiesConfig.find(v => {
+      if (v.value !== s.variety) return false;
+      
+      // 1. Direct ID match
+      if (v.parentId === vegConfig?.id || v.parentId === vegEnc?.id) return true;
+      
+      // 2. Name match
+      if (s.vegetable && v.parentId?.toLowerCase().trim() === s.vegetable.toLowerCase().trim()) return true;
+
+      // 3. Match via parent vegetable config item
+      const parentVegConfig = vegetablesConfig.find(c => c.id === v.parentId);
+      if (parentVegConfig && parentVegConfig.value.toLowerCase().trim() === s.vegetable.toLowerCase().trim()) {
+        return true;
+      }
+
+      // 4. Match via parent encyclopedia entry
+      const parentVegEnc = encyclopedia.find(e => e.id === v.parentId);
+      if (parentVegEnc && parentVegEnc.name.toLowerCase().trim() === s.vegetable.toLowerCase().trim()) {
+        return true;
+      }
+      
+      return false;
+    });
     
     const matchesAttributes = Object.entries(selectedAttributes).every(([attrTypeId, selectedValues]) => {
       if (!selectedValues || selectedValues.length === 0) return true;

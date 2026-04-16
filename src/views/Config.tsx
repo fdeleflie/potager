@@ -2,21 +2,18 @@ import React, { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, ConfigItem } from '../db';
 import { v4 as uuidv4 } from 'uuid';
-import { Settings, Plus, Trash2, Edit2, Palette, XCircle, CheckCircle2, Trees, BookOpen, Info, Cloud, CloudUpload, LogOut, LogIn } from 'lucide-react';
+import { Settings, Plus, Trash2, Edit2, Palette, XCircle, CheckCircle2, Trees, BookOpen, Info } from 'lucide-react';
 import { ConfirmModal } from '../components/Modals';
 import { ICON_LIST, ICON_MAP, GARDEN_EMOJIS, GARDEN_EMOJI_CATEGORIES } from '../constants';
 import { getDistinctColor } from '../utils/colors';
 import { PLANT_CATALOG } from '../catalog';
 import { WeatherSettings } from './WeatherSettings';
-import { migrateToCloud } from '../utils/migration';
-import { auth, loginWithGoogle, logout } from '../firebase';
-import { onAuthStateChanged } from 'firebase/auth';
 
 export function Config({ onNavigate }: { onNavigate?: (view: any) => void }) {
   const config = useLiveQuery(() => db.config.toArray());
   const [newValue, setNewValue] = useState('');
   const [newParentId, setNewParentId] = useState('');
-  const [activeTab, setActiveTab] = useState<'state' | 'location' | 'zone' | 'terrain' | 'variety_option' | 'variety_attr_type' | 'weather' | 'expense_category' | 'category' | 'cloud'>('state');
+  const [activeTab, setActiveTab] = useState<'state' | 'location' | 'zone' | 'terrain' | 'variety_option' | 'variety_attr_type' | 'weather' | 'expense_category' | 'category'>('state');
   const [selectedAttrType, setSelectedAttrType] = useState<string>('');
 
   const [editingZoneId, setEditingZoneId] = useState<string | null>(null);
@@ -40,31 +37,6 @@ export function Config({ onNavigate }: { onNavigate?: (view: any) => void }) {
     onConfirm: () => void;
     isDanger?: boolean;
   }>({ isOpen: false, title: '', message: '', onConfirm: () => {} });
-
-  const [user, setUser] = useState<any>(null);
-  const [migrationStatus, setMigrationStatus] = useState<'idle' | 'migrating' | 'success' | 'error'>('idle');
-  const [migrationProgress, setMigrationProgress] = useState<string>('');
-
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-    });
-    return () => unsubscribe();
-  }, []);
-
-  const handleMigration = async () => {
-    if (!user) return;
-    setMigrationStatus('migrating');
-    setMigrationProgress('Initialisation...');
-    try {
-      await migrateToCloud((msg) => setMigrationProgress(msg));
-      setMigrationStatus('success');
-    } catch (error: any) {
-      console.error(error);
-      setMigrationStatus('error');
-      setMigrationProgress(error.message || 'Une erreur est survenue.');
-    }
-  };
 
   const varietyAttrTypes = React.useMemo(() => 
     config?.filter(c => c.type === 'variety_attr_type').sort((a, b) => a.value.localeCompare(b.value)) || []
@@ -285,86 +257,7 @@ export function Config({ onNavigate }: { onNavigate?: (view: any) => void }) {
         </div>
 
         <div className="p-3">
-          {activeTab === 'cloud' ? (
-            <div className="p-4 space-y-6">
-              <div className="flex items-center gap-3 border-b border-stone-100 pb-4">
-                <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
-                  <Cloud className="w-6 h-6" />
-                </div>
-                <div>
-                  <h2 className="text-lg font-medium text-stone-900">Migration vers le Cloud</h2>
-                  <p className="text-sm text-stone-500">Sauvegardez vos données locales vers Firebase pour y accéder partout.</p>
-                </div>
-              </div>
-
-              <div className="bg-stone-50 p-4 rounded-xl border border-stone-200">
-                <h3 className="text-sm font-medium text-stone-900 mb-2">1. Connexion</h3>
-                {user ? (
-                  <div className="flex items-center justify-between bg-white p-3 rounded-lg border border-stone-200">
-                    <div className="flex items-center gap-3">
-                      {user.photoURL ? (
-                        <img src={user.photoURL} alt="Profil" className="w-8 h-8 rounded-full" referrerPolicy="no-referrer" />
-                      ) : (
-                        <div className="w-8 h-8 bg-emerald-100 text-emerald-700 rounded-full flex items-center justify-center font-bold">
-                          {user.email?.charAt(0).toUpperCase()}
-                        </div>
-                      )}
-                      <div>
-                        <p className="text-sm font-medium text-stone-900">{user.displayName || 'Utilisateur'}</p>
-                        <p className="text-xs text-stone-500">{user.email}</p>
-                      </div>
-                    </div>
-                    <button onClick={logout} className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-stone-600 bg-stone-100 hover:bg-stone-200 rounded-md transition-colors">
-                      <LogOut className="w-3.5 h-3.5" />
-                      Déconnexion
-                    </button>
-                  </div>
-                ) : (
-                  <div className="text-center py-4">
-                    <p className="text-sm text-stone-600 mb-3">Vous devez être connecté avec un compte Google pour migrer vos données.</p>
-                    <button onClick={loginWithGoogle} className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-stone-300 text-stone-700 rounded-lg hover:bg-stone-50 transition-colors text-sm font-medium shadow-sm">
-                      <LogIn className="w-4 h-4" />
-                      Se connecter avec Google
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              <div className="bg-stone-50 p-4 rounded-xl border border-stone-200">
-                <h3 className="text-sm font-medium text-stone-900 mb-2">2. Migration des données</h3>
-                <p className="text-xs text-stone-500 mb-4">
-                  Cette opération va copier toutes vos données locales (semis, journal, configuration, etc.) vers votre base de données Cloud. Vos données locales ne seront pas supprimées.
-                </p>
-                
-                <div className="flex flex-col items-center">
-                  <button 
-                    onClick={handleMigration}
-                    disabled={!user || migrationStatus === 'migrating'}
-                    className={`inline-flex items-center gap-2 px-6 py-2.5 rounded-lg text-sm font-medium shadow-sm transition-all ${
-                      !user 
-                        ? 'bg-stone-200 text-stone-400 cursor-not-allowed' 
-                        : migrationStatus === 'migrating'
-                          ? 'bg-blue-100 text-blue-700 cursor-wait'
-                          : 'bg-blue-600 hover:bg-blue-700 text-white'
-                    }`}
-                  >
-                    <CloudUpload className={`w-4 h-4 ${migrationStatus === 'migrating' ? 'animate-bounce' : ''}`} />
-                    {migrationStatus === 'migrating' ? 'Migration en cours...' : 'Lancer la migration'}
-                  </button>
-
-                  {migrationProgress && (
-                    <div className={`mt-4 p-3 rounded-lg text-sm w-full text-center ${
-                      migrationStatus === 'error' ? 'bg-red-50 text-red-700 border border-red-200' :
-                      migrationStatus === 'success' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
-                      'bg-blue-50 text-blue-700 border border-blue-200'
-                    }`}>
-                      {migrationProgress}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          ) : activeTab === 'weather' ? (
+          {activeTab === 'weather' ? (
             <WeatherSettings />
           ) : (
             <>

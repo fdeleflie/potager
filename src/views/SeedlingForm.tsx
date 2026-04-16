@@ -71,7 +71,31 @@ export function SeedlingForm({ setCurrentView, seedlingId, onBack }: { setCurren
   const allVegetables = Array.from(new Set([...encyclopediaVegetables, ...catalogVegetables])).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
 
   const selectedVegEntry = encyclopedia.find(e => e.name.toLowerCase().trim() === vegetable.toLowerCase().trim());
-  const configuredVarieties = config.filter(c => c.type === 'variety' && c.parentId === selectedVegEntry?.id).map(c => c.value);
+  const selectedVegConfig = config.find(c => c.type === 'vegetable' && c.value.toLowerCase().trim() === vegetable.toLowerCase().trim());
+  
+  const configuredVarieties = config.filter(c => {
+    if (c.type !== 'variety') return false;
+    
+    // 1. Direct ID match
+    if (c.parentId === selectedVegEntry?.id || c.parentId === selectedVegConfig?.id) return true;
+    
+    // 2. Name match (if parentId is actually the name of the vegetable)
+    if (vegetable && c.parentId?.toLowerCase().trim() === vegetable.toLowerCase().trim()) return true;
+    
+    // 3. Match via parent vegetable config item
+    const parentVegConfig = config.find(v => v.id === c.parentId && v.type === 'vegetable');
+    if (parentVegConfig && parentVegConfig.value.toLowerCase().trim() === vegetable.toLowerCase().trim()) {
+      return true;
+    }
+    
+    // 4. Match via parent encyclopedia entry
+    const parentVegEnc = encyclopedia.find(e => e.id === c.parentId);
+    if (parentVegEnc && parentVegEnc.name.toLowerCase().trim() === vegetable.toLowerCase().trim()) {
+      return true;
+    }
+    
+    return false;
+  }).map(c => c.value);
   // Filter out catalog varieties as requested by the user ("je ne veux que celles que je mets")
   const allVarieties = Array.from(new Set([...configuredVarieties])).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
 
@@ -208,11 +232,19 @@ export function SeedlingForm({ setCurrentView, seedlingId, onBack }: { setCurren
 
     // Add new variety to config if it doesn't exist
     if (variety.trim() && currentVegetableId) {
-      const existingVariety = config.find(v => 
-        v.type === 'variety' && 
-        v.parentId === currentVegetableId && 
-        v.value.toLowerCase().trim() === variety.toLowerCase().trim()
-      );
+      const existingVariety = config.find(v => {
+        if (v.type !== 'variety') return false;
+        if (v.value.toLowerCase().trim() !== variety.toLowerCase().trim()) return false;
+        
+        if (v.parentId === currentVegetableId) return true;
+        
+        const parentVeg = config.find(c => c.id === v.parentId && c.type === 'vegetable');
+        if (parentVeg && parentVeg.value.toLowerCase().trim() === vegetable.toLowerCase().trim()) {
+          return true;
+        }
+        
+        return false;
+      });
       
       if (!existingVariety) {
         await db.config.add({

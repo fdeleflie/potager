@@ -85,7 +85,30 @@ export function EncyclopediaView() {
   const selectedVeg = unifiedPlants.find(v => v.id === selectedVegId);
   const selectedHealth = healthIssues?.find(h => h.id === selectedHealthId);
   
-  const plantVarieties = config?.filter(c => c.type === 'variety' && (c.parentId === selectedVeg?.configId || c.parentId === selectedVeg?.encyclopediaId)).sort((a, b) => a.value.localeCompare(b.value)) || [];
+  const plantVarieties = config?.filter(c => {
+    if (c.type !== 'variety') return false;
+    
+    // 1. Direct ID match (Config ID or Encyclopedia ID)
+    if (c.parentId === selectedVeg?.configId || c.parentId === selectedVeg?.encyclopediaId) return true;
+    
+    // 2. Name match (if parentId is actually the name of the vegetable)
+    if (selectedVeg?.name && c.parentId?.toLowerCase().trim() === selectedVeg.name.toLowerCase().trim()) return true;
+    
+    if (selectedVeg?.name) {
+      // 3. Match via parent vegetable config item (if it still exists)
+      const parentVegConfig = config.find(v => v.id === c.parentId && v.type === 'vegetable');
+      if (parentVegConfig && parentVegConfig.value.toLowerCase().trim() === selectedVeg.name.toLowerCase().trim()) {
+        return true;
+      }
+      
+      // 4. Match via parent encyclopedia entry
+      const parentVegEnc = encyclopedia?.find(e => e.id === c.parentId);
+      if (parentVegEnc && parentVegEnc.name.toLowerCase().trim() === selectedVeg.name.toLowerCase().trim()) {
+        return true;
+      }
+    }
+    return false;
+  }).sort((a, b) => a.value.localeCompare(b.value)) || [];
 
   const handleStartEdit = (veg?: any) => {
     if (veg) {
@@ -192,7 +215,16 @@ export function EncyclopediaView() {
         await db.config.delete(veg.configId);
       }
       // Delete associated varieties
-      const varieties = config?.filter(c => c.type === "variety" && (c.parentId === veg.configId || c.parentId === veg.encyclopediaId)) || [];
+      const varieties = config?.filter(c => {
+        if (c.type !== "variety") return false;
+        if (c.parentId === veg.configId || c.parentId === veg.encyclopediaId) return true;
+        
+        const parentVeg = config.find(v => v.id === c.parentId && v.type === 'vegetable');
+        if (parentVeg && parentVeg.value.toLowerCase().trim() === veg.name.toLowerCase().trim()) {
+          return true;
+        }
+        return false;
+      }) || [];
       for (const v of varieties) {
         await db.config.delete(v.id);
       }

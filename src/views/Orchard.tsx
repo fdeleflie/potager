@@ -101,13 +101,47 @@ export function Orchard() {
   }, [structures, selectedTerrainId]);
 
   const getVarietiesForSpecies = (species: string) => {
-    if (!trees) return [];
     const varieties = new Set<string>();
-    trees.forEach(t => {
-      if (t.species?.toLowerCase() === species?.toLowerCase() && t.variety) {
-        varieties.add(t.variety);
-      }
-    });
+    
+    // 1. From existing trees
+    if (trees) {
+      trees.forEach(t => {
+        if (t.species?.toLowerCase() === species?.toLowerCase() && t.variety) {
+          varieties.add(t.variety);
+        }
+      });
+    }
+
+    // 2. From config table (catalog)
+    if (config) {
+      const speciesEnc = encyclopedia?.find(e => e.name.toLowerCase().trim() === species.toLowerCase().trim());
+      const speciesConfig = config.find(c => c.type === 'vegetable' && c.value.toLowerCase().trim() === species.toLowerCase().trim());
+      
+      config.filter(c => {
+        if (c.type !== 'variety') return false;
+        
+        // Match by ID
+        if (c.parentId === speciesEnc?.id || c.parentId === speciesConfig?.id) return true;
+        
+        // Match by Name
+        if (c.parentId?.toLowerCase().trim() === species.toLowerCase().trim()) return true;
+        
+        // Match via parent config item
+        const parentVegConfig = config.find(v => v.id === c.parentId && v.type === 'vegetable');
+        if (parentVegConfig && parentVegConfig.value.toLowerCase().trim() === species.toLowerCase().trim()) {
+          return true;
+        }
+
+        // Match via parent encyclopedia entry
+        const parentVegEnc = encyclopedia?.find(e => e.id === c.parentId);
+        if (parentVegEnc && parentVegEnc.name.toLowerCase().trim() === species.toLowerCase().trim()) {
+          return true;
+        }
+
+        return false;
+      }).forEach(v => varieties.add(v.value));
+    }
+
     return Array.from(varieties).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
   };
 
@@ -598,11 +632,25 @@ export function Orchard() {
 
     // Check if variety exists in config for this species, if not add it
     if (newTree.variety && speciesId) {
-      const existingVariety = config?.find(c => 
-        c.type === 'variety' && 
-        c.parentId === speciesId && 
-        c.value.toLowerCase().trim() === newTree.variety.toLowerCase().trim()
-      );
+      const existingVariety = config?.find(c => {
+        if (c.type !== 'variety') return false;
+        if (c.value.toLowerCase().trim() !== newTree.variety.toLowerCase().trim()) return false;
+        if (c.parentId === speciesId) return true;
+        
+        // Check if parent is a vegetable config item with the same name
+        const parentVegConfig = config.find(v => v.id === c.parentId && v.type === 'vegetable');
+        if (parentVegConfig && parentVegConfig.value.toLowerCase().trim() === newTree.species.toLowerCase().trim()) {
+          return true;
+        }
+
+        // Check if parent is an encyclopedia entry with the same name
+        const parentVegEnc = encyclopedia?.find(e => e.id === c.parentId);
+        if (parentVegEnc && parentVegEnc.name.toLowerCase().trim() === newTree.species.toLowerCase().trim()) {
+          return true;
+        }
+        
+        return false;
+      });
       if (!existingVariety) {
         await db.config.add({
           id: uuidv4(),
@@ -666,11 +714,25 @@ export function Orchard() {
 
     // Check if variety exists in config for this species, if not add it
     if (editTreeData.variety && speciesId) {
-      const existingVariety = config?.find(c => 
-        c.type === 'variety' && 
-        c.parentId === speciesId && 
-        c.value.toLowerCase().trim() === editTreeData.variety.toLowerCase().trim()
-      );
+      const existingVariety = config?.find(c => {
+        if (c.type !== 'variety') return false;
+        if (c.value.toLowerCase().trim() !== editTreeData.variety.toLowerCase().trim()) return false;
+        if (c.parentId === speciesId) return true;
+        
+        // Check if parent is a vegetable config item with the same name
+        const parentVegConfig = config.find(v => v.id === c.parentId && v.type === 'vegetable');
+        if (parentVegConfig && parentVegConfig.value.toLowerCase().trim() === editTreeData.species.toLowerCase().trim()) {
+          return true;
+        }
+
+        // Check if parent is an encyclopedia entry with the same name
+        const parentVegEnc = encyclopedia?.find(e => e.id === c.parentId);
+        if (parentVegEnc && parentVegEnc.name.toLowerCase().trim() === editTreeData.species.toLowerCase().trim()) {
+          return true;
+        }
+        
+        return false;
+      });
       if (!existingVariety) {
         await db.config.add({
           id: uuidv4(),

@@ -107,7 +107,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
   const [selectedSeedlingId, setSelectedSeedlingId] = useState<string | null>(null);
   const [showLabels, setShowLabels] = useState<boolean>(() => {
     const saved = localStorage.getItem('gardenPlanShowLabels');
-    return saved === 'true';
+    return saved === null ? true : saved === 'true';
   });
   const [zoom, setZoom] = useState<number>(() => {
     const savedZoom = localStorage.getItem('gardenPlanZoom');

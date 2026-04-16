@@ -497,11 +497,51 @@ export default function App() {
       }
     };
 
+    const fixVarieties = async () => {
+      const varieties = await db.config.where('type').equals('variety').toArray();
+      const encyclopedia = await db.encyclopedia.toArray();
+      const seedlings = await db.seedlings.toArray();
+      const trees = await db.trees.toArray();
+      
+      for (const v of varieties) {
+        // Check if parent exists in encyclopedia
+        const parentExists = encyclopedia.some(e => e.id === v.parentId);
+        if (!parentExists) {
+          // 1. Try to find matching seedling to discover parent vegetable
+          const matchingSeedling = seedlings.find(s => s.variety === v.value);
+          if (matchingSeedling) {
+            const parentEnc = encyclopedia.find(e => e.name.toLowerCase().trim() === matchingSeedling.vegetable.toLowerCase().trim());
+            if (parentEnc) {
+              await db.config.update(v.id, { parentId: parentEnc.id });
+              continue;
+            }
+          }
+          
+          // 2. Try to find matching tree to discover parent species
+          const matchingTree = trees.find(t => t.variety === v.value);
+          if (matchingTree && matchingTree.species) {
+            const parentEnc = encyclopedia.find(e => e.name.toLowerCase().trim() === matchingTree.species.toLowerCase().trim());
+            if (parentEnc) {
+              await db.config.update(v.id, { parentId: parentEnc.id });
+              continue;
+            }
+          }
+          
+          // 3. If parentId is a string that matches an encyclopedia name, update it to the ID
+          const parentByName = encyclopedia.find(e => e.name.toLowerCase().trim() === String(v.parentId).toLowerCase().trim());
+          if (parentByName) {
+             await db.config.update(v.id, { parentId: parentByName.id });
+          }
+        }
+      }
+    };
+
     const init = async () => {
       await deduplicate();
       await populateEncyclopedia();
       await populateHealthIssues();
       await migrateVegetablesToEncyclopedia();
+      await fixVarieties();
     };
 
     init();

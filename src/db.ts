@@ -220,12 +220,12 @@ tables.forEach(tableName => {
       const user = auth?.currentUser;
       if (!user) return;
       const cleanObj = Object.fromEntries(Object.entries(obj).filter(([_, v]) => v !== undefined));
-      setDoc(doc(firestoreDb, `users/${user.uid}/${tableName}`, primKey), cleanObj).catch(console.error);
+      setDoc(doc(firestoreDb, `users/${user.uid}/${tableName}`, String(primKey)), cleanObj).catch(console.error);
     });
   });
 
   db.table(tableName).hook('updating', (mods, primKey, obj, trans) => {
-    if (mods._fromFirestore) {
+    if ((mods as any)._fromFirestore) {
       return { _fromFirestore: undefined };
     }
     trans.on('complete', () => {
@@ -234,19 +234,19 @@ tables.forEach(tableName => {
       const updatedObj = { ...obj, ...mods };
       delete updatedObj._fromFirestore;
       const cleanObj = Object.fromEntries(Object.entries(updatedObj).filter(([_, v]) => v !== undefined));
-      setDoc(doc(firestoreDb, `users/${user.uid}/${tableName}`, primKey), cleanObj, { merge: true }).catch(console.error);
+      setDoc(doc(firestoreDb, `users/${user.uid}/${tableName}`, String(primKey)), cleanObj, { merge: true }).catch(console.error);
     });
   });
 
   db.table(tableName).hook('deleting', (primKey, obj, trans) => {
-    if (pendingDeletesFromFirestore.has(primKey)) {
-      pendingDeletesFromFirestore.delete(primKey);
+    if (pendingDeletesFromFirestore.has(String(primKey))) {
+      pendingDeletesFromFirestore.delete(String(primKey));
       return;
     }
     trans.on('complete', () => {
       const user = auth?.currentUser;
       if (!user) return;
-      deleteDoc(doc(firestoreDb, `users/${user.uid}/${tableName}`, primKey)).catch(console.error);
+      deleteDoc(doc(firestoreDb, `users/${user.uid}/${tableName}`, String(primKey))).catch(console.error);
     });
   });
 });
