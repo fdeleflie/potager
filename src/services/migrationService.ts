@@ -40,7 +40,7 @@ export async function migrateLocalDataToFirebase(logCallback?: (msg: string) => 
 
   let batch = writeBatch(dbFirebase);
   let opCount = 0;
-  const MAX_BATCH_SIZE = 400; // max 500
+  const MAX_BATCH_SIZE = 5; // Reduced to 5 because base64 photos are large
 
   for (const coll of collectionsData) {
     log(`Migrating collection: ${coll.name} (${coll.data.length} records)`);
