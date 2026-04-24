@@ -53,6 +53,22 @@ export async function migrateLocalDataToFirebase(logCallback?: (msg: string) => 
       // We must add userId just in case, though the rules enforce it.
       scrubbedItem.userId = user.uid;
 
+      // Firestore document limit is 1MB. Base64 photos can exceed this.
+      // Strip photos if they are too large or entirely for now to ensure migration succeeds.
+      const docStringSize = JSON.stringify(scrubbedItem).length;
+      if (docStringSize > 800000) { // roughly 800KB
+        log(`Warning: Document ${item.id} is very large. Stripping photos...`);
+        if (scrubbedItem.photo) {
+          scrubbedItem.photo = null;
+        }
+        if (scrubbedItem.photos) {
+          scrubbedItem.photos = [];
+        }
+        if (scrubbedItem.notes) {
+          scrubbedItem.notes = scrubbedItem.notes.map((n: any) => ({ ...n, photos: [] }));
+        }
+      }
+
       batch.set(docRef, scrubbedItem);
       opCount++;
 
