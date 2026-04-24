@@ -1,14 +1,10 @@
-export const printElement = (elementId: string, title: string, scale: number = 100, onBlocked?: () => void) => {
+export const printElement = (elementId: string, title: string, scale: number = 100) => {
   const element = document.getElementById(elementId);
   if (!element) return;
 
   const printWindow = window.open('', '_blank');
   if (!printWindow) {
-    if (onBlocked) {
-      onBlocked();
-    } else {
-      alert("Veuillez autoriser les pop-ups pour imprimer.");
-    }
+    alert("Veuillez autoriser les pop-ups pour imprimer.");
     return;
   }
 

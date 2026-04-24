@@ -1,11 +1,50 @@
 {
   "entities": {
-    "Seedling": {
-      "title": "Seedling",
-      "description": "A seedling or plant entry",
+    "Note": {
+      "title": "Note",
+      "description": "A note with optional photos",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
+        "date": { "type": "string" },
+        "text": { "type": "string" },
+        "photos": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["id", "date", "text"]
+    },
+    "HarvestEvent": {
+      "title": "HarvestEvent",
+      "description": "A harvest event",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "quantity": { "type": "number" },
+        "unit": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["id", "date", "quantity", "unit"]
+    },
+    "Position": {
+      "title": "Position",
+      "description": "X/Y coordinates",
+      "type": "object",
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" }
+      },
+      "required": ["x", "y"]
+    },
+    "Seedling": {
+      "title": "Seedling",
+      "description": "Represents a planted seedling",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
         "vegetable": { "type": "string" },
         "variety": { "type": "string" },
         "origin": { "type": "string" },
@@ -19,8 +58,8 @@
         "photo": { "type": "string" },
         "isArchived": { "type": "boolean" },
         "isDeleted": { "type": "boolean" },
-        "notes": { "type": "array" },
-        "harvests": { "type": "array" },
+        "notes": { "type": "array", "items": { "$ref": "#/entities/Note" } },
+        "harvests": { "type": "array", "items": { "$ref": "#/entities/HarvestEvent" } },
         "success": { "type": "boolean" },
         "failureReason": { "type": "string" },
         "quantity": { "type": "number" },
@@ -29,44 +68,47 @@
         "quantityLostSown": { "type": "number" },
         "quantityLostTransplanted": { "type": "number" },
         "zoneId": { "type": "string" },
-        "positions": { "type": "array" },
+        "positions": { "type": "array", "items": { "$ref": "#/entities/Position" } },
         "salePrice": { "type": "number" },
         "saleComment": { "type": "string" }
       },
-      "required": ["id", "vegetable", "variety", "dateSown", "state", "location", "isArchived", "isDeleted"]
+      "required": ["id", "userId", "vegetable", "variety", "dateSown", "state", "location", "comments", "isArchived", "isDeleted"]
     },
     "JournalEntry": {
       "title": "JournalEntry",
-      "description": "A journal entry",
+      "description": "A journal log entry",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
+        "userId": { "type": "string" },
         "date": { "type": "string" },
         "content": { "type": "string" },
-        "photos": { "type": "array" },
+        "photos": { "type": "array", "items": { "type": "string" } },
         "isDeleted": { "type": "boolean" }
       },
-      "required": ["id", "date", "content", "isDeleted"]
+      "required": ["id", "userId", "date", "content", "isDeleted"]
     },
     "ConfigItem": {
       "title": "ConfigItem",
-      "description": "Configuration item (vegetables, varieties, etc.)",
+      "description": "Configuration item for the user",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
+        "userId": { "type": "string" },
         "type": { "type": "string" },
         "value": { "type": "string" },
         "parentId": { "type": "string" },
         "attributes": { "type": "object" }
       },
-      "required": ["id", "type", "value"]
+      "required": ["id", "userId", "type", "value"]
     },
     "Tree": {
       "title": "Tree",
-      "description": "A tree in the orchard",
+      "description": "Perennial tree for the orchard",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
+        "userId": { "type": "string" },
         "terrainId": { "type": "string" },
         "species": { "type": "string" },
         "variety": { "type": "string" },
@@ -78,34 +120,36 @@
         "spacing": { "type": "number" },
         "isLocked": { "type": "boolean" },
         "isDeleted": { "type": "boolean" },
-        "notes": { "type": "array" }
+        "notes": { "type": "array", "items": { "$ref": "#/entities/Note" } }
       },
-      "required": ["id", "terrainId", "species", "variety", "datePlanted", "positionX", "positionY", "isDeleted"]
+      "required": ["id", "userId", "terrainId", "species", "variety", "datePlanted", "comments", "positionX", "positionY", "isDeleted"]
     },
     "Structure": {
       "title": "Structure",
-      "description": "A structure in the garden",
+      "description": "A structural item like a greenhouse",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
+        "userId": { "type": "string" },
         "terrainId": { "type": "string" },
         "zoneId": { "type": "string" },
         "name": { "type": "string" },
         "type": { "type": "string" },
-        "positions": { "type": "array" },
+        "positions": { "type": "array", "items": { "$ref": "#/entities/Position" } },
         "width": { "type": "number" },
         "height": { "type": "number" },
         "color": { "type": "string" },
         "icon": { "type": "string" }
       },
-      "required": ["id", "terrainId", "name", "type", "positions"]
+      "required": ["id", "userId", "name", "type", "positions"]
     },
     "Task": {
       "title": "Task",
-      "description": "A task to do",
+      "description": "A user-defined or automatic task",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
+        "userId": { "type": "string" },
         "title": { "type": "string" },
         "description": { "type": "string" },
         "dateCreated": { "type": "string" },
@@ -117,14 +161,15 @@
         "seedlingId": { "type": "string" },
         "isDeleted": { "type": "boolean" }
       },
-      "required": ["id", "title", "dateCreated", "isCompleted", "priority", "type", "isDeleted"]
+      "required": ["id", "userId", "title", "dateCreated", "isCompleted", "priority", "type", "isDeleted"]
     },
     "EncyclopediaEntry": {
       "title": "EncyclopediaEntry",
-      "description": "Plant encyclopedia entry",
+      "description": "An encyclopedia entry for a plant",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
+        "userId": { "type": "string" },
         "name": { "type": "string" },
         "category": { "type": "string" },
         "sowingPeriod": { "type": "string" },
@@ -133,82 +178,84 @@
         "exposure": { "type": "string" },
         "waterNeeds": { "type": "string" },
         "spacing": { "type": "string" },
-        "goodCompanions": { "type": "array" },
-        "badCompanions": { "type": "array" },
+        "goodCompanions": { "type": "array", "items": { "type": "string" } },
+        "badCompanions": { "type": "array", "items": { "type": "string" } },
         "tips": { "type": "string" },
         "updatedAt": { "type": "string" },
         "pricePerKg": { "type": "number" },
         "color": { "type": "string" },
         "icon": { "type": "string" }
       },
-      "required": ["id", "name", "category", "updatedAt"]
+      "required": ["id", "userId", "name", "category", "sowingPeriod", "plantingPeriod", "harvestPeriod", "exposure", "waterNeeds", "spacing", "updatedAt"]
     },
     "HealthIssue": {
       "title": "HealthIssue",
-      "description": "Plant health issue",
+      "description": "A health issue description",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
+        "userId": { "type": "string" },
         "name": { "type": "string" },
         "type": { "type": "string" },
         "symptoms": { "type": "string" },
-        "solutions": { "type": "array" },
+        "solutions": { "type": "array", "items": { "type": "string" } },
         "prevention": { "type": "string" },
-        "affectedPlants": { "type": "array" },
+        "affectedPlants": { "type": "array", "items": { "type": "string" } },
         "updatedAt": { "type": "string" }
       },
-      "required": ["id", "name", "type", "symptoms", "prevention", "updatedAt"]
+      "required": ["id", "userId", "name", "type", "symptoms", "prevention", "updatedAt"]
     },
     "Expense": {
       "title": "Expense",
-      "description": "An expense",
+      "description": "An expense item",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
+        "userId": { "type": "string" },
         "date": { "type": "string" },
         "category": { "type": "string" },
         "amount": { "type": "number" },
         "description": { "type": "string" }
       },
-      "required": ["id", "date", "category", "amount", "description"]
+      "required": ["id", "userId", "date", "category", "amount", "description"]
     }
   },
   "firestore": {
     "/users/{userId}/seedlings/{seedlingId}": {
       "schema": { "$ref": "#/entities/Seedling" },
-      "description": "User's seedlings"
+      "description": "A user's seedlings"
     },
     "/users/{userId}/journal/{journalId}": {
       "schema": { "$ref": "#/entities/JournalEntry" },
-      "description": "User's journal entries"
+      "description": "A user's journal entries"
     },
     "/users/{userId}/config/{configId}": {
       "schema": { "$ref": "#/entities/ConfigItem" },
-      "description": "User's configuration items"
+      "description": "A user's configuration item"
     },
     "/users/{userId}/trees/{treeId}": {
       "schema": { "$ref": "#/entities/Tree" },
-      "description": "User's trees"
+      "description": "A user's orchard trees"
     },
     "/users/{userId}/structures/{structureId}": {
       "schema": { "$ref": "#/entities/Structure" },
-      "description": "User's structures"
+      "description": "A user's structures"
     },
     "/users/{userId}/tasks/{taskId}": {
       "schema": { "$ref": "#/entities/Task" },
-      "description": "User's tasks"
+      "description": "A user's tasks"
     },
-    "/users/{userId}/encyclopedia/{entryId}": {
+    "/users/{userId}/encyclopedia/{encyclopediaId}": {
       "schema": { "$ref": "#/entities/EncyclopediaEntry" },
-      "description": "User's encyclopedia entries"
+      "description": "A user's encyclopedia additions"
     },
-    "/users/{userId}/healthIssues/{issueId}": {
+    "/users/{userId}/healthIssues/{healthId}": {
       "schema": { "$ref": "#/entities/HealthIssue" },
-      "description": "User's health issues"
+      "description": "A user's custom health issues"
     },
     "/users/{userId}/expenses/{expenseId}": {
       "schema": { "$ref": "#/entities/Expense" },
-      "description": "User's expenses"
+      "description": "A user's expenses"
     }
   }
 }

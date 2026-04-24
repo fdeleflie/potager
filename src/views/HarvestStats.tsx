@@ -4,7 +4,6 @@ import { db } from '../db';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line, Cell, PieChart, Pie } from 'recharts';
 import { BarChart3, Scale, Hash, Trophy, TrendingUp, Euro, MapPin, ChevronDown, ChevronUp, Plus, Trash2, CheckCircle2 } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
-import { ConfirmModal } from '../components/Modals';
 
 const COLORS = ['#10b981', '#3b82f6', '#8b5cf6', '#f59e0b', '#ef4444', '#14b8a6', '#f97316', '#6366f1'];
 
@@ -390,7 +389,6 @@ export function HarvestStats() {
 function ExpensesSection({ expenses, config }: { expenses: any[], config: any[] }) {
   const [isAdding, setIsAdding] = useState(false);
   const [form, setForm] = useState({ date: new Date().toISOString().split('T')[0], category: '', amount: '', description: '' });
-  const [confirmDelete, setConfirmDelete] = useState<{isOpen: boolean, id: string | null}>({ isOpen: false, id: null });
 
   const categories = config.filter(c => c.type === 'expense_category').map(c => c.value);
   const defaultCategory = categories.length > 0 ? categories[0] : 'Autre';
@@ -418,8 +416,10 @@ function ExpensesSection({ expenses, config }: { expenses: any[], config: any[] 
     setIsAdding(false);
   };
 
-  const handleDelete = (id: string) => {
-    setConfirmDelete({ isOpen: true, id });
+  const handleDelete = async (id: string) => {
+    if (window.confirm('Supprimer cette dépense ?')) {
+      await db.expenses.delete(id);
+    }
   };
 
   return (
@@ -504,20 +504,6 @@ function ExpensesSection({ expenses, config }: { expenses: any[], config: any[] 
           </table>
         )}
       </div>
-
-      <ConfirmModal
-        isOpen={confirmDelete.isOpen}
-        onClose={() => setConfirmDelete({ isOpen: false, id: null })}
-        onConfirm={async () => {
-          if (confirmDelete.id) {
-            await db.expenses.delete(confirmDelete.id);
-            setConfirmDelete({ isOpen: false, id: null });
-          }
-        }}
-        title="Supprimer la dépense"
-        message="Voulez-vous vraiment supprimer cette dépense ?"
-        isDanger={true}
-      />
     </div>
   );
 }

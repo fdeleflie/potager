@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, ConfigItem } from '../db';
 import { v4 as uuidv4 } from 'uuid';
 import { Settings, Plus, Trash2, Edit2, Palette, XCircle, CheckCircle2, Trees, BookOpen, Info } from 'lucide-react';
-import { ConfirmModal, AlertModal } from '../components/Modals';
+import { ConfirmModal } from '../components/Modals';
 import { ICON_LIST, ICON_MAP, GARDEN_EMOJIS, GARDEN_EMOJI_CATEGORIES } from '../constants';
 import { getDistinctColor } from '../utils/colors';
 import { PLANT_CATALOG } from '../catalog';
@@ -13,8 +13,30 @@ export function Config({ onNavigate }: { onNavigate?: (view: any) => void }) {
   const config = useLiveQuery(() => db.config.toArray());
   const [newValue, setNewValue] = useState('');
   const [newParentId, setNewParentId] = useState('');
-  const [activeTab, setActiveTab] = useState<'state' | 'location' | 'zone' | 'terrain' | 'variety_option' | 'variety_attr_type' | 'weather' | 'expense_category' | 'category'>('state');
+  const [activeTab, setActiveTab] = useState<'state' | 'location' | 'zone' | 'terrain' | 'variety_option' | 'variety_attr_type' | 'weather' | 'expense_category' | 'category' | 'migration'>('state');
   const [selectedAttrType, setSelectedAttrType] = useState<string>('');
+  
+  const [migrationLogs, setMigrationLogs] = useState<string[]>([]);
+  const [isMigrating, setIsMigrating] = useState(false);
+
+  const handleMigration = async () => {
+    if (window.confirm("Êtes-vous sûr de vouloir lancer la migration de TOUTES vos données vers Firebase ? Cette opération est irréversible et écrasera vos données Cloud existantes s'il y en a pour cet identifiant.")) {
+      setIsMigrating(true);
+      setMigrationLogs(["Démarrage de la migration..."]);
+      try {
+        const { migrateLocalDataToFirebase } = await import('../services/migrationService');
+        await migrateLocalDataToFirebase((msg) => {
+          setMigrationLogs(prev => [...prev, msg]);
+        });
+        setMigrationLogs(prev => [...prev, "Migration terminée avec succès ! Vous pouvez maintenant migrer votre application pour utiliser Firebase à la place de la base locale Dexie."]);
+      } catch (e: any) {
+        console.error(e);
+        setMigrationLogs(prev => [...prev, `Erreur pendant la migration : ${e.message}`]);
+      } finally {
+        setIsMigrating(false);
+      }
+    }
+  };
 
   const [editingZoneId, setEditingZoneId] = useState<string | null>(null);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -37,12 +59,6 @@ export function Config({ onNavigate }: { onNavigate?: (view: any) => void }) {
     onConfirm: () => void;
     isDanger?: boolean;
   }>({ isOpen: false, title: '', message: '', onConfirm: () => {} });
-
-  const [alertState, setAlertState] = useState<{
-    isOpen: boolean;
-    title: string;
-    message: string;
-  }>({ isOpen: false, title: '', message: '' });
 
   const varietyAttrTypes = React.useMemo(() => 
     config?.filter(c => c.type === 'variety_attr_type').sort((a, b) => a.value.localeCompare(b.value)) || []
@@ -83,17 +99,13 @@ export function Config({ onNavigate }: { onNavigate?: (view: any) => void }) {
     // Duplicate check
     const isDuplicate = config.some(c => 
       c.type === activeTab && 
-      c.value?.toLowerCase().trim() === newValue?.toLowerCase().trim() &&
+      c.value.toLowerCase().trim() === newValue.toLowerCase().trim() &&
       
       (activeTab !== 'variety_option' || c.parentId === selectedAttrType)
     );
 
     if (isDuplicate) {
-      setAlertState({
-        isOpen: true,
-        title: "Élément en double",
-        message: `Cet élément existe déjà dans la catégorie ${tabs.find(t => t.id === activeTab)?.label}.`
-      });
+      alert(`Cet élément existe déjà dans la catégorie ${tabs.find(t => t.id === activeTab)?.label}.`);
       return;
     }
 
@@ -105,7 +117,7 @@ export function Config({ onNavigate }: { onNavigate?: (view: any) => void }) {
       attributes: activeTab === 'terrain' ? { width: 1000, height: 1000 } : 
                   false ? { 
                     color: getDistinctColor(config.filter(c => c.type === 'vegetable').map(v => v.attributes?.color).filter(Boolean)),
-                    icon: PLANT_CATALOG.find(p => p.name?.toLowerCase() === newValue.trim()?.toLowerCase())?.emoji || 'Sprout' 
+                    icon: PLANT_CATALOG.find(p => p.name.toLowerCase() === newValue.trim().toLowerCase())?.emoji || 'Sprout' 
                   } : undefined
     };
 
@@ -170,7 +182,7 @@ export function Config({ onNavigate }: { onNavigate?: (view: any) => void }) {
   
   // Real-time duplicate check for UI feedback
   const isCurrentValueDuplicate = newValue.trim() !== '' && items.some(i => 
-    i.value?.toLowerCase().trim() === newValue?.toLowerCase().trim() &&
+    i.value.toLowerCase().trim() === newValue.toLowerCase().trim() &&
     
     (activeTab !== 'variety_option' || i.parentId === selectedAttrType)
   );
@@ -193,6 +205,7 @@ export function Config({ onNavigate }: { onNavigate?: (view: any) => void }) {
     { id: 'variety_option', label: 'Options de Champs' },
     { id: 'weather', label: 'Météo & Alertes' },
     { id: 'expense_category', label: 'Dépenses' },
+    { id: 'migration', label: 'Migration' },
   ] as const;
 
   const varietyOptions = config.filter(c => c.type === 'variety_option');
@@ -224,12 +237,6 @@ export function Config({ onNavigate }: { onNavigate?: (view: any) => void }) {
         onConfirm={confirmState.onConfirm}
         isDanger={confirmState.isDanger}
         confirmText="Supprimer"
-      />
-      <AlertModal
-        isOpen={alertState.isOpen}
-        onClose={() => setAlertState(prev => ({ ...prev, isOpen: false }))}
-        title={alertState.title}
-        message={alertState.message}
       />
       <header>
         <div className="flex justify-between items-start">
@@ -273,7 +280,31 @@ export function Config({ onNavigate }: { onNavigate?: (view: any) => void }) {
         </div>
 
         <div className="p-3">
-          {activeTab === 'weather' ? (
+          {activeTab === 'migration' ? (
+            <div className="p-4 bg-white rounded-xl shadow-sm border border-stone-200/60 max-w-xl">
+              <h2 className="text-lg font-serif font-medium text-stone-900 mb-4 flex items-center gap-2">
+                Migration vers Firebase
+              </h2>
+              <p className="text-stone-600 mb-4">
+                Si vous venez de configurer Firebase, vous pouvez utiliser ce bouton pour migrer vos données locales actuelles (semis, catalogue, configuration, dépenses) vers le Cloud. Attention à ne pas le lancer plusieurs fois.
+              </p>
+              <button
+                onClick={handleMigration}
+                disabled={isMigrating}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50"
+              >
+                {isMigrating ? "Migration en cours..." : "Lancer la migration"}
+              </button>
+              
+              {migrationLogs.length > 0 && (
+                <div className="mt-4 p-3 bg-stone-50 border border-stone-200 rounded-lg text-sm text-stone-600 font-mono h-48 overflow-y-auto">
+                  {migrationLogs.map((log, i) => (
+                    <div key={i}>{log}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : activeTab === 'weather' ? (
             <WeatherSettings />
           ) : (
             <>
@@ -300,7 +331,7 @@ export function Config({ onNavigate }: { onNavigate?: (view: any) => void }) {
                     
                     value={newValue}
                     onChange={e => setNewValue(e.target.value)}
-                    placeholder={`Ajouter un élément (${tabs.find(t => t.id === activeTab)?.label?.toLowerCase()})`}
+                    placeholder={`Ajouter un élément (${tabs.find(t => t.id === activeTab)?.label.toLowerCase()})`}
                     className={`w-full px-3 py-1.5 text-sm rounded-md border focus:ring-2 outline-none transition-all ${
                       isCurrentValueDuplicate 
                         ? 'border-red-300 focus:ring-red-500 bg-red-50' 

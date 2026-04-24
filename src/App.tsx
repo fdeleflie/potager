@@ -13,34 +13,19 @@ import { Journal } from './views/Journal';
 import { Config } from './views/Config';
 import { Trash } from './views/Trash';
 import { Backup } from './views/Backup';
+import { WeatherView } from './views/WeatherView';
 import { GardenPlan } from './views/GardenPlan';
 import { Orchard } from './views/Orchard';
 import { CalendarView } from './views/CalendarView';
-import { HarvestStats } from './views/HarvestStats';
+import { HarvestsView } from './views/HarvestsView';
 import { TasksView } from './views/TasksView';
 import { EncyclopediaView } from './views/EncyclopediaView';
 import { backupService } from './backupService';
 import { db } from './db';
 import { v4 as uuidv4 } from 'uuid';
-import { auth } from './firebase';
-import { onAuthStateChanged } from 'firebase/auth';
-import { startSync, stopSync, clearLocalDb } from './sync';
 
 export default function App() {
   const [currentView, setCurrentView] = useState('dashboard');
-
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        startSync(user.uid);
-      } else {
-        stopSync();
-        // Optionnel : vider la base locale à la déconnexion pour la confidentialité
-        // await clearLocalDb();
-      }
-    });
-    return () => unsubscribe();
-  }, []);
 
   // Handle navigation with history
   const handleNavigate = (view: string, replace = false) => {
@@ -176,11 +161,10 @@ export default function App() {
       const toDelete: string[] = [];
       
       allEntries.forEach(entry => {
-        const nameKey = entry.name?.toLowerCase().trim();
-        if (seen.has(nameKey)) {
+        if (seen.has(entry.name)) {
           toDelete.push(entry.id);
         } else {
-          seen.add(nameKey);
+          seen.add(entry.name);
         }
       });
 
@@ -193,11 +177,10 @@ export default function App() {
       const toDeleteHealth: string[] = [];
 
       allHealth.forEach(entry => {
-        const nameKey = entry.name?.toLowerCase().trim();
-        if (seenHealth.has(nameKey)) {
+        if (seenHealth.has(entry.name)) {
           toDeleteHealth.push(entry.id);
         } else {
-          seenHealth.add(nameKey);
+          seenHealth.add(entry.name);
         }
       });
 
@@ -451,7 +434,7 @@ export default function App() {
       const encyclopediaEntries = await db.encyclopedia.toArray();
       
       for (const configVeg of configVegetables) {
-        const existingEntry = encyclopediaEntries.find(e => e.name?.toLowerCase() === configVeg.value?.toLowerCase());
+        const existingEntry = encyclopediaEntries.find(e => e.name.toLowerCase() === configVeg.value.toLowerCase());
         
         if (existingEntry) {
           // Update existing entry with color and icon
@@ -499,51 +482,11 @@ export default function App() {
       }
     };
 
-    const fixVarieties = async () => {
-      const varieties = await db.config.where('type').equals('variety').toArray();
-      const encyclopedia = await db.encyclopedia.toArray();
-      const seedlings = await db.seedlings.toArray();
-      const trees = await db.trees.toArray();
-      
-      for (const v of varieties) {
-        // Check if parent exists in encyclopedia
-        const parentExists = encyclopedia.some(e => e.id === v.parentId);
-        if (!parentExists) {
-          // 1. Try to find matching seedling to discover parent vegetable
-          const matchingSeedling = seedlings.find(s => s.variety === v.value);
-          if (matchingSeedling) {
-            const parentEnc = encyclopedia.find(e => e.name?.toLowerCase().trim() === matchingSeedling.vegetable?.toLowerCase().trim());
-            if (parentEnc) {
-              await db.config.update(v.id, { parentId: parentEnc.id });
-              continue;
-            }
-          }
-          
-          // 2. Try to find matching tree to discover parent species
-          const matchingTree = trees.find(t => t.variety === v.value);
-          if (matchingTree && matchingTree.species) {
-            const parentEnc = encyclopedia.find(e => e.name?.toLowerCase().trim() === matchingTree.species?.toLowerCase().trim());
-            if (parentEnc) {
-              await db.config.update(v.id, { parentId: parentEnc.id });
-              continue;
-            }
-          }
-          
-          // 3. If parentId is a string that matches an encyclopedia name, update it to the ID
-          const parentByName = encyclopedia.find(e => e.name?.toLowerCase().trim() === String(v.parentId)?.toLowerCase().trim());
-          if (parentByName) {
-             await db.config.update(v.id, { parentId: parentByName.id });
-          }
-        }
-      }
-    };
-
     const init = async () => {
       await deduplicate();
       await populateEncyclopedia();
       await populateHealthIssues();
       await migrateVegetablesToEncyclopedia();
-      await fixVarieties();
     };
 
     init();
@@ -568,11 +511,12 @@ export default function App() {
     if (currentView === 'journal') return <Journal setCurrentView={handleNavigate} />;
     if (currentView === 'config') return <Config onNavigate={handleNavigate} />;
     if (currentView === 'calendar') return <CalendarView setCurrentView={handleNavigate} />;
-    if (currentView === 'stats') return <HarvestStats />;
+    if (currentView === 'harvests') return <HarvestsView />;
     if (currentView === 'tasks') return <TasksView setCurrentView={handleNavigate} />;
     if (currentView === 'encyclopedia') return <EncyclopediaView />;
     if (currentView === 'plan') return <GardenPlan setCurrentView={handleNavigate} />;
     if (currentView === 'orchard') return <Orchard />;
+    if (currentView === 'weather') return <WeatherView />;
     if (currentView === 'trash') return <Trash />;
     if (currentView === 'backup') return <Backup />;
     

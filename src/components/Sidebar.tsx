@@ -9,9 +9,11 @@ import {
   Save, 
   Printer,
   BarChart3,
+  Scale,
   Map,
   Trees,
   Calendar,
+  Cloud,
   CheckSquare
 } from 'lucide-react';
 
@@ -26,7 +28,8 @@ export function Sidebar({ currentView, setCurrentView }: SidebarProps) {
     { id: 'seedlings', label: 'Mes Semis', icon: Sprout },
     { id: 'tasks', label: 'Tâches', icon: CheckSquare },
     { id: 'calendar', label: 'Calendrier', icon: Calendar },
-    { id: 'stats', label: 'Statistiques', icon: BarChart3 },
+    { id: 'weather', label: 'Météo', icon: Cloud },
+    { id: 'harvests', label: 'Récoltes', icon: Scale },
     { id: 'plan', label: 'Plan du potager', icon: Map },
     { id: 'orchard', label: 'Mon Verger', icon: Trees },
     { id: 'encyclopedia', label: 'Catalogue des Plantes', icon: BookOpen },

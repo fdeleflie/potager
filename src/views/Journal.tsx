@@ -155,7 +155,7 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
   const years = Array.from(new Set(entries.map(e => new Date(e.date).getFullYear().toString()))).sort((a, b) => b.localeCompare(a));
 
   const filteredEntries = entries.filter(e => {
-    const matchesSearch = e.content?.toLowerCase().includes(searchTerm?.toLowerCase());
+    const matchesSearch = e.content.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesType = filterType === 'all' || 
                         (filterType === 'journal' && e.type === 'journal') || 
                         (filterType === 'seedling' && (e.type === 'seedling' || e.type === 'tree'));

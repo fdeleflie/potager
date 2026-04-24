@@ -1,51 +1,70 @@
 rules_version = '2';
-
 service cloud.firestore {
   match /databases/{database}/documents {
-
-    // ===============================================================
-    // Helper Functions
-    // ===============================================================
-    
-    function isAuthenticated() {
-      return request.auth != null;
-    }
-    
-    function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
+    match /{document=**} {
+      allow read, write: if false;
     }
 
-    // ===============================================================
-    // Rules
-    // ===============================================================
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
 
     match /users/{userId} {
-      match /seedlings/{document=**} {
-        allow read, write: if isOwner(userId);
+      match /seedlings/{seedlingId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(seedlingId);
+        allow update: if isOwner(userId) && isValidId(seedlingId);
+        allow delete: if isOwner(userId) && isValidId(seedlingId);
       }
-      match /journal/{document=**} {
-        allow read, write: if isOwner(userId);
+      match /journal/{journalId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(journalId);
+        allow update: if isOwner(userId) && isValidId(journalId);
+        allow delete: if isOwner(userId) && isValidId(journalId);
       }
-      match /config/{document=**} {
-        allow read, write: if isOwner(userId);
+      match /config/{configId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(configId);
+        allow update: if isOwner(userId) && isValidId(configId);
+        allow delete: if isOwner(userId) && isValidId(configId);
       }
-      match /trees/{document=**} {
-        allow read, write: if isOwner(userId);
+      match /trees/{treeId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(treeId);
+        allow update: if isOwner(userId) && isValidId(treeId);
+        allow delete: if isOwner(userId) && isValidId(treeId);
       }
-      match /structures/{document=**} {
-        allow read, write: if isOwner(userId);
+      match /structures/{structureId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(structureId);
+        allow update: if isOwner(userId) && isValidId(structureId);
+        allow delete: if isOwner(userId) && isValidId(structureId);
       }
-      match /tasks/{document=**} {
-        allow read, write: if isOwner(userId);
+      match /tasks/{taskId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(taskId);
+        allow update: if isOwner(userId) && isValidId(taskId);
+        allow delete: if isOwner(userId) && isValidId(taskId);
       }
-      match /encyclopedia/{document=**} {
-        allow read, write: if isOwner(userId);
+      match /encyclopedia/{encyclopediaId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(encyclopediaId);
+        allow update: if isOwner(userId) && isValidId(encyclopediaId);
+        allow delete: if isOwner(userId) && isValidId(encyclopediaId);
       }
-      match /healthIssues/{document=**} {
-        allow read, write: if isOwner(userId);
+      match /healthIssues/{healthId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(healthId);
+        allow update: if isOwner(userId) && isValidId(healthId);
+        allow delete: if isOwner(userId) && isValidId(healthId);
       }
-      match /expenses/{document=**} {
-        allow read, write: if isOwner(userId);
+      match /expenses/{expenseId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(expenseId);
+        allow update: if isOwner(userId) && isValidId(expenseId);
+        allow delete: if isOwner(userId) && isValidId(expenseId);
       }
     }
   }

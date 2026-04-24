@@ -10,8 +10,6 @@ import {
   List, Wand2
 } from 'lucide-react';
 import { GARDEN_EMOJI_CATEGORIES } from '../constants';
-import { getDistinctColor } from '../utils/colors';
-import { ConfirmModal } from '../components/Modals';
 
 type Tab = 'vegetables' | 'health';
 type PlantSubTab = 'culture' | 'varieties';
@@ -34,17 +32,6 @@ export function EncyclopediaView() {
   const [newVarietyName, setNewVarietyName] = useState('');
   const [editingVarietyId, setEditingVarietyId] = useState<string | null>(null);
   const [varietyEditForm, setVarietyEditForm] = useState<{name: string, attributes: any}>({name: '', attributes: {}});
-  const [confirmDelete, setConfirmDelete] = useState<{
-    isOpen: boolean;
-    title: string;
-    message: string;
-    onConfirm: () => void;
-  }>({
-    isOpen: false,
-    title: '',
-    message: '',
-    onConfirm: () => {},
-  });
 
   const unifiedPlants = useMemo(() => {
     if (!config || !encyclopedia) return [];
@@ -52,21 +39,19 @@ export function EncyclopediaView() {
     const encyclopediaEntries = encyclopedia;
 
     const allNames = Array.from(new Set([
-      ...configVegetables.map(c => c.value?.toLowerCase().trim()),
-      ...encyclopediaEntries.map(e => e.name?.toLowerCase().trim())
+      ...configVegetables.map(c => c.value.toLowerCase().trim()),
+      ...encyclopediaEntries.map(e => e.name.toLowerCase().trim())
     ]));
 
     return allNames.map(nameLower => {
-      const conf = configVegetables.find(c => c.value?.toLowerCase().trim() === nameLower);
-      const enc = encyclopediaEntries.find(e => e.name?.toLowerCase().trim() === nameLower);
+      const conf = configVegetables.find(c => c.value.toLowerCase().trim() === nameLower);
+      const enc = encyclopediaEntries.find(e => e.name.toLowerCase().trim() === nameLower);
       
       // Use a prefixed ID to avoid collisions between config and encyclopedia tables
-      // Use nameLower as fallback to ensure ID stability if both conf and enc are missing (though they shouldn't be)
-      const id = conf ? `c-${conf.id}` : (enc ? `e-${enc.id}` : `v-${encodeURIComponent(nameLower)}`);
+      const id = conf ? `c-${conf.id}` : (enc ? `e-${enc.id}` : `v-${uuidv4()}`);
       
       return {
         id,
-        key: `plant-${id}`,
         name: conf?.value || enc?.name || '',
         configId: conf?.id,
         encyclopediaId: enc?.id,
@@ -88,52 +73,23 @@ export function EncyclopediaView() {
   }, [config, encyclopedia]);
 
   const filteredPlants = unifiedPlants.filter(item => 
-    item.name?.toLowerCase().includes(searchTerm?.toLowerCase()) ||
-    item.category?.toLowerCase().includes(searchTerm?.toLowerCase())
+    item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    item.category.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const filteredHealth = healthIssues?.filter(item => 
-    item.name?.toLowerCase().includes(searchTerm?.toLowerCase()) ||
-    item.type?.toLowerCase().includes(searchTerm?.toLowerCase())
+    item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    item.type.toLowerCase().includes(searchTerm.toLowerCase())
   ).sort((a, b) => a.name.localeCompare(b.name)) || [];
 
   const selectedVeg = unifiedPlants.find(v => v.id === selectedVegId);
   const selectedHealth = healthIssues?.find(h => h.id === selectedHealthId);
   
-  const plantVarieties = config?.filter(c => {
-    if (c.type !== 'variety') return false;
-    
-    // 1. Direct ID match (Config ID or Encyclopedia ID)
-    if (c.parentId === selectedVeg?.configId || c.parentId === selectedVeg?.encyclopediaId) return true;
-    
-    // 2. Name match (if parentId is actually the name of the vegetable)
-    if (selectedVeg?.name && c.parentId?.toLowerCase().trim() === selectedVeg.name?.toLowerCase().trim()) return true;
-    
-    if (selectedVeg?.name) {
-      // 3. Match via parent vegetable config item (if it still exists)
-      const parentVegConfig = config.find(v => v.id === c.parentId && v.type === 'vegetable');
-      if (parentVegConfig && parentVegConfig.value?.toLowerCase().trim() === selectedVeg.name?.toLowerCase().trim()) {
-        return true;
-      }
-      
-      // 4. Match via parent encyclopedia entry
-      const parentVegEnc = encyclopedia?.find(e => e.id === c.parentId);
-      if (parentVegEnc && parentVegEnc.name?.toLowerCase().trim() === selectedVeg.name?.toLowerCase().trim()) {
-        return true;
-      }
-    }
-    return false;
-  }).sort((a, b) => a.value.localeCompare(b.value)) || [];
+  const plantVarieties = config?.filter(c => c.type === 'variety' && (c.parentId === selectedVeg?.configId || c.parentId === selectedVeg?.encyclopediaId)).sort((a, b) => a.value.localeCompare(b.value)) || [];
 
   const handleStartEdit = (veg?: any) => {
-    setActiveTab("vegetables");
-    setIsEditing(true);
     if (veg) {
-      setEditForm({
-        ...veg,
-        // Make sure we pass the correct ID to update the encyclopedia entry
-        encyclopediaId: veg.encyclopediaId || (veg.id && veg.id.startsWith('e-') ? veg.id.substring(2) : undefined)
-      });
+      setEditForm(veg);
     } else {
       setEditForm({
         name: '',
@@ -152,12 +108,10 @@ export function EncyclopediaView() {
         icon: 'Sprout'
       });
     }
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    setIsEditing(true);
   };
 
   const handleStartHealthEdit = (item?: HealthIssue) => {
-    setActiveTab("health");
-    setIsEditing(true);
     if (item) {
       setHealthForm(item);
     } else {
@@ -170,7 +124,7 @@ export function EncyclopediaView() {
         affectedPlants: []
       });
     }
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    setIsEditing(true);
   };
 
   const handleSave = async () => {
@@ -202,15 +156,9 @@ export function EncyclopediaView() {
       await db.encyclopedia.add({ id: encId, ...encData });
     }
 
-    // Find the merged entry in unifiedPlants to get the correct ID (c- or e-)
-    // This ensures that the selection remains valid after saving
-    const nameLower = encData.name.toLowerCase().trim();
-    const conf = config?.find(c => c.type === 'vegetable' && c.value?.toLowerCase().trim() === nameLower);
-    const finalId = conf ? `c-${conf.id}` : `e-${encId}`;
-
-    setSelectedVegId(finalId);
+    // Set the selected ID with the correct prefix
+    setSelectedVegId(`e-${encId}`);
     setIsEditing(false);
-    window.scrollTo(0, 0);
   };
 
   const handleSaveHealth = async () => {
@@ -235,48 +183,28 @@ export function EncyclopediaView() {
       setSelectedHealthId(entry.id);
     }
     setIsEditing(false);
-    window.scrollTo(0, 0);
   };
 
-  const handleDelete = (veg: any) => {
-    setConfirmDelete({
-      isOpen: true,
-      title: "Supprimer la plante",
-      message: "Voulez-vous vraiment supprimer cette plante ? Cela supprimera également ses variétés.",
-      onConfirm: async () => {
-        if (veg.encyclopediaId) await db.encyclopedia.delete(veg.encyclopediaId);
-        if (veg.configId) {
-          await db.config.delete(veg.configId);
-        }
-        // Delete associated varieties
-        const varieties = config?.filter(c => {
-          if (c.type !== "variety") return false;
-          if (c.parentId === veg.configId || c.parentId === veg.encyclopediaId) return true;
-          
-          const parentVeg = config.find(v => v.id === c.parentId && v.type === 'vegetable');
-          if (parentVeg && parentVeg.value?.toLowerCase().trim() === veg.name?.toLowerCase().trim()) {
-            return true;
-          }
-          return false;
-        }) || [];
-        for (const v of varieties) {
-          await db.config.delete(v.id);
-        }
-        if (selectedVegId === veg.id) setSelectedVegId(null);
+  const handleDelete = async (veg: any) => {
+    if (confirm("Voulez-vous vraiment supprimer cette plante ? Cela supprimera également ses variétés.")) {
+      if (veg.encyclopediaId) await db.encyclopedia.delete(veg.encyclopediaId);
+      if (veg.configId) {
+        await db.config.delete(veg.configId);
       }
-    });
+      // Delete associated varieties
+      const varieties = config?.filter(c => c.type === "variety" && (c.parentId === veg.configId || c.parentId === veg.encyclopediaId)) || [];
+      for (const v of varieties) {
+        await db.config.delete(v.id);
+      }
+      if (selectedVegId === veg.id) setSelectedVegId(null);
+    }
   };
 
-  const handleDeleteHealth = (id: string) => {
-    setConfirmDelete({
-      isOpen: true,
-      title: "Supprimer la fiche santé",
-      message: "Voulez-vous vraiment supprimer cette fiche ?",
-      onConfirm: async () => {
-        await db.healthIssues.delete(id);
-        if (selectedHealthId === id) setSelectedHealthId(null);
-      }
-    });
+  const handleDeleteHealth = async (id: string) => {
+    if (confirm("Voulez-vous vraiment supprimer cette fiche ?")) {
+      await db.healthIssues.delete(id);
+      if (selectedHealthId === id) setSelectedHealthId(null);
+    }
   };
 
   const handleAddVariety = async (e: React.FormEvent) => {
@@ -292,15 +220,10 @@ export function EncyclopediaView() {
     setNewVarietyName("");
   };
 
-  const handleDeleteVariety = (id: string) => {
-    setConfirmDelete({
-      isOpen: true,
-      title: "Supprimer la variété",
-      message: "Supprimer cette variété ?",
-      onConfirm: async () => {
-        await db.config.delete(id);
-      }
-    });
+  const handleDeleteVariety = async (id: string) => {
+    if (confirm("Supprimer cette variété ?")) {
+      await db.config.delete(id);
+    }
   };
 
   const varietyAttrTypes = useMemo(() => 
@@ -325,7 +248,7 @@ export function EncyclopediaView() {
           for (const part of parts) {
             const existingOption = varietyOptions.find(o => 
               o.parentId === attrTypeId && 
-              o.value?.toLowerCase().trim() === part?.toLowerCase().trim()
+              o.value.toLowerCase().trim() === part.toLowerCase().trim()
             );
             if (!existingOption) {
               await db.config.add({
@@ -381,7 +304,7 @@ export function EncyclopediaView() {
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Sidebar List */}
-        <div className={`lg:col-span-4 space-y-4 ${(selectedVegId || selectedHealthId || isEditing) ? "hidden lg:block" : "block"}`}>
+        <div className={`lg:col-span-4 space-y-4 ${(selectedVegId || selectedHealthId) ? "hidden lg:block" : "block"}`}>
           <div className="bg-white p-4 rounded-2xl shadow-sm border border-stone-200/60 space-y-4">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400" />
@@ -408,7 +331,7 @@ export function EncyclopediaView() {
               {activeTab === "vegetables" ? (
                 filteredPlants.map(item => (
                   <button
-                    key={item.key || `plant-${item.id}`}
+                    key={item.id}
                     onClick={() => { setSelectedVegId(item.id); setIsEditing(false); setPlantSubTab("culture"); }}
                     className={`w-full text-left px-3 py-2.5 rounded-xl text-sm transition-all flex items-center justify-between group ${
                       selectedVegId === item.id ? "bg-emerald-50 text-emerald-700 font-medium" : "text-stone-600 hover:bg-stone-50"
@@ -421,7 +344,7 @@ export function EncyclopediaView() {
               ) : (
                 filteredHealth.map(item => (
                   <button
-                    key={`health-${item.id}`}
+                    key={item.id}
                     onClick={() => { setSelectedHealthId(item.id); setIsEditing(false); }}
                     className={`w-full text-left px-3 py-2.5 rounded-xl text-sm transition-all flex items-center justify-between group ${
                       selectedHealthId === item.id ? "bg-rose-50 text-rose-700 font-medium" : "text-stone-600 hover:bg-stone-50"
@@ -452,10 +375,9 @@ export function EncyclopediaView() {
               Retour à la liste
             </button>
           )}
-          
           {isEditing ? (
             activeTab === "vegetables" ? (
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200/60 space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200/60 space-y-6">
                 <div className="flex items-center justify-between">
                   <h2 className="text-lg font-serif font-medium text-stone-900">
                     {editForm.id ? "Modifier la plante" : "Ajouter une plante"}
@@ -485,7 +407,7 @@ export function EncyclopediaView() {
                     >
                       <option value="">Sélectionner</option>
                       {config?.filter(c => c.type === 'category').map(c => (
-                        <option key={`cat-opt-${c.id}`} value={c.value}>{c.value}</option>
+                        <option key={c.id} value={c.value}>{c.value}</option>
                       ))}
                       {editForm.category && !config?.find(c => c.type === 'category' && c.value === editForm.category) && (
                         <option value={editForm.category}>{editForm.category}</option>
@@ -605,7 +527,53 @@ export function EncyclopediaView() {
                         type="button"
                         onClick={() => {
                           const existingColors = unifiedPlants.map(p => p.color).filter(Boolean) as string[];
-                          setEditForm({ ...editForm, color: getDistinctColor(existingColors) });
+                          const extendedColors = [
+                            '#ef4444', '#f97316', '#f59e0b', '#84cc16', '#10b981', '#06b6d4', 
+                            '#3b82f6', '#6366f1', '#8b5cf6', '#d946ef', '#f43f5e', '#71717a',
+                            '#fbbf24', '#a3e635', '#34d399', '#22d3ee', '#60a5fa', '#818cf8',
+                            '#a78bfa', '#e879f9', '#fb7185', '#9ca3af', '#b45309', '#4d7c0f',
+                            '#047857', '#0f766e', '#1d4ed8', '#4338ca', '#6d28d9', '#a21caf',
+                            '#be123c', '#3f3f46'
+                          ];
+                          
+                          // Convert hex to RGB for distance calculation
+                          const hexToRgb = (hex: string) => {
+                            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+                            return result ? {
+                              r: parseInt(result[1], 16),
+                              g: parseInt(result[2], 16),
+                              b: parseInt(result[3], 16)
+                            } : { r: 0, g: 0, b: 0 };
+                          };
+
+                          const colorDistance = (c1: string, c2: string) => {
+                            const rgb1 = hexToRgb(c1);
+                            const rgb2 = hexToRgb(c2);
+                            return Math.sqrt(
+                              Math.pow(rgb1.r - rgb2.r, 2) +
+                              Math.pow(rgb1.g - rgb2.g, 2) +
+                              Math.pow(rgb1.b - rgb2.b, 2)
+                            );
+                          };
+
+                          let bestColor = extendedColors[0];
+                          let maxMinDistance = -1;
+
+                          for (const candidate of extendedColors) {
+                            let minDistance = Infinity;
+                            for (const existing of existingColors) {
+                              const dist = colorDistance(candidate, existing);
+                              if (dist < minDistance) {
+                                minDistance = dist;
+                              }
+                            }
+                            if (minDistance > maxMinDistance) {
+                              maxMinDistance = minDistance;
+                              bestColor = candidate;
+                            }
+                          }
+
+                          setEditForm({ ...editForm, color: bestColor });
                         }}
                         className="text-[10px] text-emerald-600 hover:text-emerald-700 font-medium flex items-center gap-1"
                       >
@@ -686,7 +654,7 @@ export function EncyclopediaView() {
                 </div>
               </div>
             ) : (
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200/60 space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200/60 space-y-6">
                 <div className="flex items-center justify-between">
                   <h2 className="text-lg font-serif font-medium text-stone-900">
                     {healthForm.id ? "Modifier la fiche santé" : "Ajouter une fiche santé"}
@@ -790,9 +758,8 @@ export function EncyclopediaView() {
                       </span>
                       <h2 className="text-3xl font-serif font-medium">{selectedVeg.name}</h2>
                     </div>
-                    <div className="flex gap-2 relative z-10">
+                    <div className="flex gap-2">
                       <button
-                        type="button"
                         onClick={() => handleStartEdit(selectedVeg)}
                         className="p-2 bg-white/10 hover:bg-white/20 rounded-xl transition-all"
                         title="Modifier"
@@ -884,7 +851,7 @@ export function EncyclopediaView() {
                         <div className="flex flex-wrap gap-2">
                           {selectedVeg.goodCompanions.length > 0 ? (
                             selectedVeg.goodCompanions.map((c, i) => (
-                              <span key={`good-${selectedVeg.id}-${i}`} className="px-3 py-1 bg-emerald-50 text-emerald-700 rounded-full text-xs font-medium border border-emerald-100">
+                              <span key={i} className="px-3 py-1 bg-emerald-50 text-emerald-700 rounded-full text-xs font-medium border border-emerald-100">
                                 {c}
                               </span>
                             ))
@@ -901,7 +868,7 @@ export function EncyclopediaView() {
                         <div className="flex flex-wrap gap-2">
                           {selectedVeg.badCompanions.length > 0 ? (
                             selectedVeg.badCompanions.map((c, i) => (
-                              <span key={`bad-${selectedVeg.id}-${i}`} className="px-3 py-1 bg-rose-50 text-rose-700 rounded-full text-xs font-medium border border-rose-100">
+                              <span key={i} className="px-3 py-1 bg-rose-50 text-rose-700 rounded-full text-xs font-medium border border-rose-100">
                                 {c}
                               </span>
                             ))
@@ -965,131 +932,104 @@ export function EncyclopediaView() {
                               <div key={variety.id} className="bg-stone-50 rounded-xl border border-stone-100 overflow-hidden">
                                 {editingVarietyId === variety.id ? (
                                   <form onSubmit={handleSaveVariety} className="p-4 space-y-4">
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                      <div className="md:col-span-2">
-                                        <label className="block text-xs font-medium text-stone-500 mb-1">Nom de la variété</label>
-                                        <input
-                                          type="text"
-                                          value={varietyEditForm.name}
-                                          onChange={e => setVarietyEditForm(prev => ({ ...prev, name: e.target.value }))}
-                                          className="w-full px-3 py-2 bg-white border border-stone-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
-                                          required
-                                        />
-                                      </div>
-                                      
-                                      {varietyAttrTypes.map(attrType => {
-                                        const options = varietyOptions.filter(o => o.parentId === attrType.id);
-                                        const isEmoji = attrType.value?.toLowerCase().includes('emoji');
+                                    <div>
+                                      <label className="block text-xs font-medium text-stone-500 mb-1">Nom de la variété</label>
+                                      <input
+                                        type="text"
+                                        value={varietyEditForm.name}
+                                        onChange={e => setVarietyEditForm(prev => ({ ...prev, name: e.target.value }))}
+                                        className="w-full px-3 py-2 bg-white border border-stone-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                                        required
+                                      />
+                                    </div>
+                                    
+                                    {varietyAttrTypes.map(attrType => {
+                                      const options = varietyOptions.filter(o => o.parentId === attrType.id);
+                                      const isEmoji = attrType.value.toLowerCase().includes('emoji');
 
-                                        return (
-                                          <div key={attrType.id} className="space-y-1">
-                                            <div className="flex items-center justify-between">
-                                              <label className="block text-xs font-medium text-stone-500">{attrType.value}</label>
-                                              {isEmoji && (
-                                                <button
-                                                  type="button"
-                                                  onClick={() => {
-                                                    if (isEmoji) {
-                                                      const allEmojis = GARDEN_EMOJI_CATEGORIES.flatMap(c => c.emojis);
-                                                      const randomEmoji = allEmojis[Math.floor(Math.random() * allEmojis.length)];
-                                                      setVarietyEditForm(prev => ({
-                                                        ...prev,
-                                                        attributes: { ...prev.attributes, [attrType.id]: randomEmoji }
-                                                      }));
-                                                    }
-                                                  }}
-                                                  className="text-[10px] text-emerald-600 hover:text-emerald-700 font-medium flex items-center gap-1"
-                                                >
-                                                  <Wand2 className="w-3 h-3" />
-                                                  Auto
-                                                </button>
-                                              )}
-                                            </div>
-                                            
-                                            {isEmoji ? (
-                                              <div className="space-y-2">
-                                                <div className="flex flex-wrap gap-1 p-2 bg-white border border-stone-200 rounded-lg max-h-32 overflow-y-auto">
-                                                  {GARDEN_EMOJI_CATEGORIES.map(cat => (
-                                                    <div key={cat.id} className="w-full mb-1">
-                                                      <div className="text-[10px] text-stone-400 mb-1">{cat.label}</div>
-                                                      <div className="flex flex-wrap gap-1">
-                                                        {cat.emojis.slice(0, 15).map(emoji => (
-                                                          <button
-                                                            key={`${cat.id}-${emoji}`}
-                                                            type="button"
-                                                            onClick={() => setVarietyEditForm(prev => ({
-                                                              ...prev,
-                                                              attributes: { ...prev.attributes, [attrType.id]: emoji }
-                                                            }))}
-                                                            className={`w-7 h-7 flex items-center justify-center rounded hover:bg-stone-100 transition-colors ${varietyEditForm.attributes[attrType.id] === emoji ? 'bg-emerald-100 ring-1 ring-emerald-500' : ''}`}
-                                                          >
-                                                            {emoji}
-                                                          </button>
-                                                        ))}
-                                                      </div>
-                                                    </div>
-                                                  ))}
-                                                </div>
-                                                <input
-                                                  type="text"
-                                                  value={varietyEditForm.attributes[attrType.id] || ''}
-                                                  onChange={e => setVarietyEditForm(prev => ({
-                                                    ...prev,
-                                                    attributes: { ...prev.attributes, [attrType.id]: e.target.value }
-                                                  }))}
-                                                  placeholder="Ou saisir un emoji..."
-                                                  className="w-full px-3 py-1.5 bg-white border border-stone-200 rounded-lg text-sm"
-                                                />
-                                              </div>
-                                            ) : (
-                                              <div className="space-y-2">
-                                                {options.length > 0 && (
-                                                  <div className="flex flex-wrap gap-1">
-                                                    {options.map(opt => {
-                                                      const currentValue = varietyEditForm.attributes[attrType.id] || '';
-                                                      const currentOptions = currentValue.split(',').map((s: string) => s.trim()).filter(Boolean);
-                                                      const isSelected = currentOptions.includes(opt.value);
-                                                      return (
-                                                        <button
-                                                          key={`var-opt-${opt.id}`}
-                                                          type="button"
-                                                          onClick={() => {
-                                                            const nextValue = isSelected 
-                                                              ? currentOptions.filter((o: string) => o !== opt.value).join(', ')
-                                                              : [...currentOptions, opt.value].join(', ');
-                                                            setVarietyEditForm(prev => ({
-                                                              ...prev,
-                                                              attributes: { ...prev.attributes, [attrType.id]: nextValue }
-                                                            }));
-                                                          }}
-                                                          className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${
-                                                            isSelected 
-                                                              ? 'bg-emerald-600 text-white' 
-                                                              : 'bg-white text-stone-600 border border-stone-200 hover:border-emerald-300'
-                                                          }`}
-                                                        >
-                                                          {opt.value}
-                                                        </button>
-                                                      );
-                                                    })}
-                                                  </div>
-                                                )}
-                                                <input
-                                                  type="text"
-                                                  value={varietyEditForm.attributes[attrType.id] || ''}
-                                                  onChange={e => setVarietyEditForm(prev => ({
-                                                    ...prev,
-                                                    attributes: { ...prev.attributes, [attrType.id]: e.target.value }
-                                                  }))}
-                                                  placeholder={`Saisir des options...`}
-                                                  className="w-full px-3 py-2 bg-white border border-stone-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
-                                                />
-                                              </div>
+                                      return (
+                                        <div key={attrType.id} className="space-y-1">
+                                          <div className="flex items-center justify-between">
+                                            <label className="block text-xs font-medium text-stone-500">{attrType.value}</label>
+                                            {isEmoji && (
+                                              <button
+                                                type="button"
+                                                onClick={() => {
+                                                  if (isEmoji) {
+                                                    const allEmojis = GARDEN_EMOJI_CATEGORIES.flatMap(c => c.emojis);
+                                                    const randomEmoji = allEmojis[Math.floor(Math.random() * allEmojis.length)];
+                                                    setVarietyEditForm(prev => ({
+                                                      ...prev,
+                                                      attributes: { ...prev.attributes, [attrType.id]: randomEmoji }
+                                                    }));
+                                                  }
+                                                }}
+                                                className="text-[10px] text-emerald-600 hover:text-emerald-700 font-medium flex items-center gap-1"
+                                              >
+                                                <Wand2 className="w-3 h-3" />
+                                                Auto
+                                              </button>
                                             )}
                                           </div>
-                                        );
-                                      })}
-                                    </div>
+                                          
+                                          {isEmoji ? (
+                                            <div className="space-y-2">
+                                              <div className="flex flex-wrap gap-1 p-2 bg-white border border-stone-200 rounded-lg max-h-32 overflow-y-auto">
+                                                {GARDEN_EMOJI_CATEGORIES.map(cat => (
+                                                  <div key={cat.id} className="w-full mb-1">
+                                                    <div className="text-[10px] text-stone-400 mb-1">{cat.label}</div>
+                                                    <div className="flex flex-wrap gap-1">
+                                                      {cat.emojis.slice(0, 15).map(emoji => (
+                                                        <button
+                                                          key={emoji}
+                                                          type="button"
+                                                          onClick={() => setVarietyEditForm(prev => ({
+                                                            ...prev,
+                                                            attributes: { ...prev.attributes, [attrType.id]: emoji }
+                                                          }))}
+                                                          className={`w-7 h-7 flex items-center justify-center rounded hover:bg-stone-100 transition-colors ${varietyEditForm.attributes[attrType.id] === emoji ? 'bg-emerald-100 ring-1 ring-emerald-500' : ''}`}
+                                                        >
+                                                          {emoji}
+                                                        </button>
+                                                      ))}
+                                                    </div>
+                                                  </div>
+                                                ))}
+                                              </div>
+                                              <input
+                                                type="text"
+                                                value={varietyEditForm.attributes[attrType.id] || ''}
+                                                onChange={e => setVarietyEditForm(prev => ({
+                                                  ...prev,
+                                                  attributes: { ...prev.attributes, [attrType.id]: e.target.value }
+                                                }))}
+                                                placeholder="Ou saisir un emoji..."
+                                                className="w-full px-3 py-1.5 bg-white border border-stone-200 rounded-lg text-sm"
+                                              />
+                                            </div>
+                                          ) : (
+                                            <>
+                                              <input
+                                                type="text"
+                                                list={`options-${attrType.id}`}
+                                                value={varietyEditForm.attributes[attrType.id] || ''}
+                                                onChange={e => setVarietyEditForm(prev => ({
+                                                  ...prev,
+                                                  attributes: { ...prev.attributes, [attrType.id]: e.target.value }
+                                                }))}
+                                                placeholder={`Sélectionner ou saisir des options (séparées par des virgules)`}
+                                                className="w-full px-3 py-2 bg-white border border-stone-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                                              />
+                                              <datalist id={`options-${attrType.id}`}>
+                                                {options.map(opt => (
+                                                  <option key={opt.id} value={opt.value} />
+                                                ))}
+                                              </datalist>
+                                            </>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
                                     
                                     <div className="flex justify-end gap-2 pt-2">
                                       <button
@@ -1116,8 +1056,8 @@ export function EncyclopediaView() {
                                           {Object.entries(variety.attributes).map(([key, val]) => {
                                             const attrType = varietyAttrTypes.find(t => t.id === key);
                                             if (!attrType || !val) return null;
-                                            const isColor = attrType.value?.toLowerCase().includes('couleur');
-                                            const isEmoji = attrType.value?.toLowerCase().includes('emoji');
+                                            const isColor = attrType.value.toLowerCase().includes('couleur');
+                                            const isEmoji = attrType.value.toLowerCase().includes('emoji');
                                             
                                             if (isColor) {
                                               return (
@@ -1192,9 +1132,8 @@ export function EncyclopediaView() {
                       </span>
                       <h2 className="text-3xl font-serif font-medium">{selectedHealth.name}</h2>
                     </div>
-                    <div className="flex gap-2 relative z-10">
+                    <div className="flex gap-2">
                       <button
-                        type="button"
                         onClick={() => handleStartHealthEdit(selectedHealth)}
                         className="p-2 bg-white/10 hover:bg-white/20 rounded-xl transition-all"
                         title="Modifier"
@@ -1233,7 +1172,7 @@ export function EncyclopediaView() {
                     <div className="flex flex-wrap gap-2">
                       {selectedHealth.solutions.length > 0 ? (
                         selectedHealth.solutions.map((s, i) => (
-                          <span key={`sol-${selectedHealth.id}-${i}`} className="px-3 py-1 bg-emerald-50 text-emerald-700 rounded-full text-xs font-medium border border-emerald-100">
+                          <span key={i} className="px-3 py-1 bg-emerald-50 text-emerald-700 rounded-full text-xs font-medium border border-emerald-100">
                             {s}
                           </span>
                         ))
@@ -1263,7 +1202,7 @@ export function EncyclopediaView() {
                     <div className="flex flex-wrap gap-2">
                       {selectedHealth.affectedPlants.length > 0 ? (
                         selectedHealth.affectedPlants.map((p, i) => (
-                          <span key={`aff-${selectedHealth.id}-${i}`} className="px-3 py-1 bg-stone-100 text-stone-600 rounded-full text-xs font-medium border border-stone-200">
+                          <span key={i} className="px-3 py-1 bg-stone-100 text-stone-600 rounded-full text-xs font-medium border border-stone-200">
                             {p}
                           </span>
                         ))
@@ -1284,15 +1223,6 @@ export function EncyclopediaView() {
           )}
         </div>
       </div>
-
-      <ConfirmModal
-        isOpen={confirmDelete.isOpen}
-        onClose={() => setConfirmDelete(prev => ({ ...prev, isOpen: false }))}
-        onConfirm={confirmDelete.onConfirm}
-        title={confirmDelete.title}
-        message={confirmDelete.message}
-        isDanger={true}
-      />
     </div>
   );
 }

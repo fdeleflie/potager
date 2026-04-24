@@ -51,8 +51,12 @@ export function Backup() {
       const config = await db.config.toArray();
       const trees = await db.trees.toArray();
       const structures = await db.structures.toArray();
+      const tasks = await db.tasks.toArray();
+      const encyclopedia = await db.encyclopedia.toArray();
+      const healthIssues = await db.healthIssues.toArray();
+      const expenses = await db.expenses.toArray();
 
-      let exportData = { seedlings, journal, config, trees, structures, version: 1 };
+      let exportData = { seedlings, journal, config, trees, structures, tasks, encyclopedia, healthIssues, expenses, version: 1 };
 
       if (!includePhotos) {
         exportData.seedlings = exportData.seedlings.map(s => {
@@ -154,13 +158,17 @@ export function Backup() {
         const data = JSON.parse(event.target?.result as string);
         
         if (data.seedlings || data.journal || data.config) {
-          await db.transaction('rw', [db.seedlings, db.journal, db.config, db.trees, db.structures], async () => {
+          await db.transaction('rw', [db.seedlings, db.journal, db.config, db.trees, db.structures, db.tasks, db.encyclopedia, db.healthIssues, db.expenses], async () => {
             if (!merge) {
               await db.seedlings.clear();
               await db.journal.clear();
               await db.config.clear();
               await db.trees.clear();
               await db.structures.clear();
+              await db.tasks.clear();
+              await db.encyclopedia.clear();
+              await db.healthIssues.clear();
+              await db.expenses.clear();
             }
             
             if (data.seedlings) await db.seedlings.bulkPut(data.seedlings);
@@ -168,6 +176,10 @@ export function Backup() {
             if (data.config) await db.config.bulkPut(data.config);
             if (data.trees) await db.trees.bulkPut(data.trees);
             if (data.structures) await db.structures.bulkPut(data.structures);
+            if (data.tasks) await db.tasks.bulkPut(data.tasks);
+            if (data.encyclopedia) await db.encyclopedia.bulkPut(data.encyclopedia);
+            if (data.healthIssues) await db.healthIssues.bulkPut(data.healthIssues);
+            if (data.expenses) await db.expenses.bulkPut(data.expenses);
           });
           
           setAlertState({

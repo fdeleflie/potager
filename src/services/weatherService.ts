@@ -5,6 +5,49 @@ export interface WeatherAlert {
   message: string;
 }
 
+export interface WeatherForecast {
+  date: string;
+  tempMin: number;
+  tempMax: number;
+  windSpeed: number;
+  windDir: string;
+}
+
+export async function getWeatherForecast(location: string): Promise<WeatherForecast[]> {
+  if (!location) return [];
+
+  try {
+    const geoRes = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(location)}&count=1&language=fr`);
+    const geoData = await geoRes.json();
+    
+    if (!geoData.results || geoData.results.length === 0) return [];
+    const { latitude, longitude } = geoData.results[0];
+
+    const forecastRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&daily=temperature_2m_min,temperature_2m_max,windspeed_10m_max,winddirection_10m_dominant&timezone=auto`);
+    const forecastData = await forecastRes.json();
+
+    if (!forecastData.daily) return [];
+
+    const { time, temperature_2m_min, temperature_2m_max, windspeed_10m_max, winddirection_10m_dominant } = forecastData.daily;
+    const forecast: WeatherForecast[] = [];
+
+    for (let i = 0; i < time.length; i++) {
+      forecast.push({
+        date: new Date(time[i]).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' }),
+        tempMin: temperature_2m_min[i],
+        tempMax: temperature_2m_max[i],
+        windSpeed: windspeed_10m_max[i],
+        windDir: getWindDirectionText(winddirection_10m_dominant[i])
+      });
+    }
+
+    return forecast;
+  } catch (error) {
+    console.error('Error fetching forecast:', error);
+    return [];
+  }
+}
+
 export async function checkWeatherAlerts(
   location: string,
   tempMinThreshold: number | undefined,
