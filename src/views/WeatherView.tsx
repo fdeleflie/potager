@@ -1,12 +1,13 @@
+import { useFirebaseData, fb } from '../hooks/useFirebaseData';
 import React, { useState, useEffect } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
 import { WeatherSettings } from './WeatherSettings';
 import { getWeatherForecast, WeatherForecast } from '../services/weatherService';
 import { CloudRain, Wind, Thermometer, MapPin, Loader2 } from 'lucide-react';
 
 export function WeatherView() {
-  const config = useLiveQuery(() => db.config.where('type').equals('setting').toArray());
+  const rawConfig = useFirebaseData<any>('config');
+  const config = React.useMemo(() => rawConfig.filter(item => item.type === 'setting'), [rawConfig]);
   const location = config?.find(c => c.id === 'weather_location')?.value;
 
   const [forecast, setForecast] = useState<WeatherForecast[]>([]);

@@ -1,10 +1,11 @@
+import { useFirebaseData, fb } from '../hooks/useFirebaseData';
 import React, { useState, useEffect } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
 import { Save, CloudRain, Wind, ThermometerSnowflake, MapPin } from 'lucide-react';
 
 export function WeatherSettings() {
-  const config = useLiveQuery(() => db.config.where('type').equals('setting').toArray());
+  const rawConfig = useFirebaseData<any>('config');
+  const config = React.useMemo(() => rawConfig.filter(item => item.type === 'setting'), [rawConfig]);
   
   const [location, setLocation] = useState('');
   const [tempMin, setTempMin] = useState<number | ''>('');
@@ -29,10 +30,10 @@ export function WeatherSettings() {
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    await db.config.put({ id: 'weather_location', type: 'setting', value: location });
-    await db.config.put({ id: 'weather_temp_min', type: 'setting', value: tempMin.toString() });
-    await db.config.put({ id: 'weather_wind_max', type: 'setting', value: windMax.toString() });
-    await db.config.put({ id: 'weather_wind_dirs', type: 'setting', value: windDirs.join(',') });
+    await fb.put('config', { id: 'weather_location', type: 'setting', value: location });
+    await fb.put('config', { id: 'weather_temp_min', type: 'setting', value: tempMin.toString() });
+    await fb.put('config', { id: 'weather_wind_max', type: 'setting', value: windMax.toString() });
+    await fb.put('config', { id: 'weather_wind_dirs', type: 'setting', value: windDirs.join(',') });
 
     setIsSaved(true);
     setTimeout(() => setIsSaved(false), 3000);

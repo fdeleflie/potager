@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, JournalEntry } from '../db';
+import { useFirebaseData } from '../hooks/useFirebaseData';
 import { v4 as uuidv4 } from 'uuid';
 import { BookOpen, Plus, Save, Trash2, Search, Filter, Edit, X, Camera } from 'lucide-react';
 import { ConfirmModal } from '../components/Modals';
@@ -38,18 +39,24 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
     isDanger?: boolean;
   }>({ isOpen: false, title: '', message: '', onConfirm: () => {} });
 
-  const entries = useLiveQuery(async () => {
-    const journalEntries = await db.journal.filter(e => !e.isDeleted).toArray();
-    const seedlings = await db.seedlings.filter(s => !s.isDeleted).toArray();
-    const trees = await db.trees.filter(t => !t.isDeleted).toArray();
+  const rawJournalEntries = useFirebaseData<any>('journal');
+  const rawSeedlings = useFirebaseData<any>('seedlings');
+  const rawTrees = useFirebaseData<any>('trees');
+
+  const entries = React.useMemo(() => {
+    if (!rawJournalEntries || !rawSeedlings || !rawTrees) return undefined;
+    
+    const journalEntries = rawJournalEntries.filter(e => !e.isDeleted);
+    const seedlings = rawSeedlings.filter(s => !s.isDeleted);
+    const trees = rawTrees.filter(t => !t.isDeleted);
 
     const combined: CombinedEntry[] = journalEntries.map(e => ({ ...e, type: 'journal' }));
     
     seedlings.forEach(s => {
       if (s.notes) {
-        s.notes.forEach(n => {
+        s.notes.forEach((n: any) => {
           combined.push({
-            id: n.id,
+            id: `${s.id}-${n.id}`,
             date: n.date,
             content: n.text,
             isDeleted: false,
@@ -63,9 +70,9 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
 
     trees.forEach(t => {
       if (t.notes) {
-        t.notes.forEach(n => {
+        t.notes.forEach((n: any) => {
           combined.push({
-            id: n.id,
+            id: `${t.id}-${n.id}`,
             date: n.date,
             content: n.text,
             isDeleted: false,
@@ -77,8 +84,16 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
       }
     });
 
-    return combined.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  });
+    // Final deduplication just in case
+    const uniqueMap = new Map<string, CombinedEntry>();
+    combined.forEach(item => {
+      if (!uniqueMap.has(item.id)) {
+        uniqueMap.set(item.id, item);
+      }
+    });
+
+    return Array.from(uniqueMap.values()).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [rawJournalEntries, rawSeedlings, rawTrees]);
 
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>, isEdit: boolean = false) => {
     const file = e.target.files?.[0];

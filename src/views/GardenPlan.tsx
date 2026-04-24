@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, Structure } from '../db';
+import { useFirebaseData } from '../hooks/useFirebaseData';
 import { StructureEditor } from '../components/StructureEditor';
 import { Map as MapIcon, Sprout, Leaf, Flower2, Trees, Apple, Grape, Carrot, Cherry, Citrus, Wheat, Shrub, Palmtree, TreePine, ZoomIn, ZoomOut, Magnet, Home, Square, X, Printer, Trash2, List, Grid3X3, Ruler, BookOpen, CheckCircle2, Type } from 'lucide-react';
 import { ConfirmModal } from '../components/Modals';
@@ -89,19 +90,19 @@ function stringToColor(str: string) {
 
 
 export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string) => void }) {
-  const zones = useLiveQuery(async () => {
-    const z = await db.config.where('type').equals('zone').toArray();
-    return z.sort((a, b) => a.value.localeCompare(b.value, undefined, { numeric: true, sensitivity: 'base' }));
-  });
-  const terrains = useLiveQuery(async () => {
-    const t = await db.config.where('type').equals('terrain').toArray();
-    return t.sort((a, b) => a.value.localeCompare(b.value, undefined, { numeric: true, sensitivity: 'base' }));
-  });
-  const seedlings = useLiveQuery(() => db.seedlings.filter(s => !s.isDeleted && !s.isArchived).toArray());
-  const trees = useLiveQuery(() => db.trees.filter(t => !t.isDeleted).toArray());
-  const structures = useLiveQuery(() => db.structures.toArray());
-  const config = useLiveQuery(() => db.config.toArray());
-  const encyclopedia = useLiveQuery(() => db.encyclopedia.toArray());
+  const rawConfig = useFirebaseData<any>('config');
+  const zones = useMemo(() => rawConfig?.filter((z:any) => z.type === 'zone').sort((a:any, b:any) => String(a.value).localeCompare(String(b.value), undefined, { numeric: true, sensitivity: 'base' })) || [], [rawConfig]);
+  const terrains = useMemo(() => rawConfig?.filter((t:any) => t.type === 'terrain').sort((a:any, b:any) => String(a.value).localeCompare(String(b.value), undefined, { numeric: true, sensitivity: 'base' })) || [], [rawConfig]);
+
+  const rawSeedlings = useFirebaseData<any>('seedlings');
+  const seedlings = useMemo(() => rawSeedlings?.filter((s:any) => !s.isDeleted && !s.isArchived) || [], [rawSeedlings]);
+
+  const rawTrees = useFirebaseData<any>('trees');
+  const trees = useMemo(() => rawTrees?.filter((t:any) => !t.isDeleted) || [], [rawTrees]);
+
+  const structures = useFirebaseData<any>('structures');
+  const config = rawConfig;
+  const encyclopedia = useFirebaseData<any>('encyclopedia');
 
   const [selectedZoneId, setSelectedZoneId] = useState<string>(() => localStorage.getItem('garden_plan_selected_zone') || '');
   const [selectedSeedlingId, setSelectedSeedlingId] = useState<string | null>(null);

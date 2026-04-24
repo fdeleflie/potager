@@ -66,6 +66,12 @@ service cloud.firestore {
         allow update: if isOwner(userId) && isValidId(expenseId);
         allow delete: if isOwner(userId) && isValidId(expenseId);
       }
+      match /backups/{backupId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(backupId);
+        allow update: if isOwner(userId) && isValidId(backupId);
+        allow delete: if isOwner(userId) && isValidId(backupId);
+      }
     }
   }
 }

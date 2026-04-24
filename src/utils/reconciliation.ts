@@ -1,4 +1,5 @@
 import { db } from '../db';
+import { fb } from '../hooks/useFirebaseData';
 import { v4 as uuidv4 } from 'uuid';
 
 // Simple distinct color generator if not available

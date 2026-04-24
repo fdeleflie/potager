@@ -4,7 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 let backupInterval: number | null = null;
 
 export const backupService = {
-  async createBackup(type: 'auto' | 'manual' = 'auto', includePhotos: boolean = true) {
+  async createBackup(type: 'auto' | 'manual' = 'auto', includePhotos: boolean = false) {
     try {
       let seedlings = await db.seedlings.toArray();
       let journal = await db.journal.toArray();
@@ -16,7 +16,8 @@ export const backupService = {
       const healthIssues = await db.healthIssues.toArray();
       const expenses = await db.expenses.toArray();
 
-      if (!includePhotos) {
+      // Always strip photos for Firestore auto-backups to stay under 1MB
+      if (!includePhotos || type === 'auto') {
         seedlings = seedlings.map(s => {
           const { photo, notes, ...rest } = s;
           const notesWithoutPhotos = notes ? notes.map(n => {
@@ -53,12 +54,23 @@ export const backupService = {
         timestamp: new Date().toISOString()
       };
 
+      const dataString = JSON.stringify(exportData);
+      
+      // Check size before adding (Firestore 1MB limit, safely check for ~900KB)
+      if (dataString.length > 900000) {
+        console.warn('[BackupService] Backup size too large for Firestore, skipping save.');
+        if (type === 'manual') {
+          throw new Error('La sauvegarde est trop volumineuse pour être stockée (limite Firestore de 1Mo). Essayez sans les photos.');
+        }
+        return;
+      }
+
       const backup = {
         id: uuidv4(),
         date: new Date().toISOString(),
-        data: JSON.stringify(exportData),
+        data: dataString,
         type,
-        includePhotos
+        includePhotos: includePhotos && type !== 'auto'
       };
 
       await db.backups.add(backup);

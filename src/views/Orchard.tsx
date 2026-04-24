@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, Tree, Note, Structure, ConfigItem } from '../db';
+import { useFirebaseData } from '../hooks/useFirebaseData';
 import { StructureEditor } from '../components/StructureEditor';
 import { 
   Trees, Plus, Map as MapIcon, Image as ImageIcon, Trash2, Edit2, 
@@ -18,14 +19,14 @@ import { getDistinctColor } from '../utils/colors';
 
 
 export function Orchard() {
-  const terrains = useLiveQuery(async () => {
-    const t = await db.config.where('type').equals('terrain').toArray();
-    return t.sort((a, b) => a.value.localeCompare(b.value, undefined, { numeric: true, sensitivity: 'base' }));
-  });
-  const trees = useLiveQuery(() => db.trees.toArray());
-  const structures = useLiveQuery(() => db.structures.toArray());
-  const config = useLiveQuery(() => db.config.toArray());
-  const encyclopedia = useLiveQuery(() => db.encyclopedia.toArray());
+  const config = useFirebaseData<any>('config');
+  const terrains = useMemo(() => {
+    return config?.filter((t:any) => t.type === 'terrain').sort((a:any, b:any) => String(a.value).localeCompare(String(b.value), undefined, { numeric: true, sensitivity: 'base' })) || [];
+  }, [config]);
+
+  const trees = useFirebaseData<any>('trees');
+  const structures = useFirebaseData<any>('structures');
+  const encyclopedia = useFirebaseData<any>('encyclopedia');
 
   const [selectedTerrainId, setSelectedTerrainId] = useState<string>(() => localStorage.getItem('orchard_selected_terrain') || '');
   const [viewMode, setViewMode] = useState<'plan' | 'list'>('plan');

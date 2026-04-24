@@ -1,5 +1,5 @@
+import { useFirebaseData, fb } from '../hooks/useFirebaseData';
 import React, { useState, useMemo } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { db, Task, Seedling } from '../db';
 import { v4 as uuidv4 } from 'uuid';
 import { 
@@ -24,8 +24,8 @@ export function TasksView({ setCurrentView }: { setCurrentView: (v: string) => v
   const [filter, setFilter] = useState<'all' | 'pending' | 'completed'>('pending');
   const [showAutoTasks, setShowAutoTasks] = useState(true);
 
-  const manualTasks = useLiveQuery(() => db.tasks.filter(t => !t.isDeleted).toArray());
-  const seedlings = useLiveQuery(() => db.seedlings.filter(s => !s.isDeleted && !s.isArchived).toArray());
+  const manualTasks = useFirebaseData<any>('tasks').filter(t => !t.isDeleted);
+  const seedlings = useFirebaseData<any>('seedlings').filter(s => !s.isDeleted && !s.isArchived);
 
   // Logic to generate automatic tasks
   const autoTasks = useMemo(() => {
@@ -81,6 +81,13 @@ export function TasksView({ setCurrentView }: { setCurrentView: (v: string) => v
     
     let combined = [...manual, ...auto];
     
+    // Deduplicate logic
+    const uniqueMap = new Map<string, any>();
+    combined.forEach(task => {
+      uniqueMap.set(task.id, task);
+    });
+    combined = Array.from(uniqueMap.values());
+    
     if (filter === 'pending') {
       combined = combined.filter(t => !t.isCompleted);
     } else if (filter === 'completed') {
@@ -111,7 +118,7 @@ export function TasksView({ setCurrentView }: { setCurrentView: (v: string) => v
       isDeleted: false
     };
 
-    await db.tasks.add(newTask);
+    await fb.add('tasks', newTask);
     setNewTaskTitle('');
   };
 
@@ -123,14 +130,14 @@ export function TasksView({ setCurrentView }: { setCurrentView: (v: string) => v
       }
       return;
     }
-    await db.tasks.update(task.id, { 
+    await fb.update('tasks', task.id, { 
       isCompleted: !task.isCompleted,
       dateCompleted: !task.isCompleted ? new Date().toISOString() : undefined
     });
   };
 
   const deleteTask = async (id: string) => {
-    await db.tasks.update(id, { isDeleted: true });
+    await fb.update('tasks', id, { isDeleted: true });
   };
 
   return (

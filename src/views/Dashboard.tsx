@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
+import { useFirebaseData } from '../hooks/useFirebaseData';
 import { db, Task } from '../db';
 import { Sprout, CheckCircle2, TrendingUp, BarChart3, PieChart as PieChartIcon, Printer, Archive, Coins, Gift, ShoppingBag, CheckSquare, Clock, ArrowRight } from 'lucide-react';
 import { 
@@ -15,9 +15,13 @@ import { checkWeatherAlerts, WeatherAlert } from '../services/weatherService';
 export function Dashboard({ setCurrentView }: { setCurrentView: (v: string) => void }) {
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [activeTab, setActiveTab] = useState<'overview' | 'sales' | 'harvests'>('overview');
-  const seedlings = useLiveQuery(() => db.seedlings.filter(s => !s.isDeleted).toArray());
-  const manualTasks = useLiveQuery(() => db.tasks.filter(t => !t.isDeleted && !t.isCompleted).toArray());
-  const config = useLiveQuery(() => db.config.where('type').equals('setting').toArray());
+  const rawSeedlings = useFirebaseData<any>('seedlings');
+  const rawTasks = useFirebaseData<any>('tasks');
+  const rawConfig = useFirebaseData<any>('config');
+
+  const seedlings = useMemo(() => rawSeedlings.filter(s => !s.isDeleted), [rawSeedlings]);
+  const manualTasks = useMemo(() => rawTasks.filter(t => !t.isDeleted && !t.isCompleted), [rawTasks]);
+  const config = useMemo(() => rawConfig.filter(c => c.type === 'setting'), [rawConfig]);
 
   const [weatherAlerts, setWeatherAlerts] = useState<WeatherAlert[]>([]);
 
@@ -104,8 +108,8 @@ export function Dashboard({ setCurrentView }: { setCurrentView: (v: string) => v
       return acc;
     }, {} as Record<string, number>);
 
-    const revenueByVeg = Object.entries(revByVegMap)
-      .map(([name, value]) => ({ name, value }))
+  const revenueByVeg = Object.entries(revByVegMap)
+      .map(([name, value]) => ({ name, value: Number(value) }))
       .sort((a, b) => b.value - a.value);
 
     const allTransactions = Array.from(new Map<string, any>([...sold, ...donated].map(item => [item.id, item])).values()).sort((a, b) => {
@@ -170,6 +174,14 @@ export function Dashboard({ setCurrentView }: { setCurrentView: (v: string) => v
     }, {} as Record<string, number>)
   ).map(([name, value]) => ({ name, value }));
 
+  interface VegetableStat {
+    name: string;
+    totalSown: number;
+    totalTransplanted: number;
+    totalPlanted: number;
+    archivedSown: number;
+    archivedSuccess: number;
+  }
   const vegetableStats = yearSeedlings.reduce((acc, s) => {
     if (!acc[s.vegetable]) {
       acc[s.vegetable] = { 
@@ -192,21 +204,21 @@ export function Dashboard({ setCurrentView }: { setCurrentView: (v: string) => v
       }
     }
     return acc;
-  }, {} as Record<string, any>);
+  }, {} as Record<string, VegetableStat>);
 
-  const topVegetablesData = Object.values(vegetableStats)
+  const topVegetablesData = (Object.values(vegetableStats) as VegetableStat[])
     .sort((a, b) => b.totalSown - a.totalSown)
     .slice(0, 10)
-    .map(stat => ({
+    .map((stat: VegetableStat) => ({
       name: stat.name,
       repiques: stat.totalTransplanted,
       semes_restants: Math.max(0, stat.totalSown - stat.totalTransplanted),
       total: stat.totalSown
     }));
 
-  const vegetableTableData = Object.values(vegetableStats)
+  const vegetableTableData = (Object.values(vegetableStats) as VegetableStat[])
     .sort((a, b) => a.name.localeCompare(b.name))
-    .map(stat => ({
+    .map((stat: VegetableStat) => ({
       ...stat,
       successRate: stat.archivedSown > 0 ? Math.round((stat.archivedSuccess / stat.archivedSown) * 100) : null
     }));
