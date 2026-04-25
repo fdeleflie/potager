@@ -14,30 +14,8 @@ export function Config({ onNavigate }: { onNavigate?: (view: any) => void }) {
   const config = rawConfig;
   const [newValue, setNewValue] = useState('');
   const [newParentId, setNewParentId] = useState('');
-  const [activeTab, setActiveTab] = useState<'state' | 'location' | 'zone' | 'terrain' | 'variety_option' | 'variety_attr_type' | 'weather' | 'expense_category' | 'category' | 'migration'>('state');
+  const [activeTab, setActiveTab] = useState<'state' | 'location' | 'zone' | 'terrain' | 'variety_option' | 'variety_attr_type' | 'weather' | 'expense_category' | 'category'>('state');
   const [selectedAttrType, setSelectedAttrType] = useState<string>('');
-  
-  const [migrationLogs, setMigrationLogs] = useState<string[]>([]);
-  const [isMigrating, setIsMigrating] = useState(false);
-
-  const handleMigration = async () => {
-    if (window.confirm("Êtes-vous sûr de vouloir lancer la migration de TOUTES vos données vers Firebase ? Cette opération est irréversible et écrasera vos données Cloud existantes s'il y en a pour cet identifiant.")) {
-      setIsMigrating(true);
-      setMigrationLogs(["Démarrage de la migration..."]);
-      try {
-        const { migrateLocalDataToFirebase } = await import('../services/migrationService');
-        await migrateLocalDataToFirebase((msg) => {
-          setMigrationLogs(prev => [...prev, msg]);
-        });
-        setMigrationLogs(prev => [...prev, "Migration terminée avec succès ! Vous pouvez maintenant migrer votre application pour utiliser Firebase à la place de la base locale Dexie."]);
-      } catch (e: any) {
-        console.error(e);
-        setMigrationLogs(prev => [...prev, `Erreur pendant la migration : ${e.message}`]);
-      } finally {
-        setIsMigrating(false);
-      }
-    }
-  };
 
   const [editingZoneId, setEditingZoneId] = useState<string | null>(null);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -220,7 +198,6 @@ export function Config({ onNavigate }: { onNavigate?: (view: any) => void }) {
     { id: 'variety_option', label: 'Options de Champs' },
     { id: 'weather', label: 'Météo & Alertes' },
     { id: 'expense_category', label: 'Dépenses' },
-    { id: 'migration', label: 'Migration' },
   ] as const;
 
   const varietyOptions = config.filter(c => c.type === 'variety_option');
@@ -295,31 +272,7 @@ export function Config({ onNavigate }: { onNavigate?: (view: any) => void }) {
         </div>
 
         <div className="p-3">
-          {activeTab === 'migration' ? (
-            <div className="p-4 bg-white rounded-xl shadow-sm border border-stone-200/60 max-w-xl">
-              <h2 className="text-lg font-serif font-medium text-stone-900 mb-4 flex items-center gap-2">
-                Migration vers Firebase
-              </h2>
-              <p className="text-stone-600 mb-4">
-                Si vous venez de configurer Firebase, vous pouvez utiliser ce bouton pour migrer vos données locales actuelles (semis, catalogue, configuration, dépenses) vers le Cloud. Attention à ne pas le lancer plusieurs fois.
-              </p>
-              <button
-                onClick={handleMigration}
-                disabled={isMigrating}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50"
-              >
-                {isMigrating ? "Migration en cours..." : "Lancer la migration"}
-              </button>
-              
-              {migrationLogs.length > 0 && (
-                <div className="mt-4 p-3 bg-stone-50 border border-stone-200 rounded-lg text-sm text-stone-600 font-mono h-48 overflow-y-auto">
-                  {migrationLogs.map((log, i) => (
-                    <div key={i}>{log}</div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : activeTab === 'weather' ? (
+          {activeTab === 'weather' ? (
             <WeatherSettings />
           ) : (
             <>
