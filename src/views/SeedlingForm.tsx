@@ -1,5 +1,5 @@
+import { useFirebaseData, fb } from '../hooks/useFirebaseData';
 import React, { useState, useEffect, useRef } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { db, Seedling } from '../db';
 import { v4 as uuidv4 } from 'uuid';
 import { ArrowLeft, Camera, Save, CheckCircle } from 'lucide-react';
@@ -28,9 +28,12 @@ export function SeedlingForm({ setCurrentView, seedlingId, onBack }: { setCurren
 
   const defaultsApplied = useRef(false);
 
-  const config = useLiveQuery(() => db.config.toArray());
-  const encyclopedia = useLiveQuery(() => db.encyclopedia.toArray());
-  const existingSeedling = useLiveQuery(() => seedlingId ? db.seedlings.get(seedlingId) : undefined, [seedlingId]);
+  const { data: config, error: configError } = useFirebaseData<any>('config');
+  const { data: encyclopedia, error: encyclopediaError } = useFirebaseData<any>('encyclopedia');
+  const { data: rawSeedlings } = useFirebaseData<any>('seedlings');
+  const existingSeedling = (rawSeedlings || []).find(item => item.id === seedlingId);
+
+  const dataError = configError || encyclopediaError;
 
   useEffect(() => {
     if (existingSeedling) {
@@ -64,7 +67,21 @@ export function SeedlingForm({ setCurrentView, seedlingId, onBack }: { setCurren
     }
   }, [existingSeedling, config, seedlingId]);
 
-  if (!config || !encyclopedia) return <div>Chargement...</div>;
+  if (dataError) {
+    return (
+      <div className="p-8 text-center bg-red-50 rounded-xl border border-red-200">
+        <p className="text-red-700 font-medium">{dataError}</p>
+        <button 
+          onClick={() => window.location.reload()}
+          className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700"
+        >
+          Rafraîchir
+        </button>
+      </div>
+    );
+  }
+
+  if (!config || !encyclopedia) return <div className="p-8 text-center text-stone-500 italic">Chargement...</div>;
 
   const catalogVegetables = PLANT_CATALOG.map(p => p.name);
   const encyclopediaVegetables = encyclopedia.map(e => e.name);
@@ -187,7 +204,7 @@ export function SeedlingForm({ setCurrentView, seedlingId, onBack }: { setCurren
       currentVegetableId = uuidv4();
       const catalogItem = PLANT_CATALOG.find(p => p.name.toLowerCase() === vegetable.trim().toLowerCase());
       const existingColors = encyclopedia.map(v => v.color).filter(Boolean) as string[] || [];
-      await db.encyclopedia.add({
+      await fb.add('encyclopedia', {
         id: currentVegetableId,
         name: vegetable.trim(),
         category: 'Légume',
@@ -215,7 +232,7 @@ export function SeedlingForm({ setCurrentView, seedlingId, onBack }: { setCurren
       );
       
       if (!existingVariety) {
-        await db.config.add({
+        await fb.add('config', {
           id: uuidv4(),
           type: 'variety',
           value: variety.trim(),
@@ -337,13 +354,13 @@ export function SeedlingForm({ setCurrentView, seedlingId, onBack }: { setCurren
     };
 
     if (seedlingId) {
-      await db.seedlings.put(mainSeedling);
+      await fb.put('seedlings', mainSeedling);
     } else {
-      await db.seedlings.add(mainSeedling);
+      await fb.add('seedlings', mainSeedling);
     }
 
     for (const s of seedlingsToAdd) {
-      await db.seedlings.add(s);
+      await fb.add('seedlings', s);
     }
     
     const details: string[] = [];

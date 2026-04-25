@@ -1,5 +1,5 @@
+import { useFirebaseData, fb } from '../hooks/useFirebaseData';
 import React, { useState, useRef } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
 import { Save, Upload, Download, Image as ImageIcon, ImageOff, History, RotateCcw, Trash2, Settings } from 'lucide-react';
 import { ConfirmModal, AlertModal } from '../components/Modals';
@@ -28,7 +28,8 @@ export function Backup() {
   const [autoFreqLight, setAutoFreqLight] = useState(localStorage.getItem('potager_backup_frequency_light') || 'daily');
   const [autoFreqFull, setAutoFreqFull] = useState(localStorage.getItem('potager_backup_frequency_full') || 'weekly');
 
-  const autoBackups = useLiveQuery(() => db.backups.where('type').equals('auto').sortBy('date'));
+  const { data: rawBackups, error: backupsError } = useFirebaseData<any>('backups');
+  const autoBackups = (rawBackups || []).filter(x => x.type === 'auto').sort((a,b) => String(a.date).localeCompare(String(b.date)));
 
   const handleFreqLightChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const val = e.target.value;
@@ -302,6 +303,11 @@ export function Backup() {
           <Save className="w-5 h-5 text-emerald-600" />
           Sauvegarde & Restauration
         </h1>
+        {backupsError && (
+          <div className="mt-2 p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-xs">
+            {backupsError}
+          </div>
+        )}
         <p className="text-xs text-stone-500 mt-0.5">Exportez vos données pour les sécuriser ou les transférer.</p>
       </header>
 

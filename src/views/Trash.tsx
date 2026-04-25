@@ -1,12 +1,16 @@
+import { useFirebaseData, fb } from '../hooks/useFirebaseData';
 import React, { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
 import { Trash2, RefreshCw, AlertTriangle } from 'lucide-react';
 import { ConfirmModal } from '../components/Modals';
 
 export function Trash() {
-  const deletedSeedlings = useLiveQuery(() => db.seedlings.filter(s => s.isDeleted).toArray());
-  const deletedJournal = useLiveQuery(() => db.journal.filter(j => j.isDeleted).toArray());
+  const { data: rawSeedlings, error: seedlingsError } = useFirebaseData<any>('seedlings');
+  const { data: rawJournal, error: journalError } = useFirebaseData<any>('journal');
+
+  const error = seedlingsError || journalError;
+  const deletedSeedlings = (rawSeedlings || []).filter(s => s.isDeleted);
+  const deletedJournal = (rawJournal || []).filter(j => j.isDeleted);
 
   const [confirmState, setConfirmState] = useState<{
     isOpen: boolean;
@@ -16,10 +20,24 @@ export function Trash() {
     isDanger?: boolean;
   }>({ isOpen: false, title: '', message: '', onConfirm: () => {} });
 
-  if (!deletedSeedlings || !deletedJournal) return <div>Chargement...</div>;
+  if (error) {
+    return (
+      <div className="p-8 text-center bg-red-50 rounded-xl border border-red-200">
+        <p className="text-red-700 font-medium">{error}</p>
+        <button 
+          onClick={() => window.location.reload()}
+          className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700"
+        >
+          Rafraîchir
+        </button>
+      </div>
+    );
+  }
+
+  if (!rawSeedlings && !error) return <div className="p-8 text-center text-stone-500 italic">Chargement de la corbeille...</div>;
 
   const handleRestoreSeedling = async (id: string) => {
-    await db.seedlings.update(id, { isDeleted: false });
+    await fb.update('seedlings', id, { isDeleted: false });
   };
 
   const handlePermanentDeleteSeedling = async (id: string) => {
@@ -29,13 +47,13 @@ export function Trash() {
       message: 'Voulez-vous vraiment supprimer définitivement ce semis ? Cette action est irréversible.',
       isDanger: true,
       onConfirm: async () => {
-        await db.seedlings.delete(id);
+        await fb.delete('seedlings', id);
       }
     });
   };
 
   const handleRestoreJournal = async (id: string) => {
-    await db.journal.update(id, { isDeleted: false });
+    await fb.update('journal', id, { isDeleted: false });
   };
 
   const handlePermanentDeleteJournal = async (id: string) => {
@@ -45,7 +63,7 @@ export function Trash() {
       message: 'Voulez-vous vraiment supprimer définitivement cette note ? Cette action est irréversible.',
       isDanger: true,
       onConfirm: async () => {
-        await db.journal.delete(id);
+        await fb.delete('journal', id);
       }
     });
   };
@@ -58,10 +76,10 @@ export function Trash() {
       isDanger: true,
       onConfirm: async () => {
         for (const s of deletedSeedlings) {
-          await db.seedlings.delete(s.id);
+          await fb.delete('seedlings', s.id);
         }
         for (const j of deletedJournal) {
-          await db.journal.delete(j.id);
+          await fb.delete('journal', j.id);
         }
       }
     });

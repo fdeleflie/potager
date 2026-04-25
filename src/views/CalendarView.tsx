@@ -1,5 +1,5 @@
+import { useFirebaseData, fb } from '../hooks/useFirebaseData';
 import React, { useState, useMemo } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { db, Task, Seedling } from '../db';
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, List, LayoutGrid, Printer } from 'lucide-react';
 import { printElement } from '../utils/print';
@@ -17,8 +17,11 @@ export function CalendarView({ setCurrentView }: { setCurrentView: (v: string) =
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewMode, setViewMode] = useState<'month' | 'year'>('month');
   
-  const seedlings = useLiveQuery(() => db.seedlings.filter(s => !s.isDeleted).toArray());
-  const tasks = useLiveQuery(() => db.tasks.toArray());
+  const { data: rawSeedlings, error: seedlingsError } = useFirebaseData<any>('seedlings');
+  const { data: tasks, error: tasksError } = useFirebaseData<any>('tasks');
+
+  const error = seedlingsError || tasksError;
+  const seedlings = (rawSeedlings || []).filter(s => !s.isDeleted);
 
   const events = useMemo(() => {
     if (!seedlings) return {};
@@ -209,6 +212,11 @@ export function CalendarView({ setCurrentView }: { setCurrentView: (v: string) =
 
   return (
     <div className="max-w-6xl mx-auto space-y-4" id="calendar-print-area">
+      {error && (
+        <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm mb-4">
+          {error}
+        </div>
+      )}
       <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 rounded-2xl shadow-sm border border-stone-200/60 print:hidden">
         <div className="flex items-center gap-3">
           <div className="p-2 bg-emerald-100 text-emerald-600 rounded-xl">

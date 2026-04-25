@@ -4,10 +4,12 @@ import { dbFirebase, auth } from '../firebase';
 
 export function useFirebaseData<T>(collectionName: string) {
   const [data, setData] = useState<T[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!auth.currentUser) {
       setData([]);
+      setError(null);
       return;
     }
 
@@ -23,12 +25,20 @@ export function useFirebaseData<T>(collectionName: string) {
       });
       const items = Array.from(itemsMap.values());
       setData(items as T[]);
+      setError(null);
+    }, (err: any) => {
+      console.error(`Error in useFirebaseData for ${collectionName}:`, err);
+      if (err.message?.includes('quota') || err.code === 'resource-exhausted') {
+        setError('Quota Firebase dépassé. Veuillez patienter 24h ou passer au forfait Blaze.');
+      } else {
+        setError(err.message || 'Une erreur est survenue lors de la récupération des données.');
+      }
     });
 
     return () => unsubscribe();
   }, [collectionName]);
 
-  return data;
+  return { data, error };
 }
 
 export const fb = {

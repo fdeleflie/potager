@@ -90,19 +90,21 @@ function stringToColor(str: string) {
 
 
 export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string) => void }) {
-  const rawConfig = useFirebaseData<any>('config');
+  const { data: rawConfig, error: configError } = useFirebaseData<any>('config');
   const zones = useMemo(() => rawConfig?.filter((z:any) => z.type === 'zone').sort((a:any, b:any) => String(a.value).localeCompare(String(b.value), undefined, { numeric: true, sensitivity: 'base' })) || [], [rawConfig]);
   const terrains = useMemo(() => rawConfig?.filter((t:any) => t.type === 'terrain').sort((a:any, b:any) => String(a.value).localeCompare(String(b.value), undefined, { numeric: true, sensitivity: 'base' })) || [], [rawConfig]);
 
-  const rawSeedlings = useFirebaseData<any>('seedlings');
+  const { data: rawSeedlings, error: seedlingsError } = useFirebaseData<any>('seedlings');
   const seedlings = useMemo(() => rawSeedlings?.filter((s:any) => !s.isDeleted && !s.isArchived) || [], [rawSeedlings]);
 
-  const rawTrees = useFirebaseData<any>('trees');
+  const { data: rawTrees, error: treesError } = useFirebaseData<any>('trees');
   const trees = useMemo(() => rawTrees?.filter((t:any) => !t.isDeleted) || [], [rawTrees]);
 
-  const structures = useFirebaseData<any>('structures');
+  const { data: structures, error: structuresError } = useFirebaseData<any>('structures');
   const config = rawConfig;
-  const encyclopedia = useFirebaseData<any>('encyclopedia');
+  const { data: encyclopedia, error: encError } = useFirebaseData<any>('encyclopedia');
+
+  const error = configError || seedlingsError || treesError || structuresError || encError;
 
   const [selectedZoneId, setSelectedZoneId] = useState<string>(() => localStorage.getItem('garden_plan_selected_zone') || '');
   const [selectedSeedlingId, setSelectedSeedlingId] = useState<string | null>(null);
@@ -193,7 +195,21 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
     };
   }, [selectedZone]);
 
-  if (!zones || !seedlings) return <div>Chargement...</div>;
+  if (error) {
+    return (
+      <div className="p-8 text-center bg-red-50 rounded-xl border border-red-200">
+        <p className="text-red-700 font-medium">{error}</p>
+        <button 
+          onClick={() => window.location.reload()}
+          className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700"
+        >
+          Rafraîchir
+        </button>
+      </div>
+    );
+  }
+
+  if (!zones || !seedlings || !rawConfig) return <div className="p-8 text-center text-stone-500 italic">Chargement...</div>;
 
   if (zones.length === 0) {
     return (
@@ -205,15 +221,15 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
     );
   }
   
-  const vegetablesInPlan = Array.from(new Set(seedlings.map(s => s.vegetable))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
-  const legendColors = vegetablesInPlan.reduce((acc, veg) => {
-    const encEntry = encyclopedia?.find(e => e.name.toLowerCase().trim() === veg.toLowerCase().trim());
+  const vegetablesInPlan = Array.from(new Set((seedlings || []).map(s => s.vegetable || ''))).filter(Boolean).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+  const legendColors = (vegetablesInPlan || []).reduce((acc, veg) => {
+    const encEntry = encyclopedia?.find(e => (e.name || '').toLowerCase().trim() === (veg || '').toLowerCase().trim());
     acc[veg] = encEntry?.color || stringToColor(veg);
     return acc;
   }, {} as Record<string, string>);
 
-  const legendIcons = vegetablesInPlan.reduce((acc, veg) => {
-    const encEntry = encyclopedia?.find(e => e.name.toLowerCase().trim() === veg.toLowerCase().trim());
+  const legendIcons = (vegetablesInPlan || []).reduce((acc, veg) => {
+    const encEntry = encyclopedia?.find(e => (e.name || '').toLowerCase().trim() === (veg || '').toLowerCase().trim());
     acc[veg] = ICON_MAP[encEntry?.icon || ''] || Sprout;
     return acc;
   }, {} as Record<string, any>);

@@ -1,5 +1,5 @@
+import { useFirebaseData, fb } from '../hooks/useFirebaseData';
 import React, { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { db, ConfigItem } from '../db';
 import { v4 as uuidv4 } from 'uuid';
 import { Settings, Plus, Trash2, Edit2, Palette, XCircle, CheckCircle2, Trees, BookOpen, Info } from 'lucide-react';
@@ -10,7 +10,8 @@ import { PLANT_CATALOG } from '../catalog';
 import { WeatherSettings } from './WeatherSettings';
 
 export function Config({ onNavigate }: { onNavigate?: (view: any) => void }) {
-  const config = useLiveQuery(() => db.config.toArray());
+  const { data: rawConfig, error: configError } = useFirebaseData<any>('config');
+  const config = rawConfig;
   const [newValue, setNewValue] = useState('');
   const [newParentId, setNewParentId] = useState('');
   const [activeTab, setActiveTab] = useState<'state' | 'location' | 'zone' | 'terrain' | 'variety_option' | 'variety_attr_type' | 'weather' | 'expense_category' | 'category' | 'migration'>('state');
@@ -88,7 +89,21 @@ export function Config({ onNavigate }: { onNavigate?: (view: any) => void }) {
     }
   }, [selectedAttrType, varietyAttrTypes]);
 
-  if (!config) return <div>Chargement...</div>;
+  if (configError) {
+    return (
+      <div className="p-8 text-center bg-red-50 rounded-xl border border-red-200">
+        <p className="text-red-700 font-medium">{configError}</p>
+        <button 
+          onClick={() => window.location.reload()}
+          className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700"
+        >
+          Rafraîchir
+        </button>
+      </div>
+    );
+  }
+
+  if (!config) return <div className="p-8 text-center text-stone-500 italic">Chargement...</div>;
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -121,7 +136,7 @@ export function Config({ onNavigate }: { onNavigate?: (view: any) => void }) {
                   } : undefined
     };
 
-    await db.config.add(item);
+    await fb.add('config', item);
 
     setNewValue('');
     setNewParentId('');
@@ -134,23 +149,23 @@ export function Config({ onNavigate }: { onNavigate?: (view: any) => void }) {
       message: 'Voulez-vous vraiment supprimer cet élément ?',
       isDanger: true,
       onConfirm: async () => {
-        await db.config.delete(id);
+        await fb.delete('config', id);
         if (false) {
           const children = config.filter(c => c.parentId === id);
           for (const child of children) {
-            await db.config.delete(child.id);
+            await fb.delete('config', child.id);
           }
         } else if (activeTab === 'state' && defaultState === value) {
-          await db.config.delete('default_state');
+          await fb.delete('config', 'default_state');
         } else if (activeTab === 'location' && defaultLocation === value) {
-          await db.config.delete('default_location');
+          await fb.delete('config', 'default_location');
         }
       }
     });
   };
 
   const handleSetDefault = async (type: 'state' | 'location', value: string) => {
-    await db.config.put({
+    await fb.put('config', {
       id: `default_${type}`,
       type: 'setting',
       value: value
@@ -160,21 +175,21 @@ export function Config({ onNavigate }: { onNavigate?: (view: any) => void }) {
   const handleSaveZone = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingZoneId) return;
-    await db.config.update(editingZoneId, { attributes: zoneAttrs });
+    await fb.update('config', editingZoneId, { attributes: zoneAttrs });
     setEditingZoneId(null);
   };
 
   const handleSaveTerrain = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingZoneId) return; // Reusing editingZoneId for terrain
-    await db.config.update(editingZoneId, { attributes: terrainAttrs });
+    await fb.update('config', editingZoneId, { attributes: terrainAttrs });
     setEditingZoneId(null);
   };
 
   const handleSaveItemName = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingItemId || !editingItemValue.trim()) return;
-    await db.config.update(editingItemId, { value: editingItemValue });
+    await fb.update('config', editingItemId, { value: editingItemValue });
     setEditingItemId(null);
   };
 
@@ -224,7 +239,7 @@ export function Config({ onNavigate }: { onNavigate?: (view: any) => void }) {
       parentId,
       attributes: {}
     };
-    await db.config.add(item);
+    await fb.add('config', item);
   };
 
   return (

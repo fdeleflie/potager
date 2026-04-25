@@ -1,5 +1,5 @@
+import { useFirebaseData, fb } from '../hooks/useFirebaseData';
 import React, { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { db, Note, Seedling, HarvestEvent } from '../db';
 import { v4 as uuidv4 } from 'uuid';
 import { ArrowLeft, Edit, Archive, Trash2, Plus, Camera, CheckCircle2, XCircle, Printer, Split, ShoppingBag, BookOpen } from 'lucide-react';
@@ -9,11 +9,15 @@ import { getSeedlingDisplayPhoto } from '../utils/seedling';
 import { printElement } from '../utils/print';
 
 export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurrentView: (v: string) => void, seedlingId: string, onBack?: () => void }) {
-  const seedling = useLiveQuery(() => db.seedlings.get(seedlingId), [seedlingId]);
-  const varieties = useLiveQuery(() => db.config.where('type').equals('variety').toArray());
-  const varietyAttrTypes = useLiveQuery(() => db.config.where('type').equals('variety_attr_type').toArray());
+  const { data: rawSeedlings, error: seedlingsError } = useFirebaseData<any>('seedlings');
+  const seedling = (rawSeedlings || []).find(item => item.id === seedlingId);
+  const { data: rawConfig, error: configError } = useFirebaseData<any>('config');
+  const varieties = (rawConfig || []).filter(item => item.type === 'variety');
+  const varietyAttrTypes = (rawConfig || []).filter(item => item.type === 'variety_attr_type');
   const varietyConfig = varieties?.find(v => v.value === seedling?.variety);
   const varietyAttrs = varietyConfig?.attributes;
+
+  const error = seedlingsError || configError;
   const [newNoteText, setNewNoteText] = useState('');
   const [newNotePhotos, setNewNotePhotos] = useState<string[]>([]);
   const [showNoteForm, setShowNoteForm] = useState(false);
@@ -87,15 +91,24 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
       quantityPlanted: seedling.quantityPlanted ? Math.max(0, seedling.quantityPlanted - splitQuantity) : undefined,
     };
 
-    await db.seedlings.put(newSeedling);
-    await db.seedlings.put(updatedOldSeedling);
+    await fb.put('seedlings', newSeedling);
+    await fb.put('seedlings', updatedOldSeedling);
 
     setSplitBatchState({ isOpen: false });
     setSplitQuantity('');
     setCurrentView(`seedling-detail-${newSeedlingId}`);
   };
 
-  if (!seedling) return <div>Chargement...</div>;
+  if (error) {
+    return (
+      <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">
+        {error}
+      </div>
+    );
+  }
+
+  if (!rawSeedlings || (rawSeedlings.length > 0 && !seedling)) return <div className="p-8 text-center text-stone-500 italic">Chargement...</div>;
+  if (rawSeedlings.length > 0 && !seedling) return <div className="p-8 text-center text-stone-500 italic">Semis non trouvé.</div>;
 
   const handleAddHarvest = async (data: { date: string, quantity: number, unit: string, notes: string }) => {
     const newHarvest: HarvestEvent = {
@@ -106,7 +119,7 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
       notes: data.notes
     };
 
-    await db.seedlings.update(seedlingId, {
+    await fb.update('seedlings', seedlingId, {
       harvests: [...(seedling.harvests || []), newHarvest]
     });
   };
@@ -133,7 +146,7 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
       photos: newNotePhotos,
     };
 
-    await db.seedlings.update(seedlingId, {
+    await fb.update('seedlings', seedlingId, {
       notes: [...seedling.notes, newNote]
     });
 
@@ -143,7 +156,7 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
   };
 
   const handleArchive = async () => {
-    await db.seedlings.update(seedlingId, { isArchived: !seedling.isArchived });
+    await fb.update('seedlings', seedlingId, { isArchived: !seedling.isArchived });
   };
 
   const handleDelete = async () => {
@@ -153,7 +166,7 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
       message: 'Voulez-vous vraiment mettre ce semis à la corbeille ?',
       isDanger: true,
       onConfirm: async () => {
-        await db.seedlings.update(seedlingId, { isDeleted: true });
+        await fb.update('seedlings', seedlingId, { isDeleted: true });
         setCurrentView('seedlings');
       }
     });
@@ -161,7 +174,7 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
 
   const handleSuccess = async (success: boolean) => {
     if (success) {
-      await db.seedlings.update(seedlingId, { 
+      await fb.update('seedlings', seedlingId, { 
         success, 
         failureReason: undefined,
         isArchived: true
@@ -172,7 +185,7 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
         title: "Bilan d'échec",
         message: "Quelle est la raison de l'échec ?",
         onSubmit: async (reason) => {
-          await db.seedlings.update(seedlingId, { 
+          await fb.update('seedlings', seedlingId, { 
             success, 
             failureReason: reason || undefined,
             isArchived: true
@@ -212,12 +225,12 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
       onConfirm: async () => {
         if (stage === 'sown') {
           const lost = getRemainingToTransplant(seedling!);
-          await db.seedlings.update(seedlingId, {
+          await fb.update('seedlings', seedlingId, {
             quantityLostSown: (seedling!.quantityLostSown || 0) + lost
           });
         } else {
           const lost = getRemainingToPlant(seedling!);
-          await db.seedlings.update(seedlingId, {
+          await fb.update('seedlings', seedlingId, {
             quantityLostTransplanted: (seedling!.quantityLostTransplanted || 0) + lost
           });
         }
@@ -239,7 +252,7 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
         title: 'Archiver comme échec',
         message: `La totalité des plants restants de ce lot est perdue (${lostQty}). Voulez-vous archiver cette fiche comme échec ?`,
         onConfirm: async () => {
-          await db.seedlings.update(seedlingId, {
+          await fb.update('seedlings', seedlingId, {
             isArchived: true,
             success: false,
             failureReason: stage === 'sown' ? 'Perte avant repiquage' : 'Perte avant plantation',
@@ -275,7 +288,7 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
           }]
         };
 
-        await db.seedlings.add(newSeedling);
+        await fb.add('seedlings', newSeedling);
         
         if (stage === 'sown') {
           const updates: any = { quantityLostSown: 0 };
@@ -286,7 +299,7 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
             updates.quantity = finalQty;
           }
 
-          await db.seedlings.update(seedlingId, updates);
+          await fb.update('seedlings', seedlingId, updates);
         } else {
           const updates: any = { quantityLostTransplanted: 0 };
           
@@ -300,7 +313,7 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
           if (finalQty !== undefined) updates.quantity = finalQty;
           if (finalTransplanted !== undefined) updates.quantityTransplanted = finalTransplanted;
 
-          await db.seedlings.update(seedlingId, updates);
+          await fb.update('seedlings', seedlingId, updates);
         }
       }
     });
@@ -332,7 +345,7 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
         const hasUnarchivedLosses = (seedling.quantityLostSown || 0) > 0 || (seedling.quantityLostTransplanted || 0) > 0;
 
         if (qtyToSell === available && totalRemaining === available && !hasUnarchivedLosses) {
-           await db.seedlings.update(seedlingId, {
+           await fb.update('seedlings', seedlingId, {
              isArchived: true,
              success: true,
              state: 'Vendu / Donné',
@@ -368,7 +381,7 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
           }]
         };
 
-        await db.seedlings.add(newSeedling);
+        await fb.add('seedlings', newSeedling);
 
         const updates: any = {};
         
@@ -412,7 +425,7 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
           text: `${qtyToSell} plants ont été extraits suite à une vente/don.`
         }];
 
-        await db.seedlings.update(seedlingId, updates);
+        await fb.update('seedlings', seedlingId, updates);
       }
     });
   };
@@ -485,7 +498,7 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
           }]
         };
 
-        await db.seedlings.add(newSeedling);
+        await fb.add('seedlings', newSeedling);
         
         // Update original
         let finalQty = seedling.quantity !== undefined ? Math.max(0, seedling.quantity - qtyToMove) : undefined;
@@ -501,7 +514,7 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
         if (finalTransplanted !== undefined) updates.quantityTransplanted = finalTransplanted;
         if (finalPlanted !== undefined) updates.quantityPlanted = finalPlanted;
 
-        await db.seedlings.update(seedlingId, updates);
+        await fb.update('seedlings', seedlingId, updates);
         
         setCurrentView(`seedling-detail-${newSeedling.id}`);
       }
@@ -978,7 +991,7 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
                   <div>
                     <p className="font-medium">{seedling.success ? 'Culture réussie' : 'Culture échouée'}</p>
                     {seedling.failureReason && <p className="text-xs mt-0.5 opacity-80">Raison : {seedling.failureReason}</p>}
-                    <button onClick={() => db.seedlings.update(seedlingId, { success: undefined, failureReason: undefined })} className="text-[10px] underline mt-1 opacity-70 hover:opacity-100">Modifier le bilan</button>
+                    <button onClick={() => fb.update('seedlings', seedlingId, { success: undefined, failureReason: undefined })} className="text-[10px] underline mt-1 opacity-70 hover:opacity-100">Modifier le bilan</button>
                   </div>
                 </div>
               )}
@@ -1022,7 +1035,7 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
                             message: 'Voulez-vous vraiment supprimer cette récolte ?',
                             isDanger: true,
                             onConfirm: async () => {
-                              await db.seedlings.update(seedlingId, {
+                              await fb.update('seedlings', seedlingId, {
                                 harvests: seedling.harvests?.filter(h => h.id !== harvest.id)
                               });
                             }
@@ -1154,7 +1167,7 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
                             message: 'Voulez-vous vraiment supprimer cette note ?',
                             isDanger: true,
                             onConfirm: async () => {
-                              await db.seedlings.update(seedlingId, {
+                              await fb.update('seedlings', seedlingId, {
                                 notes: seedling.notes.filter(n => n.id !== note.id)
                               });
                             }

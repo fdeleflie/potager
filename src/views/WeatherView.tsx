@@ -6,8 +6,8 @@ import { getWeatherForecast, WeatherForecast } from '../services/weatherService'
 import { CloudRain, Wind, Thermometer, MapPin, Loader2 } from 'lucide-react';
 
 export function WeatherView() {
-  const rawConfig = useFirebaseData<any>('config');
-  const config = React.useMemo(() => rawConfig.filter(item => item.type === 'setting'), [rawConfig]);
+  const { data: rawConfig, error } = useFirebaseData<any>('config');
+  const config = React.useMemo(() => (rawConfig || []).filter(item => item.type === 'setting'), [rawConfig]);
   const location = config?.find(c => c.id === 'weather_location')?.value;
 
   const [forecast, setForecast] = useState<WeatherForecast[]>([]);
@@ -37,6 +37,11 @@ export function WeatherView() {
         </div>
       </header>
 
+      {error && (
+        <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">
+          {error}
+        </div>
+      )}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-4">
           <h2 className="text-lg font-serif font-medium text-stone-900 flex items-center gap-2">

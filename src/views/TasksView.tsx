@@ -24,8 +24,12 @@ export function TasksView({ setCurrentView }: { setCurrentView: (v: string) => v
   const [filter, setFilter] = useState<'all' | 'pending' | 'completed'>('pending');
   const [showAutoTasks, setShowAutoTasks] = useState(true);
 
-  const manualTasks = useFirebaseData<any>('tasks').filter(t => !t.isDeleted);
-  const seedlings = useFirebaseData<any>('seedlings').filter(s => !s.isDeleted && !s.isArchived);
+  const { data: rawTasks, error: tasksError } = useFirebaseData<any>('tasks');
+  const { data: rawSeedlings, error: seedlingsError } = useFirebaseData<any>('seedlings');
+
+  const error = tasksError || seedlingsError;
+  const manualTasks = (rawTasks || []).filter(t => !t.isDeleted);
+  const seedlings = (rawSeedlings || []).filter(s => !s.isDeleted && !s.isArchived);
 
   // Logic to generate automatic tasks
   const autoTasks = useMemo(() => {
@@ -142,6 +146,11 @@ export function TasksView({ setCurrentView }: { setCurrentView: (v: string) => v
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
+      {error && (
+        <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm mb-4">
+          {error}
+        </div>
+      )}
       <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 rounded-2xl shadow-sm border border-stone-200/60">
         <div className="flex items-center gap-3">
           <div className="p-2 bg-emerald-100 text-emerald-600 rounded-xl">

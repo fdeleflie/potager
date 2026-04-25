@@ -39,9 +39,11 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
     isDanger?: boolean;
   }>({ isOpen: false, title: '', message: '', onConfirm: () => {} });
 
-  const rawJournalEntries = useFirebaseData<any>('journal');
-  const rawSeedlings = useFirebaseData<any>('seedlings');
-  const rawTrees = useFirebaseData<any>('trees');
+  const { data: rawJournalEntries, error: journalError } = useFirebaseData<any>('journal');
+  const { data: rawSeedlings, error: seedlingsError } = useFirebaseData<any>('seedlings');
+  const { data: rawTrees, error: treesError } = useFirebaseData<any>('trees');
+
+  const error = journalError || seedlingsError || treesError;
 
   const entries = React.useMemo(() => {
     if (!rawJournalEntries || !rawSeedlings || !rawTrees) return undefined;
@@ -165,7 +167,21 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
     });
   };
 
-  if (!entries) return <div>Chargement...</div>;
+  if (error) {
+    return (
+      <div className="p-8 text-center bg-red-50 rounded-xl border border-red-200">
+        <p className="text-red-700 font-medium">{error}</p>
+        <button 
+          onClick={() => window.location.reload()}
+          className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700"
+        >
+          Rafraîchir
+        </button>
+      </div>
+    );
+  }
+
+  if (!rawJournalEntries && !error) return <div className="p-8 text-center text-stone-500 italic">Chargement du journal...</div>;
 
   const years = Array.from(new Set(entries.map(e => new Date(e.date).getFullYear().toString()))).sort((a, b) => b.localeCompare(a));
 

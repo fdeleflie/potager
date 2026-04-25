@@ -15,13 +15,15 @@ import { checkWeatherAlerts, WeatherAlert } from '../services/weatherService';
 export function Dashboard({ setCurrentView }: { setCurrentView: (v: string) => void }) {
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [activeTab, setActiveTab] = useState<'overview' | 'sales' | 'harvests'>('overview');
-  const rawSeedlings = useFirebaseData<any>('seedlings');
-  const rawTasks = useFirebaseData<any>('tasks');
-  const rawConfig = useFirebaseData<any>('config');
+  const { data: rawSeedlings, error: seedlingsError } = useFirebaseData<any>('seedlings');
+  const { data: rawTasks, error: tasksError } = useFirebaseData<any>('tasks');
+  const { data: rawConfig, error: configError } = useFirebaseData<any>('config');
 
-  const seedlings = useMemo(() => rawSeedlings.filter(s => !s.isDeleted), [rawSeedlings]);
-  const manualTasks = useMemo(() => rawTasks.filter(t => !t.isDeleted && !t.isCompleted), [rawTasks]);
-  const config = useMemo(() => rawConfig.filter(c => c.type === 'setting'), [rawConfig]);
+  const error = seedlingsError || tasksError || configError;
+
+  const seedlings = useMemo(() => (rawSeedlings || []).filter(s => !s.isDeleted), [rawSeedlings]);
+  const manualTasks = useMemo(() => (rawTasks || []).filter(t => !t.isDeleted && !t.isCompleted), [rawTasks]);
+  const config = useMemo(() => (rawConfig || []).filter(c => c.type === 'setting'), [rawConfig]);
 
   const [weatherAlerts, setWeatherAlerts] = useState<WeatherAlert[]>([]);
 
@@ -123,7 +125,8 @@ export function Dashboard({ setCurrentView }: { setCurrentView: (v: string) => v
 
   // Harvest Data
   const harvestData = useMemo(() => {
-    if (!yearSeedlings) return { totalByVeg: [], recentHarvests: [] };
+    const defaultData = { totalByVeg: [], recentHarvests: [] };
+    if (!yearSeedlings) return defaultData;
 
     const vegTotals: Record<string, Record<string, number>> = {};
     const allHarvests: any[] = [];
@@ -146,14 +149,29 @@ export function Dashboard({ setCurrentView }: { setCurrentView: (v: string) => v
         vegetable,
         units: Object.entries(units).map(([unit, quantity]) => ({ unit, quantity }))
       };
-    }).sort((a, b) => a.vegetable.localeCompare(b.vegetable));
+    }).sort((a, b) => (a.vegetable || '').localeCompare(b.vegetable || ''));
 
     const recentHarvests = allHarvests.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
     return { totalByVeg, recentHarvests };
   }, [yearSeedlings, selectedYear]);
 
-  if (!seedlings) return <div>Chargement...</div>;
+  if (error) {
+    return (
+      <div className="p-8 text-center bg-red-50 rounded-xl border border-red-200">
+        <p className="text-red-700 font-medium">{error}</p>
+        <p className="text-red-600 text-sm mt-2">Essayez de rafraîchir la page ou contactez le support si le problème persiste.</p>
+        <button 
+          onClick={() => window.location.reload()}
+          className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition-colors"
+        >
+          Rafraîchir
+        </button>
+      </div>
+    );
+  }
+
+  if (!rawSeedlings && !error) return <div className="p-8 text-center text-stone-500 italic">Chargement des données...</div>;
 
   const archived = yearSeedlings.filter(s => s.isArchived);
   const successes = archived.filter(s => s.success === true);
@@ -169,7 +187,8 @@ export function Dashboard({ setCurrentView }: { setCurrentView: (v: string) => v
   const successRate = archivedSown > 0 ? Math.round((archivedSuccessQty / archivedSown) * 100) : 0;
   const stateData = Object.entries(
     yearSeedlings.reduce((acc, s) => {
-      acc[s.state] = (acc[s.state] || 0) + 1;
+      const state = s.state || 'Inconnu';
+      acc[state] = (acc[state] || 0) + 1;
       return acc;
     }, {} as Record<string, number>)
   ).map(([name, value]) => ({ name, value }));
@@ -183,9 +202,10 @@ export function Dashboard({ setCurrentView }: { setCurrentView: (v: string) => v
     archivedSuccess: number;
   }
   const vegetableStats = yearSeedlings.reduce((acc, s) => {
-    if (!acc[s.vegetable]) {
-      acc[s.vegetable] = { 
-        name: s.vegetable, 
+    const vegName = s.vegetable || 'Inconnu';
+    if (!acc[vegName]) {
+      acc[vegName] = { 
+        name: vegName, 
         totalSown: 0, 
         totalTransplanted: 0,
         totalPlanted: 0,
@@ -193,14 +213,14 @@ export function Dashboard({ setCurrentView }: { setCurrentView: (v: string) => v
         archivedSuccess: 0
       };
     }
-    acc[s.vegetable].totalSown += (Number(s.quantity) || 0);
-    acc[s.vegetable].totalTransplanted += (Number(s.quantityTransplanted) || 0);
-    acc[s.vegetable].totalPlanted += (Number(s.quantityPlanted) || 0);
+    acc[vegName].totalSown += (Number(s.quantity) || 0);
+    acc[vegName].totalTransplanted += (Number(s.quantityTransplanted) || 0);
+    acc[vegName].totalPlanted += (Number(s.quantityPlanted) || 0);
     
     if (s.isArchived) {
-      acc[s.vegetable].archivedSown += (Number(s.quantity) || 0);
+      acc[vegName].archivedSown += (Number(s.quantity) || 0);
       if (s.success === true) {
-        acc[s.vegetable].archivedSuccess += (Number(s.quantityPlanted) || Number(s.quantityTransplanted) || Number(s.quantity) || 0);
+        acc[vegName].archivedSuccess += (Number(s.quantityPlanted) || Number(s.quantityTransplanted) || Number(s.quantity) || 0);
       }
     }
     return acc;
@@ -217,7 +237,7 @@ export function Dashboard({ setCurrentView }: { setCurrentView: (v: string) => v
     }));
 
   const vegetableTableData = (Object.values(vegetableStats) as VegetableStat[])
-    .sort((a, b) => a.name.localeCompare(b.name))
+    .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
     .map((stat: VegetableStat) => ({
       ...stat,
       successRate: stat.archivedSown > 0 ? Math.round((stat.archivedSuccess / stat.archivedSown) * 100) : null

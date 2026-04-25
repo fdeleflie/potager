@@ -1,5 +1,5 @@
+import { useFirebaseData, fb } from '../hooks/useFirebaseData';
 import React, { useState, useMemo } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { db, EncyclopediaEntry, HealthIssue, ConfigItem } from '../db';
 import { v4 as uuidv4 } from 'uuid';
 import { 
@@ -23,9 +23,11 @@ export function EncyclopediaView() {
   const [isEditing, setIsEditing] = useState(false);
   
   // Data
-  const encyclopedia = useLiveQuery(() => db.encyclopedia.toArray());
-  const healthIssues = useLiveQuery(() => db.healthIssues.toArray());
-  const config = useLiveQuery(() => db.config.toArray());
+  const { data: encyclopedia, error: encError } = useFirebaseData<any>('encyclopedia');
+  const { data: healthIssues, error: healthError } = useFirebaseData<any>('healthIssues');
+  const { data: config, error: configError } = useFirebaseData<any>('config');
+
+  const error = encError || healthError || configError;
 
   const [editForm, setEditForm] = useState<any>({});
   const [healthForm, setHealthForm] = useState<Partial<HealthIssue>>({});
@@ -39,13 +41,13 @@ export function EncyclopediaView() {
     const encyclopediaEntries = encyclopedia;
 
     const allNames = Array.from(new Set([
-      ...configVegetables.map(c => c.value.toLowerCase().trim()),
-      ...encyclopediaEntries.map(e => e.name.toLowerCase().trim())
-    ]));
+      ...configVegetables.map(c => (c.value || '').toLowerCase().trim()),
+      ...encyclopediaEntries.map(e => (e.name || '').toLowerCase().trim())
+    ])).filter(Boolean);
 
     return allNames.map(nameLower => {
-      const conf = configVegetables.find(c => c.value.toLowerCase().trim() === nameLower);
-      const enc = encyclopediaEntries.find(e => e.name.toLowerCase().trim() === nameLower);
+      const conf = configVegetables.find(c => (c.value || '').toLowerCase().trim() === nameLower);
+      const enc = encyclopediaEntries.find(e => (e.name || '').toLowerCase().trim() === nameLower);
       
       // Use a prefixed ID to avoid collisions between config and encyclopedia tables
       const id = conf ? `c-${conf.id}` : (enc ? `e-${enc.id}` : `v-${uuidv4()}`);
@@ -69,23 +71,26 @@ export function EncyclopediaView() {
         color: enc?.color || '#10b981',
         icon: enc?.icon || 'Sprout'
       };
-    }).sort((a, b) => a.name.localeCompare(b.name));
+    }).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   }, [config, encyclopedia]);
 
-  const filteredPlants = unifiedPlants.filter(item => 
-    item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    item.category.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredPlants = useMemo(() => unifiedPlants.filter(item => 
+    (item.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (item.category || '').toLowerCase().includes(searchTerm.toLowerCase())
+  ), [unifiedPlants, searchTerm]);
 
-  const filteredHealth = healthIssues?.filter(item => 
-    item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    item.type.toLowerCase().includes(searchTerm.toLowerCase())
-  ).sort((a, b) => a.name.localeCompare(b.name)) || [];
+  const filteredHealth = useMemo(() => healthIssues?.filter(item => 
+    (item.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (item.type || '').toLowerCase().includes(searchTerm.toLowerCase())
+  ).sort((a, b) => (a.name || '').localeCompare(b.name || '')) || [], [healthIssues, searchTerm]);
 
-  const selectedVeg = unifiedPlants.find(v => v.id === selectedVegId);
-  const selectedHealth = healthIssues?.find(h => h.id === selectedHealthId);
+  const selectedVeg = useMemo(() => unifiedPlants.find(v => v.id === selectedVegId), [unifiedPlants, selectedVegId]);
+  const selectedHealth = useMemo(() => healthIssues?.find(h => h.id === selectedHealthId), [healthIssues, selectedHealthId]);
   
-  const plantVarieties = config?.filter(c => c.type === 'variety' && (c.parentId === selectedVeg?.configId || c.parentId === selectedVeg?.encyclopediaId)).sort((a, b) => a.value.localeCompare(b.value)) || [];
+  const plantVarieties = useMemo(() => config?.filter(c => 
+    c.type === 'variety' && 
+    (c.parentId === selectedVeg?.configId || c.parentId === selectedVeg?.encyclopediaId)
+  ).sort((a, b) => (a.value || '').localeCompare(b.value || '')) || [], [config, selectedVeg]);
 
   const handleStartEdit = (veg?: any) => {
     if (veg) {
@@ -150,10 +155,10 @@ export function EncyclopediaView() {
     };
 
     if (encId) {
-      await db.encyclopedia.update(encId, encData);
+      await fb.update('encyclopedia', encId, encData);
     } else {
       encId = uuidv4();
-      await db.encyclopedia.add({ id: encId, ...encData });
+      await fb.add('encyclopedia', { id: encId, ...encData });
     }
 
     // Set the selected ID with the correct prefix
@@ -177,9 +182,9 @@ export function EncyclopediaView() {
 
     if (healthForm.id) {
       const { id, ...updateData } = entry;
-      await db.healthIssues.update(id, updateData);
+      await fb.update('healthIssues', id, updateData);
     } else {
-      await db.healthIssues.add(entry);
+      await fb.add('healthIssues', entry);
       setSelectedHealthId(entry.id);
     }
     setIsEditing(false);
@@ -187,14 +192,14 @@ export function EncyclopediaView() {
 
   const handleDelete = async (veg: any) => {
     if (confirm("Voulez-vous vraiment supprimer cette plante ? Cela supprimera également ses variétés.")) {
-      if (veg.encyclopediaId) await db.encyclopedia.delete(veg.encyclopediaId);
+      if (veg.encyclopediaId) await fb.delete('encyclopedia', veg.encyclopediaId);
       if (veg.configId) {
-        await db.config.delete(veg.configId);
+        await fb.delete('config', veg.configId);
       }
       // Delete associated varieties
       const varieties = config?.filter(c => c.type === "variety" && (c.parentId === veg.configId || c.parentId === veg.encyclopediaId)) || [];
       for (const v of varieties) {
-        await db.config.delete(v.id);
+        await fb.delete('config', v.id);
       }
       if (selectedVegId === veg.id) setSelectedVegId(null);
     }
@@ -202,7 +207,7 @@ export function EncyclopediaView() {
 
   const handleDeleteHealth = async (id: string) => {
     if (confirm("Voulez-vous vraiment supprimer cette fiche ?")) {
-      await db.healthIssues.delete(id);
+      await fb.delete('healthIssues', id);
       if (selectedHealthId === id) setSelectedHealthId(null);
     }
   };
@@ -211,7 +216,7 @@ export function EncyclopediaView() {
     e.preventDefault();
     if (!newVarietyName.trim() || (!selectedVeg?.configId && !selectedVeg?.encyclopediaId)) return;
 
-    await db.config.add({
+    await fb.add('config', {
       id: uuidv4(),
       type: "variety",
       value: newVarietyName.trim(),
@@ -222,7 +227,7 @@ export function EncyclopediaView() {
 
   const handleDeleteVariety = async (id: string) => {
     if (confirm("Supprimer cette variété ?")) {
-      await db.config.delete(id);
+      await fb.delete('config', id);
     }
   };
 
@@ -251,7 +256,7 @@ export function EncyclopediaView() {
               o.value.toLowerCase().trim() === part.toLowerCase().trim()
             );
             if (!existingOption) {
-              await db.config.add({
+              await fb.add('config', {
                 id: uuidv4(),
                 type: 'variety_option',
                 value: part,
@@ -263,9 +268,26 @@ export function EncyclopediaView() {
       }
     }
 
-    await db.config.update(editingVarietyId, { value: varietyEditForm.name, attributes: varietyEditForm.attributes });
+    await fb.update('config', editingVarietyId, { value: varietyEditForm.name, attributes: varietyEditForm.attributes });
     setEditingVarietyId(null);
   };
+
+  if (error) {
+    return (
+      <div className="p-8 text-center bg-red-50 rounded-xl border border-red-200">
+        <p className="text-red-700 font-medium">{error}</p>
+        <p className="text-red-600 text-sm mt-2">Dépassement de quota possible. Veuillez patienter ou vérifier votre console Firebase.</p>
+        <button 
+          onClick={() => window.location.reload()}
+          className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition-colors"
+        >
+          Rafraîchir
+        </button>
+      </div>
+    );
+  }
+
+  if (!encyclopedia && !config && !error) return <div className="p-8 text-center text-stone-500 italic">Chargement du catalogue...</div>;
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">

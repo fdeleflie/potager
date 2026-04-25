@@ -483,10 +483,11 @@ export default function App() {
     };
 
     const init = async () => {
-      await deduplicate();
-      await populateEncyclopedia();
-      await populateHealthIssues();
-      await migrateVegetablesToEncyclopedia();
+      // Automatic migrations disabled to save Firebase quota after successful migration
+      // await deduplicate();
+      // await populateEncyclopedia();
+      // await populateHealthIssues();
+      // await migrateVegetablesToEncyclopedia();
     };
 
     init();

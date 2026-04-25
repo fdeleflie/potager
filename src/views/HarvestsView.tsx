@@ -1,5 +1,5 @@
+import { useFirebaseData, fb } from '../hooks/useFirebaseData';
 import React, { useState, useMemo } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { db, HarvestEvent, Seedling } from '../db';
 import { HarvestStats } from './HarvestStats';
 import { Plus, Search, Calendar, Scale, Sprout, Edit2, Trash2, Leaf } from 'lucide-react';
@@ -13,7 +13,8 @@ function GlobalHarvestModal({ isOpen, onClose }: { isOpen: boolean, onClose: () 
   const [unit, setUnit] = useState('kg');
   const [notes, setNotes] = useState('');
 
-  const seedlings = useLiveQuery(() => db.seedlings.filter(s => !s.isDeleted && !s.isArchived).toArray());
+  const { data: rawSeedlings } = useFirebaseData<any>('seedlings');
+  const seedlings = (rawSeedlings || []).filter(s => !s.isDeleted && !s.isArchived);
 
   React.useEffect(() => {
     if (isOpen) {
@@ -40,7 +41,7 @@ function GlobalHarvestModal({ isOpen, onClose }: { isOpen: boolean, onClose: () 
       };
       
       const harvests = seedling.harvests ? [...seedling.harvests, newHarvest] : [newHarvest];
-      await db.seedlings.update(selectedSeedlingId, { harvests });
+      await fb.update('seedlings', selectedSeedlingId, { harvests });
     }
     
     onClose();
@@ -139,7 +140,8 @@ export function HarvestsView() {
   const [filterVegetable, setFilterVegetable] = useState<string>('all');
   const [confirmState, setConfirmState] = useState<{isOpen: boolean, title: string, message: string, onConfirm: () => void, isDanger?: boolean}>({ isOpen: false, title: '', message: '', onConfirm: () => {} });
 
-  const seedlings = useLiveQuery(() => db.seedlings.filter(s => !s.isDeleted).toArray());
+  const { data: rawSeedlings, error } = useFirebaseData<any>('seedlings');
+  const seedlings = (rawSeedlings || []).filter(s => !s.isDeleted);
 
   // Flatten all harvests
   const allHarvests = useMemo(() => {
@@ -185,7 +187,7 @@ export function HarvestsView() {
         const seedling = await db.seedlings.get(seedlingId);
         if (seedling) {
           const harvests = seedling.harvests?.filter(h => h.id !== harvestId) || [];
-          await db.seedlings.update(seedlingId, { harvests });
+          await fb.update('seedlings', seedlingId, { harvests });
         }
         setConfirmState(prev => ({ ...prev, isOpen: false }));
       }
@@ -194,6 +196,11 @@ export function HarvestsView() {
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
+      {error && (
+        <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">
+          {error}
+        </div>
+      )}
       <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 rounded-2xl shadow-sm border border-stone-200/60">
         <div>
           <h1 className="text-2xl font-serif font-medium text-stone-900">Module Récoltes</h1>

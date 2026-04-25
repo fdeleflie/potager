@@ -4,8 +4,8 @@ import { db } from '../db';
 import { Save, CloudRain, Wind, ThermometerSnowflake, MapPin } from 'lucide-react';
 
 export function WeatherSettings() {
-  const rawConfig = useFirebaseData<any>('config');
-  const config = React.useMemo(() => rawConfig.filter(item => item.type === 'setting'), [rawConfig]);
+  const { data: rawConfig, error } = useFirebaseData<any>('config');
+  const config = React.useMemo(() => (rawConfig || []).filter(item => item.type === 'setting'), [rawConfig]);
   
   const [location, setLocation] = useState('');
   const [tempMin, setTempMin] = useState<number | ''>('');
@@ -54,6 +54,11 @@ export function WeatherSettings() {
         Paramètres Météo & Alertes
       </h2>
       
+      {error && (
+        <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-xs mb-4">
+          {error}
+        </div>
+      )}
       <form onSubmit={handleSave} className="space-y-6">
         <div className="space-y-2">
           <label className="flex items-center gap-2 text-sm font-medium text-stone-700">

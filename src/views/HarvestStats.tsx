@@ -1,5 +1,5 @@
+import { useFirebaseData, fb } from '../hooks/useFirebaseData';
 import React, { useMemo, useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line, Cell, PieChart, Pie } from 'recharts';
 import { BarChart3, Scale, Hash, Trophy, TrendingUp, Euro, MapPin, ChevronDown, ChevronUp, Plus, Trash2, CheckCircle2 } from 'lucide-react';
@@ -11,13 +11,17 @@ const COLORS = ['#10b981', '#3b82f6', '#8b5cf6', '#f59e0b', '#ef4444', '#14b8a6'
 const PRICE_PER_KG = 3.5; 
 
 export function HarvestStats() {
-  const seedlings = useLiveQuery(() => db.seedlings.filter(s => !s.isDeleted).toArray());
-  const config = useLiveQuery(() => db.config.toArray());
-  const encyclopedia = useLiveQuery(() => db.encyclopedia.toArray());
-  const expenses = useLiveQuery(() => db.expenses.toArray());
+  const { data: rawSeedlings, error: seedlingsError } = useFirebaseData<any>('seedlings');
+  const { data: config, error: configError } = useFirebaseData<any>('config');
+  const { data: encyclopedia, error: encError } = useFirebaseData<any>('encyclopedia');
+  const { data: expenses, error: expensesError } = useFirebaseData<any>('expenses');
+
+  const seedlings = (rawSeedlings || []).filter(s => !s.isDeleted);
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
   const [selectedYear, setSelectedYear] = useState<string>('all');
   const [selectedMonth, setSelectedMonth] = useState<string>('all');
+
+  const error = seedlingsError || configError || encError || expensesError;
 
   const stats = useMemo(() => {
     if (!seedlings || !config || !encyclopedia || !expenses) return null;
@@ -140,7 +144,21 @@ export function HarvestStats() {
     };
   }, [seedlings, config, encyclopedia, expenses, selectedYear, selectedMonth]);
 
-  if (!seedlings || !stats) return <div className="p-4 text-stone-500">Chargement des statistiques...</div>;
+  if (error) {
+    return (
+      <div className="p-8 text-center bg-red-50 rounded-xl border border-red-200">
+        <p className="text-red-700 font-medium">{error}</p>
+        <button 
+          onClick={() => window.location.reload()}
+          className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700"
+        >
+          Rafraîchir
+        </button>
+      </div>
+    );
+  }
+
+  if (!rawSeedlings || !stats) return <div className="p-8 text-center text-stone-500 italic">Chargement des statistiques...</div>;
 
   const years = Array.from(new Set([
     ...seedlings.flatMap(s => s.harvests?.map(h => new Date(h.date).getFullYear().toString()) || []),
@@ -404,7 +422,7 @@ function ExpensesSection({ expenses, config }: { expenses: any[], config: any[] 
     e.preventDefault();
     if (!form.amount || isNaN(Number(form.amount))) return;
 
-    await db.expenses.add({
+    await fb.add('expenses', {
       id: uuidv4(),
       date: form.date,
       category: form.category,
@@ -418,7 +436,7 @@ function ExpensesSection({ expenses, config }: { expenses: any[], config: any[] 
 
   const handleDelete = async (id: string) => {
     if (window.confirm('Supprimer cette dépense ?')) {
-      await db.expenses.delete(id);
+      await fb.delete('expenses', id);
     }
   };
 

@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
+import { useFirebaseData, fb } from '../hooks/useFirebaseData';
+import React, { useState, useEffect, useMemo } from 'react';
 import { db, Seedling } from '../db';
 import { v4 as uuidv4 } from 'uuid';
 import { Search, Filter, Plus, Sprout, LayoutGrid, List, Printer, Edit, Trash2, Archive, CheckCircle2, Download, ChevronDown, ChevronUp, X, RefreshCw } from 'lucide-react';
@@ -124,8 +124,8 @@ export function SeedlingsList({ setCurrentView, initialFilter = 'active' }: { se
           quantityPlanted: seedling.quantityPlanted ? Math.max(0, seedling.quantityPlanted - splitQty) : undefined,
         };
 
-        await db.seedlings.put(newSeedling);
-        await db.seedlings.put(updatedOldSeedling);
+        await fb.put('seedlings', newSeedling);
+        await fb.put('seedlings', updatedOldSeedling);
       } else {
         const updates: any = { state: newStateValue };
         if (newStateValue === 'Repiquage' && !seedling.dateTransplanted) {
@@ -142,7 +142,7 @@ export function SeedlingsList({ setCurrentView, initialFilter = 'active' }: { se
           updates.dateTransplanted = undefined;
           updates.quantityTransplanted = undefined;
         }
-        await db.seedlings.update(seedling.id, updates);
+        await fb.update('seedlings', seedling.id, updates);
       }
     };
 
@@ -202,15 +202,35 @@ export function SeedlingsList({ setCurrentView, initialFilter = 'active' }: { se
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
-  const seedlings = useLiveQuery(() => db.seedlings.filter(s => !s.isDeleted).toArray());
-  const encyclopedia = useLiveQuery(() => db.encyclopedia.toArray());
-  const config = useLiveQuery(() => db.config.toArray());
+  const { data: rawSeedlings, error: seedlingsError } = useFirebaseData<any>('seedlings');
+  const { data: encyclopedia, error: encError } = useFirebaseData<any>('encyclopedia');
+  const { data: config, error: configError } = useFirebaseData<any>('config');
+
+  const error = seedlingsError || encError || configError;
+  const seedlings = useMemo(() => (rawSeedlings || []), [rawSeedlings]).filter(s => !s.isDeleted);
   
-  if (!seedlings || !config || !encyclopedia) return <div>Chargement...</div>;
+  if (error) {
+    return (
+      <div className="p-8 text-center bg-red-50 rounded-xl border border-red-200">
+        <p className="text-red-700 font-medium">{error}</p>
+        <button 
+          onClick={() => window.location.reload()}
+          className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700"
+        >
+          Rafraîchir
+        </button>
+      </div>
+    );
+  }
+
+  if (!rawSeedlings || !config || !encyclopedia) return <div className="p-8 text-center text-stone-500 italic flex items-center justify-center gap-2">
+    <RefreshCw className="w-4 h-4 animate-spin" />
+    Chargement des plants...
+  </div>;
 
   const STATE_ORDER = ['Démarrage', 'Repiquage', 'Mise en terre', 'Vendu / Donné'];
 
-  const states = config.filter(c => c.type === 'state').sort((a, b) => {
+  const states = (config || []).filter(c => c.type === 'state').sort((a, b) => {
     const indexA = STATE_ORDER.indexOf(a.value);
     const indexB = STATE_ORDER.indexOf(b.value);
     if (indexA !== -1 && indexB !== -1) return indexA - indexB;
@@ -231,14 +251,14 @@ export function SeedlingsList({ setCurrentView, initialFilter = 'active' }: { se
       .map(s => s.variety)
   )).sort();
 
-  const filtered = Array.from(new Map<string, any>(seedlings.filter(s => {
-    const matchesSearch = s.vegetable.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                          s.variety.toLowerCase().includes(searchTerm.toLowerCase());
+  const filtered = Array.from(new Map<string, any>((seedlings || []).filter(s => {
+    const matchesSearch = (s.vegetable || '').toLowerCase().includes(searchTerm.toLowerCase()) || 
+                          (s.variety || '').toLowerCase().includes(searchTerm.toLowerCase());
     const matchesState = filterState === 'all' || s.state === filterState;
     const matchesVegetable = filterVegetable === 'all' || s.vegetable === filterVegetable;
     
     // Category filtering
-    const encEntry = encyclopedia.find(e => e.name.toLowerCase().trim() === s.vegetable.toLowerCase().trim());
+    const encEntry = encyclopedia?.find(e => (e.name || '').toLowerCase().trim() === (s.vegetable || '').toLowerCase().trim());
     const matchesCategory = filterCategory === 'all' || (encEntry && encEntry.category === filterCategory);
 
     const matchesArchived = filterArchived === 'all' || 
@@ -251,14 +271,14 @@ export function SeedlingsList({ setCurrentView, initialFilter = 'active' }: { se
     const matchesVariety = filterVariety === 'all' || s.variety === filterVariety;
 
     // Advanced attributes filtering
-    const vegEnc = encyclopedia.find(e => e.name.toLowerCase().trim() === s.vegetable.toLowerCase().trim());
-    const vegConfig = vegetablesConfig.find(v => v.value === s.vegetable);
-    const variety = varietiesConfig.find(v => v.value === s.variety && (v.parentId === vegConfig?.id || v.parentId === vegEnc?.id));
+    const vegEnc = encyclopedia?.find(e => (e.name || '').toLowerCase().trim() === (s.vegetable || '').toLowerCase().trim());
+    const vegConfig = vegetablesConfig?.find(v => v.value === s.vegetable);
+    const variety = varietiesConfig?.find(v => v.value === s.variety && (v.parentId === vegConfig?.id || v.parentId === vegEnc?.id));
     
     const matchesAttributes = Object.entries(selectedAttributes).every(([attrTypeId, selectedValues]) => {
       if (!selectedValues || selectedValues.length === 0) return true;
       const varietyAttrValue = variety?.attributes?.[attrTypeId] || '';
-      const varietyTags = varietyAttrValue.split(',').map((t: string) => t.trim().toLowerCase());
+      const varietyTags = typeof varietyAttrValue === 'string' ? varietyAttrValue.split(',').map((t: string) => t.trim().toLowerCase()) : [];
       return selectedValues.some(sv => varietyTags.includes(sv.toLowerCase()));
     });
 
@@ -321,14 +341,14 @@ export function SeedlingsList({ setCurrentView, initialFilter = 'active' }: { se
       message: 'Voulez-vous vraiment mettre ce semis à la corbeille ?',
       isDanger: true,
       onConfirm: async () => {
-        await db.seedlings.update(id, { isDeleted: true });
+        await fb.update('seedlings', id, { isDeleted: true });
       }
     });
   };
 
   const handleArchive = async (id: string, isArchived: boolean, e: React.MouseEvent) => {
     e.stopPropagation();
-    await db.seedlings.update(id, { isArchived: !isArchived });
+    await fb.update('seedlings', id, { isArchived: !isArchived });
   };
 
   const handleExportCSV = () => {
@@ -422,7 +442,7 @@ export function SeedlingsList({ setCurrentView, initialFilter = 'active' }: { se
       if (!seedling[dateField as keyof Seedling]) {
         updates[dateField] = now;
       }
-      await db.seedlings.update(id, updates);
+      await fb.update('seedlings', id, updates);
     }
     setSelectedIds(new Set());
   };
@@ -435,7 +455,7 @@ export function SeedlingsList({ setCurrentView, initialFilter = 'active' }: { se
       isDanger: true,
       onConfirm: async () => {
         for (const id of selectedIds) {
-          await db.seedlings.update(id, { isDeleted: true });
+          await fb.update('seedlings', id, { isDeleted: true });
         }
         setSelectedIds(new Set());
         setConfirmState(prev => ({ ...prev, isOpen: false }));
@@ -447,7 +467,7 @@ export function SeedlingsList({ setCurrentView, initialFilter = 'active' }: { se
     for (const id of selectedIds) {
       const seedling = seedlings.find(s => s.id === id);
       if (seedling) {
-        await db.seedlings.update(id, { isArchived: !seedling.isArchived });
+        await fb.update('seedlings', id, { isArchived: !seedling.isArchived });
       }
     }
     setSelectedIds(new Set());

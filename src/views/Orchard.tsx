@@ -19,14 +19,17 @@ import { getDistinctColor } from '../utils/colors';
 
 
 export function Orchard() {
-  const config = useFirebaseData<any>('config');
+  const { data: config, error: configError } = useFirebaseData<any>('config');
   const terrains = useMemo(() => {
-    return config?.filter((t:any) => t.type === 'terrain').sort((a:any, b:any) => String(a.value).localeCompare(String(b.value), undefined, { numeric: true, sensitivity: 'base' })) || [];
+    return (config || []).filter((t:any) => t.type === 'terrain').sort((a:any, b:any) => String(a.value).localeCompare(String(b.value), undefined, { numeric: true, sensitivity: 'base' })) || [];
   }, [config]);
 
-  const trees = useFirebaseData<any>('trees');
-  const structures = useFirebaseData<any>('structures');
-  const encyclopedia = useFirebaseData<any>('encyclopedia');
+  const { data: rawTrees, error: treesError } = useFirebaseData<any>('trees');
+  const trees = rawTrees;
+  const { data: structures, error: structuresError } = useFirebaseData<any>('structures');
+  const { data: encyclopedia, error: encError } = useFirebaseData<any>('encyclopedia');
+
+  const error = configError || treesError || structuresError || encError;
 
   const [selectedTerrainId, setSelectedTerrainId] = useState<string>(() => localStorage.getItem('orchard_selected_terrain') || '');
   const [viewMode, setViewMode] = useState<'plan' | 'list'>('plan');
@@ -573,7 +576,7 @@ export function Orchard() {
     if (!selectedTerrainId || !newTree.species || newTree.positionX === undefined) return;
 
     // Check if species exists in encyclopedia, if not add it
-    let encEntry = encyclopedia?.find(e => e.name.toLowerCase().trim() === newTree.species.toLowerCase().trim());
+    let encEntry = encyclopedia?.find(e => (e.name || '').toLowerCase().trim() === (newTree.species || '').toLowerCase().trim());
     let speciesId = encEntry?.id;
     if (!speciesId) {
       speciesId = uuidv4();
@@ -641,7 +644,7 @@ export function Orchard() {
     if (!id || !editTreeData.species) return;
 
     // Check if species exists in encyclopedia, if not add it
-    let encEntry = encyclopedia?.find(e => e.name.toLowerCase().trim() === editTreeData.species.toLowerCase().trim());
+    let encEntry = encyclopedia?.find(e => (e.name || '').toLowerCase().trim() === (editTreeData.species || '').toLowerCase().trim());
     let speciesId = encEntry?.id;
     if (!speciesId) {
       speciesId = uuidv4();
@@ -757,7 +760,21 @@ export function Orchard() {
 
   const speciesLegend = Array.from(new Set(treesInCurrentTerrain.map(t => t.species))).sort();
 
-  if (!terrains || !trees) return <div>Chargement...</div>;
+  if (error) {
+    return (
+      <div className="p-8 text-center bg-red-50 rounded-xl border border-red-200">
+        <p className="text-red-700 font-medium">{error}</p>
+        <button 
+          onClick={() => window.location.reload()}
+          className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700"
+        >
+          Rafraîchir
+        </button>
+      </div>
+    );
+  }
+
+  if (!terrains || !trees || !config) return <div className="p-8 text-center text-stone-500 italic">Chargement...</div>;
 
   if (terrains.length === 0) {
     return (
