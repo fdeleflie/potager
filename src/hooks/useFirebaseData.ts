@@ -2,41 +2,76 @@ import { useState, useEffect } from 'react';
 import { collection, query, onSnapshot, doc, setDoc, deleteDoc, updateDoc, getDoc, getDocs } from 'firebase/firestore';
 import { dbFirebase, auth } from '../firebase';
 
+const globalCache = new Map<string, { data: any[], error: string | null }>();
+const activeListeners = new Map<string, () => void>();
+const updateCallbacks = new Map<string, Set<() => void>>();
+
+auth.onAuthStateChanged((user) => {
+  if (!user) {
+    activeListeners.forEach(unsub => unsub());
+    activeListeners.clear();
+    globalCache.clear();
+    updateCallbacks.forEach(cbs => cbs.forEach(cb => cb()));
+  }
+});
+
 export function useFirebaseData<T>(collectionName: string) {
-  const [data, setData] = useState<T[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const uid = auth.currentUser?.uid;
+  const key = uid ? `${uid}_${collectionName}` : null;
+
+  const [data, setData] = useState<T[]>(key ? (globalCache.get(key)?.data as T[]) || [] : []);
+  const [error, setError] = useState<string | null>(key ? (globalCache.get(key)?.error) || null : null);
 
   useEffect(() => {
-    if (!auth.currentUser) {
+    if (!uid || !key) {
       setData([]);
       setError(null);
       return;
     }
 
-    const q = query(collection(dbFirebase, `users/${auth.currentUser.uid}/${collectionName}`));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const itemsMap = new Map();
-      snapshot.docs.forEach(docSnapshot => {
-        const id = docSnapshot.id;
-        itemsMap.set(id, {
-          ...docSnapshot.data(),
-          id
-        });
-      });
-      const items = Array.from(itemsMap.values());
-      setData(items as T[]);
-      setError(null);
-    }, (err: any) => {
-      console.error(`Error in useFirebaseData for ${collectionName}:`, err);
-      if (err.message?.includes('quota') || err.code === 'resource-exhausted') {
-        setError('Quota Firebase dépassé. Veuillez patienter 24h ou passer au forfait Blaze.');
-      } else {
-        setError(err.message || 'Une erreur est survenue lors de la récupération des données.');
+    const triggerUpdate = () => {
+      const state = globalCache.get(key);
+      if (state) {
+        setData(state.data as T[]);
+        setError(state.error);
       }
-    });
+    };
 
-    return () => unsubscribe();
-  }, [collectionName]);
+    if (!updateCallbacks.has(key)) {
+      updateCallbacks.set(key, new Set());
+    }
+    updateCallbacks.get(key)!.add(triggerUpdate);
+
+    if (globalCache.has(key)) {
+      triggerUpdate();
+    }
+
+    if (!activeListeners.has(key)) {
+      activeListeners.set(key, () => {}); 
+      const q = query(collection(dbFirebase, `users/${uid}/${collectionName}`));
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const items = snapshot.docs.map(docSnapshot => ({
+          ...docSnapshot.data(),
+          id: docSnapshot.id
+        }));
+        globalCache.set(key, { data: items, error: null });
+        updateCallbacks.get(key)?.forEach(cb => cb());
+      }, (err: any) => {
+        console.error(`Error in useFirebaseData for ${collectionName}:`, err);
+        let errorMsg = err.message || 'Une erreur est survenue lors de la récupération des données.';
+        if (err.message?.includes('quota') || err.code === 'resource-exhausted') {
+          errorMsg = 'Quota Firebase dépassé. Veuillez patienter 24h ou passer au forfait Blaze.';
+        }
+        globalCache.set(key, { data: globalCache.get(key)?.data || [], error: errorMsg });
+        updateCallbacks.get(key)?.forEach(cb => cb());
+      });
+      activeListeners.set(key, unsubscribe);
+    }
+
+    return () => {
+      updateCallbacks.get(key)?.delete(triggerUpdate);
+    };
+  }, [collectionName, uid, key]);
 
   return { data, error };
 }
