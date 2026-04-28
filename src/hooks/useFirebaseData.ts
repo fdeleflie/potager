@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { collection, query, onSnapshot, doc, setDoc, deleteDoc, updateDoc, getDoc, getDocs } from 'firebase/firestore';
+import { collection, query, onSnapshot, doc, setDoc, deleteDoc, updateDoc, getDoc, getDocs, deleteField } from 'firebase/firestore';
 import { dbFirebase, auth } from '../firebase';
 
 const globalCache = new Map<string, { data: any[], error: string | null }>();
@@ -89,21 +89,43 @@ export const fb = {
     if (!auth.currentUser) throw new Error("No user logged in");
     const id = data.id || crypto.randomUUID();
     const docRef = doc(dbFirebase, `users/${auth.currentUser.uid}/${collectionName}`, id);
-    const dataToSave = { ...data, id, userId: auth.currentUser.uid };
-    await setDoc(docRef, dataToSave);
+    const dataToSave: any = { ...data, id, userId: auth.currentUser.uid };
+    const cleanedData: any = {};
+    for (const key in dataToSave) {
+      if (dataToSave[key] !== undefined) {
+        cleanedData[key] = dataToSave[key];
+      }
+    }
+    await setDoc(docRef, cleanedData);
     return id;
   },
   put: async <T extends { id: string }>(collectionName: string, data: T) => {
     if (!auth.currentUser) throw new Error("No user logged in");
     const docRef = doc(dbFirebase, `users/${auth.currentUser.uid}/${collectionName}`, data.id);
-    const dataToSave = { ...data, userId: auth.currentUser.uid };
-    await setDoc(docRef, dataToSave);
+    const dataToSave: any = { ...data, userId: auth.currentUser.uid };
+    const cleanedData: any = {};
+    for (const key in dataToSave) {
+      if (dataToSave[key] !== undefined) {
+        cleanedData[key] = dataToSave[key];
+      }
+    }
+    await setDoc(docRef, cleanedData);
     return data.id;
   },
   update: async (collectionName: string, id: string, data: any) => {
     if (!auth.currentUser) throw new Error("No user logged in");
     const docRef = doc(dbFirebase, `users/${auth.currentUser.uid}/${collectionName}`, id);
-    await updateDoc(docRef, data);
+    
+    // Replace undefined values with deleteField()
+    const updateData: any = {};
+    for (const key in data) {
+      if (data[key] === undefined) {
+        updateData[key] = deleteField();
+      } else {
+        updateData[key] = data[key];
+      }
+    }
+    await updateDoc(docRef, updateData);
   },
   delete: async (collectionName: string, id: string) => {
     if (!auth.currentUser) throw new Error("No user logged in");
