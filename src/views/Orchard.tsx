@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, Tree, Note, Structure, ConfigItem } from '../db';
-import { useFirebaseData } from '../hooks/useFirebaseData';
+import { useFirebaseData, fb } from '../hooks/useFirebaseData';
 import { StructureEditor } from '../components/StructureEditor';
 import { 
   Trees, Plus, Map as MapIcon, Image as ImageIcon, Trash2, Edit2, 
@@ -270,7 +270,7 @@ export function Orchard() {
     }
 
     if (isAddingStructure) {
-      await db.structures.add({
+      await fb.add("structures", {
         id: uuidv4(),
         terrainId: selectedTerrainId,
         name: newStructure.name || (newStructure.type === 'landmark' ? 'Repère' : 'Élément fixe'),
@@ -287,7 +287,7 @@ export function Orchard() {
     }
 
     if (isMovingTree && selectedTreeId) {
-      await db.trees.update(selectedTreeId, { positionX: cmX, positionY: cmY });
+      await fb.update("trees", selectedTreeId, { positionX: cmX, positionY: cmY });
       setIsMovingTree(false);
       return;
     }
@@ -296,7 +296,7 @@ export function Orchard() {
       const sourceTree = treesInCurrentTerrain.find(t => t.id === selectedTreeId);
       if (sourceTree) {
         const { id, ...rest } = sourceTree;
-        await db.trees.add({
+        await fb.add("trees", {
           ...rest,
           id: uuidv4(),
           positionX: cmX,
@@ -465,7 +465,7 @@ export function Orchard() {
           cmY = Math.round(cmY / snapStep) * snapStep;
         }
 
-        await db.trees.update(draggingTreeId, {
+        await fb.update("trees", draggingTreeId, {
           positionX: cmX,
           positionY: cmY
         });
@@ -488,7 +488,7 @@ export function Orchard() {
           cmY = Math.round(cmY / snapStep) * snapStep;
         }
 
-        await db.structures.update(draggingStructureId, {
+        await fb.update("structures", draggingStructureId, {
           positions: [{ x: cmX, y: cmY }]
         });
       }
@@ -551,7 +551,7 @@ export function Orchard() {
 
   const handleUpdateStructure = async (updatedData: any) => {
     if (!editingStructureId) return;
-    await db.structures.update(editingStructureId, updatedData);
+    await fb.update("structures", editingStructureId, updatedData);
   };
 
   const handleRemoveStructure = (e: React.MouseEvent, structureId: string) => {
@@ -565,7 +565,7 @@ export function Orchard() {
       message: `Voulez-vous retirer l'élément "${structure.name}" ?`,
       isDanger: true,
       onConfirm: async () => {
-        await db.structures.delete(structureId);
+        await fb.delete("structures", structureId);
         setEditingStructureId(null);
       }
     });
@@ -581,7 +581,7 @@ export function Orchard() {
     if (!speciesId) {
       speciesId = uuidv4();
       const existingColors = encyclopedia?.map(v => v.color).filter(Boolean) as string[] || [];
-      await db.encyclopedia.add({
+      await fb.add("encyclopedia", {
         id: speciesId,
         name: newTree.species,
         color: newTree.color || getDistinctColor(existingColors),
@@ -608,7 +608,7 @@ export function Orchard() {
         c.value.toLowerCase().trim() === newTree.variety.toLowerCase().trim()
       );
       if (!existingVariety) {
-        await db.config.add({
+        await fb.add("config", {
           id: uuidv4(),
           type: 'variety',
           value: newTree.variety.trim(),
@@ -632,7 +632,7 @@ export function Orchard() {
       notes: []
     };
 
-    await db.trees.add(tree);
+    await fb.add("trees", tree);
     setIsAddingTree(false);
     setNewTree({});
     setPhotoPreview(null);
@@ -649,7 +649,7 @@ export function Orchard() {
     if (!speciesId) {
       speciesId = uuidv4();
       const existingColors = encyclopedia?.map(v => v.color).filter(Boolean) as string[] || [];
-      await db.encyclopedia.add({
+      await fb.add("encyclopedia", {
         id: speciesId,
         name: editTreeData.species,
         color: editTreeData.color || getDistinctColor(existingColors),
@@ -676,7 +676,7 @@ export function Orchard() {
         c.value.toLowerCase().trim() === editTreeData.variety.toLowerCase().trim()
       );
       if (!existingVariety) {
-        await db.config.add({
+        await fb.add("config", {
           id: uuidv4(),
           type: 'variety',
           value: editTreeData.variety.trim(),
@@ -685,7 +685,7 @@ export function Orchard() {
       }
     }
 
-    await db.trees.update(id, {
+    await fb.update("trees", id, {
       species: editTreeData.species,
       variety: editTreeData.variety,
       datePlanted: editTreeData.datePlanted,
@@ -697,7 +697,7 @@ export function Orchard() {
 
     // Update species config if it exists
     if (speciesId) {
-      await db.config.update(speciesId, {
+      await fb.update("config", speciesId, {
         attributes: {
           color: editTreeData.color || '#10b981',
           icon: editTreeData.icon || 'Trees'
@@ -718,7 +718,7 @@ export function Orchard() {
       message: 'Voulez-vous vraiment supprimer cet arbre du verger ?',
       isDanger: true,
       onConfirm: async () => {
-        await db.trees.delete(id);
+        await fb.delete("trees", id);
         setSelectedTreeId(null);
       }
     });
@@ -749,7 +749,7 @@ export function Orchard() {
       photos: newNotePhotos,
     };
 
-    await db.trees.update(selectedTreeId, {
+    await fb.update("trees", selectedTreeId, {
       notes: [...(tree.notes || []), newNote]
     });
 
@@ -846,7 +846,7 @@ export function Orchard() {
                 const newSize = Number(e.target.value);
                 if (selectedTerrainId) {
                   const updatedAttributes = { ...selectedTerrain.attributes, scale: newSize };
-                  await db.config.update(selectedTerrainId, { attributes: updatedAttributes });
+                  await fb.update("config", selectedTerrainId, { attributes: updatedAttributes });
                 }
               }}
               className="text-sm border-none bg-transparent outline-none text-stone-600 font-medium cursor-pointer"
@@ -1002,7 +1002,7 @@ export function Orchard() {
                       const newSize = Number(e.target.value);
                       if (selectedTerrainId) {
                         const updatedAttributes = { ...selectedTerrain.attributes, scale: newSize };
-                        await db.config.update(selectedTerrainId, { attributes: updatedAttributes });
+                        await fb.update("config", selectedTerrainId, { attributes: updatedAttributes });
                       }
                     }}
                     className="text-sm border-none bg-transparent outline-none text-stone-600 font-medium cursor-pointer"
@@ -1065,7 +1065,7 @@ export function Orchard() {
                         reader.onloadend = async () => {
                           const base64 = reader.result as string;
                           const updatedAttributes = { ...selectedTerrain.attributes, backgroundImage: base64 };
-                          await db.config.update(selectedTerrainId, { attributes: updatedAttributes });
+                          await fb.update("config", selectedTerrainId, { attributes: updatedAttributes });
                         };
                         reader.readAsDataURL(file);
                       }
@@ -1077,7 +1077,7 @@ export function Orchard() {
                     onClick={async () => {
                       if (selectedTerrainId) {
                         const updatedAttributes = { ...selectedTerrain.attributes, backgroundImage: undefined };
-                        await db.config.update(selectedTerrainId, { attributes: updatedAttributes });
+                        await fb.update("config", selectedTerrainId, { attributes: updatedAttributes });
                       }
                     }}
                     className="p-2 text-red-500 hover:bg-red-50 rounded-xl border border-stone-200 bg-white"
@@ -2233,7 +2233,7 @@ export function Orchard() {
                           </button>
                           <button
                             onClick={async () => {
-                              await db.trees.update(selectedTreeDetails.id, { isLocked: !selectedTreeDetails.isLocked });
+                              await fb.update("trees", selectedTreeDetails.id, { isLocked: !selectedTreeDetails.isLocked });
                             }}
                             className={`p-2 rounded-lg transition-colors ${selectedTreeDetails.isLocked ? 'text-amber-600 bg-amber-50' : 'text-stone-400 hover:text-amber-600 hover:bg-amber-50'}`}
                             title={selectedTreeDetails.isLocked ? "Déverrouiller l'arbre" : "Verrouiller l'arbre"}
@@ -2375,7 +2375,7 @@ export function Orchard() {
                                   message: 'Voulez-vous vraiment supprimer cette note ?',
                                   isDanger: true,
                                   onConfirm: async () => {
-                                    await db.trees.update(selectedTreeId!, {
+                                    await fb.update("trees", selectedTreeId!, {
                                       notes: selectedTreeDetails.notes!.filter(n => n.id !== note.id)
                                     });
                                   }

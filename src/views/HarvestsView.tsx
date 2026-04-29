@@ -30,7 +30,7 @@ function GlobalHarvestModal({ isOpen, onClose }: { isOpen: boolean, onClose: () 
     e.preventDefault();
     if (!selectedSeedlingId || !quantity || isNaN(Number(quantity))) return;
     
-    const seedling = await db.seedlings.get(selectedSeedlingId);
+    const seedling = await fb.get<any>("seedlings", selectedSeedlingId);
     if (seedling) {
       const newHarvest = {
         id: uuidv4(),
@@ -184,9 +184,9 @@ export function HarvestsView() {
       message: 'Êtes-vous sûr de vouloir supprimer cette récolte ?',
       isDanger: true,
       onConfirm: async () => {
-        const seedling = await db.seedlings.get(seedlingId);
+        const seedling = await fb.get<any>("seedlings", seedlingId);
         if (seedling) {
-          const harvests = seedling.harvests?.filter(h => h.id !== harvestId) || [];
+          const harvests = seedling.harvests?.filter((h: any) => h.id !== harvestId) || [];
           await fb.update('seedlings', seedlingId, { harvests });
         }
         setConfirmState(prev => ({ ...prev, isOpen: false }));

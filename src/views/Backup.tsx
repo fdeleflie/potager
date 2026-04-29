@@ -273,7 +273,7 @@ export function Backup() {
   };
 
   const handleDeleteBackup = async (id: string) => {
-    await db.backups.delete(id);
+    await fb.delete("backups", id);
   };
 
   return (

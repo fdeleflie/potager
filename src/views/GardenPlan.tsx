@@ -1,10 +1,9 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { db, Structure } from '../db';
-import { useFirebaseData } from '../hooks/useFirebaseData';
+import { useFirebaseData, fb } from '../hooks/useFirebaseData';
 import { StructureEditor } from '../components/StructureEditor';
 import { Map as MapIcon, Sprout, Leaf, Flower2, Trees, Apple, Grape, Carrot, Cherry, Citrus, Wheat, Shrub, Palmtree, TreePine, ZoomIn, ZoomOut, Magnet, Home, Square, X, Printer, Trash2, List, Grid3X3, Ruler, BookOpen, CheckCircle2, Type } from 'lucide-react';
-import { ConfirmModal } from '../components/Modals';
+import { ConfirmModal, PromptModal } from '../components/Modals';
 import { ICON_MAP, GARDEN_EMOJIS } from '../constants';
 import { v4 as uuidv4 } from 'uuid';
 import { printElement } from '../utils/print';
@@ -243,13 +242,67 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
     return 1;
   };
 
-  const unplacedSeedlings = Array.from(new Map<string, any>(seedlings.filter(s => {
+  const availableSeedlingsAll = Array.from(new Map<string, any>(seedlings.filter(s => {
     if (s.state !== 'Mise en terre') return false;
-    if (!s.zoneId) return true;
     const maxQuantity = getMaxQuantity(s);
     if (!s.positions || s.positions.length < maxQuantity) return true;
     return false;
   }).map(s => [s.id, s])).values());
+
+  const unplacedSeedlings = availableSeedlingsAll.filter(s => !s.zoneId || s.zoneId === selectedZoneId);
+  const otherZoneSeedlings = availableSeedlingsAll.filter(s => s.zoneId && s.zoneId !== selectedZoneId);
+
+  const [splitPromptState, setSplitPromptState] = useState<{isOpen: boolean, seedlingToSplit: any}>({ isOpen: false, seedlingToSplit: null });
+
+  const handleSplitFromOtherZone = async (value: string) => {
+    const qtyToMove = Number(value);
+    const seedling = splitPromptState.seedlingToSplit;
+    if (!seedling || isNaN(qtyToMove) || qtyToMove <= 0) return;
+
+    const maxQuantity = getMaxQuantity(seedling);
+    const placedCount = seedling.positions?.length || 0;
+    const availableTotal = maxQuantity - placedCount;
+    if (qtyToMove > availableTotal) return;
+
+    const newSeedling = {
+      ...seedling,
+      id: uuidv4(),
+      quantity: qtyToMove,
+      quantityTransplanted: seedling.quantityTransplanted !== undefined ? qtyToMove : undefined,
+      quantityPlanted: seedling.quantityPlanted !== undefined ? qtyToMove : undefined,
+      quantityLostSown: undefined,
+      quantityLostTransplanted: undefined,
+      harvests: undefined,
+      issues: undefined,
+      isArchived: false,
+      success: undefined,
+      failureReason: undefined,
+      positions: [],
+      zoneId: selectedZoneId,
+      notes: [{
+        id: uuidv4(),
+        date: new Date().toISOString(),
+        text: `Ce lot a été créé par scission. ${qtyToMove} plants ont été extraits du lot d'origine pour être plantés dans cette zone.`
+      }]
+    };
+
+    const updates: any = {};
+    if (seedling.quantity !== undefined) updates.quantity = seedling.quantity - qtyToMove;
+    if (seedling.quantityTransplanted !== undefined) updates.quantityTransplanted = seedling.quantityTransplanted - qtyToMove;
+    if (seedling.quantityPlanted !== undefined) updates.quantityPlanted = seedling.quantityPlanted - qtyToMove;
+
+    updates.notes = [...(seedling.notes || []), {
+      id: uuidv4(),
+      date: new Date().toISOString(),
+      text: `${qtyToMove} plants ont été extraits vers une autre zone.`
+    }];
+
+    await fb.add('seedlings', newSeedling);
+    await fb.update('seedlings', seedling.id, updates);
+
+    setSplitPromptState({ isOpen: false, seedlingToSplit: null });
+    setSelectedSeedlingId(newSeedling.id);
+  };
 
   const snapStep = gridSize >= 10 ? gridSize / 2 : gridSize;
 
@@ -362,7 +415,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
 
     if (isAddingStructure) {
       // Suggest a color if it's a new structure? No, use default.
-      await db.structures.add({
+      await fb.add('structures', {
         id: uuidv4(),
         terrainId: selectedZoneId, // Using terrainId for both zone and terrain
         zoneId: selectedZoneId,
@@ -388,7 +441,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
     
     if (currentPositions.length >= maxQuantity) return;
 
-    await db.seedlings.update(selectedSeedlingId, {
+    await fb.update('seedlings', selectedSeedlingId, {
       zoneId: selectedZoneId,
       positions: [...currentPositions, { x: cmX, y: cmY }]
     });
@@ -551,7 +604,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
         if (seedling && seedling.positions) {
           const newPositions = [...seedling.positions];
           newPositions[draggingPlant.positionIndex] = { x: cmX, y: cmY };
-          await db.seedlings.update(draggingPlant.seedlingId, {
+          await fb.update('seedlings', draggingPlant.seedlingId, {
             positions: newPositions
           });
         }
@@ -574,7 +627,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
           cmY = Math.round(cmY / snapStep) * snapStep;
         }
 
-        await db.structures.update(draggingStructureId, {
+        await fb.update('structures', draggingStructureId, {
           positions: [{ x: cmX, y: cmY }]
         });
       }
@@ -612,12 +665,12 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
       onConfirm: async () => {
         const newPositions = existingSeedling.positions?.filter(p => !(p.x === x && p.y === y)) || [];
         if (newPositions.length === 0) {
-          await db.seedlings.update(existingSeedling.id, {
+          await fb.update('seedlings', existingSeedling.id, {
             zoneId: undefined,
             positions: []
           });
         } else {
-          await db.seedlings.update(existingSeedling.id, {
+          await fb.update('seedlings', existingSeedling.id, {
             positions: newPositions
           });
         }
@@ -635,7 +688,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
 
   const handleUpdateStructure = async (updatedData: any) => {
     if (!editingStructureId) return;
-    await db.structures.update(editingStructureId, updatedData);
+    await fb.update('structures', editingStructureId, updatedData);
   };
 
   const handleRemoveStructure = (e: React.MouseEvent, structureId: string) => {
@@ -649,7 +702,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
       message: `Voulez-vous retirer l'élément "${structure.name}" ?`,
       isDanger: true,
       onConfirm: async () => {
-        await db.structures.delete(structureId);
+        await fb.delete('structures', structureId);
         setEditingStructureId(null);
       }
     });
@@ -678,6 +731,17 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
         onConfirm={confirmState.onConfirm}
         isDanger={confirmState.isDanger}
         confirmText="Retirer"
+      />
+
+      <PromptModal
+        isOpen={splitPromptState.isOpen}
+        onClose={() => setSplitPromptState({ isOpen: false, seedlingToSplit: null })}
+        title="Scinder le lot"
+        message={`Ce lot est assigné à une autre zone. Vous pouvez le scinder pour en planter une partie ici (un nouveau lot sera créé avec la quantité indiquée).`}
+        placeholder="Quantité à extraire..."
+        onSubmit={handleSplitFromOtherZone}
+        submitLabel="Scinder et placer ici"
+        inputType="number"
       />
 
       {editingStructureId && (
@@ -1390,12 +1454,47 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                       <p className="text-xs text-stone-500 truncate">{s.variety}</p>
                       <p className="text-[10px] text-stone-400 mt-0.5">Ø {spacing}cm</p>
                     </div>
-                    <span className="text-xs font-medium bg-stone-100 px-2 py-1 rounded-md">
+                    <span className="text-xs font-medium bg-stone-100 px-2 py-1 rounded-md mb-auto mt-0.5">
                       {s.positions?.length || 0}/{getMaxQuantity(s)}
                     </span>
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {otherZoneSeedlings.length > 0 && (
+            <div className="mt-8">
+              <h3 className="font-medium text-stone-900 mb-4 flex items-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                Plants dans d'autres zones
+              </h3>
+              <p className="text-xs text-stone-500 mb-3">Ces lots peuvent être scindés pour être plantés ici.</p>
+              <div className="space-y-2 opacity-80">
+                {otherZoneSeedlings.map(s => {
+                  const vegConfig = config?.find(c => c.type === 'vegetable' && c.value === s.vegetable);
+                  const spacing = vegConfig?.attributes?.spacing || VEGETABLE_SPACING[s.vegetable] || 30;
+                  return (
+                    <div 
+                      key={s.id}
+                      onClick={() => {
+                        setSplitPromptState({ isOpen: true, seedlingToSplit: s });
+                      }}
+                      className="p-3 rounded-lg border border-stone-200 hover:border-amber-300 hover:bg-amber-50 cursor-pointer transition-colors flex items-center gap-3"
+                    >
+                      <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: legendColors[s.vegetable] }}></div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-stone-900 truncate">{s.vegetable}</p>
+                        <p className="text-xs text-stone-500 truncate">{s.variety}</p>
+                        <p className="text-[10px] text-stone-400 mt-0.5">Ø {spacing}cm</p>
+                      </div>
+                      <span className="text-xs font-medium bg-stone-100 px-2 py-1 rounded-md mb-auto mt-0.5">
+                        {s.positions?.length || 0}/{getMaxQuantity(s)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>
@@ -1533,7 +1632,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                     <button
                       onClick={() => {
                         const newPositions = s.positions?.filter((_, i) => i !== selectedPlantDetails.positionIndex) || [];
-                        db.seedlings.update(s.id, { positions: newPositions });
+                        fb.update('seedlings', s.id, { positions: newPositions });
                         setSelectedPlantDetails(null);
                       }}
                       className="text-xs text-red-600 hover:text-red-700 font-medium flex items-center gap-1"

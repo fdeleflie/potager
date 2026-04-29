@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, JournalEntry } from '../db';
-import { useFirebaseData } from '../hooks/useFirebaseData';
+import { useFirebaseData, fb } from '../hooks/useFirebaseData';
 import { v4 as uuidv4 } from 'uuid';
 import { BookOpen, Plus, Save, Trash2, Search, Filter, Edit, X, Camera } from 'lucide-react';
 import { ConfirmModal } from '../components/Modals';
@@ -124,7 +124,7 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
       isDeleted: false,
     };
 
-    await db.journal.add(entry);
+    await fb.add("journal", entry);
     setContent('');
     setPhotos([]);
   };
@@ -146,7 +146,7 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
 
   const handleSaveEdit = async (id: string) => {
     if (!editContent.trim()) return;
-    await db.journal.update(id, {
+    await fb.update("journal", id, {
       content: editContent,
       date: editDate,
       photos: editPhotos
@@ -162,7 +162,7 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
       message: 'Voulez-vous vraiment supprimer cette note du journal ?',
       isDanger: true,
       onConfirm: async () => {
-        await db.journal.update(id, { isDeleted: true });
+        await fb.update("journal", id, { isDeleted: true });
       }
     });
   };
