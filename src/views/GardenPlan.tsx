@@ -220,6 +220,38 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
     setUndoArchiveState(null);
   };
 
+  const recentArchivedSeedlings = useMemo(() => {
+    const yearToCheck = selectedYearView === 'current' ? new Date().getFullYear() : parseInt(selectedYearView);
+    return rawSeedlings?.filter((s:any) => 
+      !s.isDeleted && 
+      s.isArchived && 
+      getSeedlingYear(s) === yearToCheck &&
+      s.positions && 
+      s.positions.length > 0
+    ) || [];
+  }, [rawSeedlings, selectedYearView]);
+
+  const handleUndoRecentArchive = async () => {
+    if (recentArchivedSeedlings.length === 0) return;
+    
+    setConfirmState({
+      isOpen: true,
+      title: "Restaurer les plants",
+      message: `Ceci va restaurer ${recentArchivedSeedlings.length} lot(s) de semis sur vos plans (qui avaient été archivés). Voulez-vous continuer ?`,
+      isDanger: false,
+      onConfirm: async () => {
+        for (const s of recentArchivedSeedlings) {
+          // We restore them to "Mise en terre" because they were archived from the garden plan
+          await fb.update('seedlings', s.id, { 
+            isArchived: false, 
+            state: 'Mise en terre', 
+            harvestedDate: null 
+          });
+        }
+      }
+    });
+  };
+
   const selectedZone = useMemo(() => zones?.find(z => z.id === selectedZoneId), [zones, selectedZoneId]);
 
   useEffect(() => {
@@ -308,7 +340,12 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
     return acc;
   }, {} as Record<string, any>);
 
-  const seedlingsInCurrentZone = Array.from(new Map<string, any>(seedlings.filter(s => s.zoneId === selectedZoneId && s.positions && s.positions.length > 0).map(s => [s.id, s])).values());
+  const seedlingsInCurrentZone = Array.from(new Map<string, any>(seedlings.filter(s => {
+    if (!s.positions || s.positions.length === 0) return false;
+    // Check if any position belongs to this zone, or if legacy data implies they all belong to this zone
+    const hasPositionsInZone = s.positions.some((p: any) => p.zoneId === selectedZoneId || (!p.zoneId && s.zoneId === selectedZoneId));
+    return hasPositionsInZone;
+  }).map(s => [s.id, s])).values());
   
   const getMaxQuantity = (s: any) => {
     if (s.quantityPlanted !== undefined) return s.quantityPlanted;
@@ -519,7 +556,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
     await fb.update('seedlings', selectedSeedlingId, {
       zoneId: selectedZoneId,
       location: selectedZone?.value,
-      positions: [...currentPositions, { x: cmX, y: cmY }]
+      positions: [...currentPositions, { x: cmX, y: cmY, zoneId: selectedZoneId }]
     });
     
     if (currentPositions.length + 1 >= maxQuantity) {
@@ -944,16 +981,16 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                 >
                   Nouvelle saison
                 </button>
-                {undoArchiveState && undoArchiveState.length > 0 && (
+                {(undoArchiveState && undoArchiveState.length > 0) || recentArchivedSeedlings.length > 0 ? (
                   <button 
-                    onClick={handleUndoArchive}
+                    onClick={undoArchiveState && undoArchiveState.length > 0 ? handleUndoArchive : handleUndoRecentArchive}
                     className="flex items-center gap-1 px-3 py-2 text-sm font-medium rounded-lg border border-stone-200 bg-white text-stone-700 hover:bg-stone-50 transition-colors whitespace-nowrap"
-                    title="Annuler la clôture de la saison"
+                    title="Restaurer les plants archivés du plan"
                   >
                     <RotateCcw className="w-4 h-4" />
-                    Annuler
+                    Restaurer ({recentArchivedSeedlings.length})
                   </button>
-                )}
+                ) : null}
               </div>
             )}
           </div>
@@ -1149,28 +1186,36 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
               })}
 
               {/* Render placed seedlings */}
-              {seedlingsInCurrentZone.map(seedling => {
-                const vegConfig = config?.find(c => c.type === 'vegetable' && c.value === seedling.vegetable);
-                const spacing = vegConfig?.attributes?.spacing || VEGETABLE_SPACING[seedling.vegetable] || 30;
-                const radius = (spacing / 2) * zoom;
-                const color = legendColors[seedling.vegetable];
-                const Icon = legendIcons[seedling.vegetable];
+              {(() => {
+                const positionOffsets = new Map<string, number>();
+                return seedlingsInCurrentZone.map(seedling => {
+                  const vegConfig = config?.find(c => c.type === 'vegetable' && c.value === seedling.vegetable);
+                  const spacing = vegConfig?.attributes?.spacing || VEGETABLE_SPACING[seedling.vegetable] || 30;
+                  const radius = (spacing / 2) * zoom;
+                  const color = legendColors[seedling.vegetable];
+                  const Icon = legendIcons[seedling.vegetable];
 
-                return seedling.positions?.map((p, idx) => {
-                  // If old data has very small x/y (grid coords), they will just appear clustered.
-                  // We treat all x/y as cm.
-                  const left = (p.x * zoom) - radius;
-                  const top = (p.y * zoom) - radius;
-                  const compStatus = getCompanionshipStatus(seedling, p);
-                  
-                  let ringClass = '';
-                  if (compStatus === 'bad') ringClass = 'ring-2 ring-red-500 ring-offset-1';
-                  else if (compStatus === 'good') ringClass = 'ring-2 ring-emerald-500 ring-offset-1';
+                  return seedling.positions?.map((p: any, originalIdx: number) => ({ p, originalIdx }))
+                    .filter(({ p }: any) => p.zoneId === selectedZoneId || (!p.zoneId && seedling.zoneId === selectedZoneId))
+                    .map(({ p, originalIdx }: any) => {
+                    const key = `${Math.round(p.x)},${Math.round(p.y)}`;
+                    const offsetCount = positionOffsets.get(key) || 0;
+                    positionOffsets.set(key, offsetCount + 1);
 
-                      return (
+                    // If old data has very small x/y (grid coords), they will just appear clustered.
+                    // We treat all x/y as cm.
+                    const left = (p.x * zoom) - radius + (offsetCount * 6);
+                    const top = (p.y * zoom) - radius + (offsetCount * 6);
+                    const compStatus = getCompanionshipStatus(seedling, p);
+                    
+                    let ringClass = '';
+                    if (compStatus === 'bad') ringClass = 'ring-2 ring-red-500 ring-offset-1';
+                    else if (compStatus === 'good') ringClass = 'ring-2 ring-emerald-500 ring-offset-1';
+
+                    return (
                         <div
-                          key={`${seedling.id}-${idx}`}
-                          onMouseDown={(e) => handlePlantMouseDown(e, seedling.id, idx)}
+                          key={`${seedling.id}-${originalIdx}`}
+                          onMouseDown={(e) => handlePlantMouseDown(e, seedling.id, originalIdx)}
                           onClick={(e) => {
                             if (isAddingStructure || selectedSeedlingId) return;
                             e.stopPropagation();
@@ -1178,12 +1223,12 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                             if (!currentSeedling) return;
                             setSelectedPlantDetails({
                               seedlingId: seedling.id,
-                              positionIndex: idx,
+                              positionIndex: originalIdx,
                               x: e.clientX,
                               y: e.clientY
                             });
                           }}
-                          className={`absolute z-10 rounded-full flex items-center justify-center shadow-md cursor-move hover:z-20 transition-all group hover:scale-110 ${ringClass} ${draggingPlant?.seedlingId === seedling.id && draggingPlant?.positionIndex === idx ? 'opacity-0' : ''}`}
+                          className={`absolute z-10 rounded-full flex items-center justify-center shadow-md cursor-move hover:z-20 transition-all group hover:scale-110 ${ringClass} ${draggingPlant?.seedlingId === seedling.id && draggingPlant?.positionIndex === originalIdx ? 'opacity-0' : ''}`}
                           style={{
                             left,
                             top,
@@ -1195,7 +1240,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                           onMouseEnter={(e) => {
                             setHoveredPlant({
                               seedlingId: seedling.id,
-                              positionIndex: idx,
+                              positionIndex: originalIdx,
                               x: e.clientX,
                               y: e.clientY
                             });
@@ -1243,7 +1288,8 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                     </div>
                   );
                 });
-              })}
+                });
+              })()}
 
                 {/* Render ghost seedling when placing */}
                 {mousePos && (
@@ -1645,17 +1691,19 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                 </tr>
               </thead>
               <tbody className="divide-y divide-stone-100">
-                {seedlingsInCurrentZone.map(s => (
+                {seedlingsInCurrentZone.map(s => {
+                  const currentZonePositions = s.positions?.filter((p: any) => p.zoneId === selectedZoneId || (!p.zoneId && s.zoneId === selectedZoneId)) || [];
+                  return (
                   <tr key={s.id} className="hover:bg-stone-50/50 transition-colors">
                     <td className="px-4 py-3 font-medium text-stone-900 flex items-center gap-2">
                       <div className="w-3 h-3 rounded-full" style={{ backgroundColor: legendColors[s.vegetable] }}></div>
                       {s.vegetable}
                     </td>
                     <td className="px-4 py-3">{s.variety || '-'}</td>
-                    <td className="px-4 py-3 text-right font-medium text-emerald-600">{s.positions?.length || 0}</td>
+                    <td className="px-4 py-3 text-right font-medium text-emerald-600">{currentZonePositions.length}</td>
                     <td className="px-4 py-3 text-right text-stone-500">{getMaxQuantity(s)}</td>
                   </tr>
-                ))}
+                )})}
               </tbody>
             </table>
           </div>
