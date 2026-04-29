@@ -57,10 +57,12 @@ export function useFirebaseData<T>(collectionName: string) {
         globalCache.set(key, { data: items, error: null });
         updateCallbacks.get(key)?.forEach(cb => cb());
       }, (err: any) => {
-        console.error(`Error in useFirebaseData for ${collectionName}:`, err);
         let errorMsg = err.message || 'Une erreur est survenue lors de la récupération des données.';
         if (err.message?.includes('quota') || err.code === 'resource-exhausted') {
           errorMsg = 'Quota Firebase dépassé. Veuillez patienter 24h ou passer au forfait Blaze.';
+          console.warn(`Firebase quota warning for ${collectionName}: ${errorMsg}`);
+        } else {
+          console.error(`Error in useFirebaseData for ${collectionName}:`, err);
         }
         globalCache.set(key, { data: globalCache.get(key)?.data || [], error: errorMsg });
         updateCallbacks.get(key)?.forEach(cb => cb());

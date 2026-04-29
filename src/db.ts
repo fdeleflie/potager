@@ -72,6 +72,7 @@ export interface Structure {
   height?: number;
   color?: string;
   icon?: string;
+  isBackground?: boolean;
 }
 
 export interface JournalEntry {

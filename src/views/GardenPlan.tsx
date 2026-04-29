@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { db, Structure } from '../db';
 import { useFirebaseData, fb } from '../hooks/useFirebaseData';
 import { StructureEditor } from '../components/StructureEditor';
-import { Map as MapIcon, Sprout, Leaf, Flower2, Trees, Apple, Grape, Carrot, Cherry, Citrus, Wheat, Shrub, Palmtree, TreePine, ZoomIn, ZoomOut, Magnet, Home, Square, X, Printer, Trash2, List, Grid3X3, Ruler, BookOpen, CheckCircle2, Type } from 'lucide-react';
+import { Map as MapIcon, Sprout, Leaf, Flower2, Trees, Apple, Grape, Carrot, Cherry, Citrus, Wheat, Shrub, Palmtree, TreePine, ZoomIn, ZoomOut, Magnet, Home, Square, X, Printer, Trash2, List, Grid3X3, Ruler, BookOpen, CheckCircle2, Type, RotateCcw } from 'lucide-react';
 import { ConfirmModal, PromptModal } from '../components/Modals';
 import { ICON_MAP, GARDEN_EMOJIS } from '../constants';
 import { v4 as uuidv4 } from 'uuid';
@@ -94,7 +94,18 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
   const terrains = useMemo(() => rawConfig?.filter((t:any) => t.type === 'terrain').sort((a:any, b:any) => String(a.value).localeCompare(String(b.value), undefined, { numeric: true, sensitivity: 'base' })) || [], [rawConfig]);
 
   const { data: rawSeedlings, error: seedlingsError } = useFirebaseData<any>('seedlings');
-  const seedlings = useMemo(() => rawSeedlings?.filter((s:any) => !s.isDeleted && !s.isArchived) || [], [rawSeedlings]);
+  const availableYears = useMemo(() => {
+    const years = new Set<number>();
+    if (rawSeedlings) {
+      rawSeedlings.forEach((s: any) => {
+        if (s.isDeleted) return;
+        if (s.dateSown) years.add(new Date(s.dateSown).getFullYear());
+        else if (s.datePlanted) years.add(new Date(s.datePlanted).getFullYear());
+        else if (s.createdAt) years.add(new Date(s.createdAt).getFullYear());
+      });
+    }
+    return Array.from(years).sort((a, b) => b - a);
+  }, [rawSeedlings]);
 
   const { data: rawTrees, error: treesError } = useFirebaseData<any>('trees');
   const trees = useMemo(() => rawTrees?.filter((t:any) => !t.isDeleted) || [], [rawTrees]);
@@ -128,13 +139,16 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
   const [hoveredPlant, setHoveredPlant] = useState<{ seedlingId: string, positionIndex: number, x: number, y: number } | null>(null);
   const [editingStructureId, setEditingStructureId] = useState<string | null>(null);
   const [isAddingStructure, setIsAddingStructure] = useState(false);
-  const [newStructure, setNewStructure] = useState<{ name: string, type: string, color: string, width: number, height: number }>({
+  const [selectedYearView, setSelectedYearView] = useState<string>('current');
+  const [newStructure, setNewStructure] = useState<{ name: string, type: string, color: string, width: number, height: number, isBackground: boolean }>({
     name: '',
     type: 'building',
     color: '#78716c',
     width: 50,
-    height: 50
+    height: 50,
+    isBackground: false
   });
+  const [splitPromptState, setSplitPromptState] = useState<{isOpen: boolean, seedlingToSplit: any}>({ isOpen: false, seedlingToSplit: null });
   const containerRef = useRef<HTMLDivElement>(null);
 
   const [confirmState, setConfirmState] = useState<{
@@ -144,6 +158,67 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
     onConfirm: () => void;
     isDanger?: boolean;
   }>({ isOpen: false, title: '', message: '', onConfirm: () => {} });
+
+  const [undoArchiveState, setUndoArchiveState] = useState<{ id: string, isArchived: boolean, previousState: string, harvestedDate: any }[] | null>(null);
+
+  const getSeedlingYear = (s: any) => {
+    if (s.dateSown) return new Date(s.dateSown).getFullYear();
+    if (s.datePlanted) return new Date(s.datePlanted).getFullYear();
+    if (s.createdAt) return new Date(s.createdAt).getFullYear();
+    return new Date().getFullYear();
+  };
+
+  const seedlings = useMemo(() => {
+    if (selectedYearView === 'current') {
+      return rawSeedlings?.filter((s:any) => !s.isDeleted && !s.isArchived) || [];
+    } else {
+      const year = parseInt(selectedYearView);
+      return rawSeedlings?.filter((s:any) => !s.isDeleted && getSeedlingYear(s) === year) || [];
+    }
+  }, [rawSeedlings, selectedYearView]);
+
+  const handleArchiveCurrentPlan = () => {
+    const activeSeedlings = rawSeedlings?.filter((s:any) => !s.isDeleted && !s.isArchived && s.positions && s.positions.length > 0) || [];
+    if (activeSeedlings.length === 0) return;
+    
+    setConfirmState({
+      isOpen: true,
+      title: "Clôturer la saison",
+      message: `Vous êtes sur le point d'archiver ${activeSeedlings.length} lot(s) de semis actuellement sur vos plans. Les éléments fixes et les zones resteront en place. Voulez-vous continuer pour préparer la nouvelle saison ?`,
+      isDanger: false,
+      onConfirm: async () => {
+        const undoData = [];
+        for (const s of activeSeedlings) {
+          undoData.push({
+            id: s.id,
+            isArchived: s.isArchived,
+            previousState: s.state,
+            harvestedDate: s.harvestedDate
+          });
+          await fb.update('seedlings', s.id, { isArchived: true, state: 'Récolté', harvestedDate: new Date().toISOString() });
+        }
+        setUndoArchiveState(undoData);
+        // Clear undo state if they change the year view, but keep it here for now
+      }
+    });
+  };
+
+  const handleUndoArchive = async () => {
+    if (!undoArchiveState) return;
+    for (const item of undoArchiveState) {
+      const updateData: any = { 
+        isArchived: !!item.isArchived, 
+        state: item.previousState 
+      };
+      if (item.harvestedDate === undefined) {
+        updateData.harvestedDate = null;
+      } else {
+        updateData.harvestedDate = item.harvestedDate;
+      }
+      await fb.update('seedlings', item.id, updateData);
+    }
+    setUndoArchiveState(null);
+  };
 
   const selectedZone = useMemo(() => zones?.find(z => z.id === selectedZoneId), [zones, selectedZoneId]);
 
@@ -252,8 +327,6 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
   const unplacedSeedlings = availableSeedlingsAll.filter(s => !s.zoneId || s.zoneId === selectedZoneId);
   const otherZoneSeedlings = availableSeedlingsAll.filter(s => s.zoneId && s.zoneId !== selectedZoneId);
 
-  const [splitPromptState, setSplitPromptState] = useState<{isOpen: boolean, seedlingToSplit: any}>({ isOpen: false, seedlingToSplit: null });
-
   const handleSplitFromOtherZone = async (value: string) => {
     const qtyToMove = Number(value);
     const seedling = splitPromptState.seedlingToSplit;
@@ -279,6 +352,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
       failureReason: undefined,
       positions: [],
       zoneId: selectedZoneId,
+      location: selectedZone?.value,
       notes: [{
         id: uuidv4(),
         date: new Date().toISOString(),
@@ -424,7 +498,8 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
         positions: [{ x: cmX, y: cmY }],
         width: newStructure.width,
         height: newStructure.height,
-        color: newStructure.color
+        color: newStructure.color,
+        isBackground: newStructure.isBackground
       });
       setIsAddingStructure(false);
       setMousePos(null);
@@ -443,6 +518,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
 
     await fb.update('seedlings', selectedSeedlingId, {
       zoneId: selectedZoneId,
+      location: selectedZone?.value,
       positions: [...currentPositions, { x: cmX, y: cmY }]
     });
     
@@ -535,7 +611,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
       });
     });
 
-    structures?.filter(s => s.zoneId === selectedZoneId).forEach(s => {
+    structures?.filter(s => s.zoneId === selectedZoneId && !s.isBackground).forEach(s => {
       if (s.id === excludeId) return;
       s.positions.forEach(p => {
         const dist = Math.sqrt(Math.pow(p.x - cmX, 2) + Math.pow(p.y - cmY, 2));
@@ -645,6 +721,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
   };
 
   const handlePlantMouseDown = (e: React.MouseEvent, seedlingId: string, positionIndex: number) => {
+    if (isAddingStructure || selectedSeedlingId) return; // Allow placing over plants
     e.stopPropagation();
     if (e.button !== 0) return; // Only left click
     setDraggingPlant({ seedlingId, positionIndex });
@@ -667,6 +744,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
         if (newPositions.length === 0) {
           await fb.update('seedlings', existingSeedling.id, {
             zoneId: undefined,
+            location: undefined,
             positions: []
           });
         } else {
@@ -679,6 +757,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
   };
 
   const handleStructureClick = (e: React.MouseEvent, structureId: string) => {
+    if (isAddingStructure || selectedSeedlingId) return;
     e.stopPropagation();
     // Allow opening the editor even if draggingStructureId is set,
     // as long as we are not actually dragging (isActuallyDragging is false)
@@ -821,11 +900,11 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
             <span className="text-sm font-medium hidden sm:inline">Noms</span>
           </button>
           <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-stone-200">
-            <button onClick={() => setZoom(z => Math.max(0.5, z - 0.5))} className="p-1 hover:bg-stone-100 rounded text-stone-600">
+            <button onClick={() => setZoom(z => Math.max(0.1, +(z - (z <= 1 ? 0.1 : 0.5)).toFixed(1)))} className="p-1 hover:bg-stone-100 rounded text-stone-600">
               <ZoomOut className="w-4 h-4" />
             </button>
             <span className="text-sm font-medium text-stone-600 w-12 text-center">{Math.round(zoom * 100)}%</span>
-            <button onClick={() => setZoom(z => Math.min(5, z + 0.5))} className="p-1 hover:bg-stone-100 rounded text-stone-600">
+            <button onClick={() => setZoom(z => Math.min(10, +(z + (z < 1 ? 0.1 : 0.5)).toFixed(1)))} className="p-1 hover:bg-stone-100 rounded text-stone-600">
               <ZoomIn className="w-4 h-4" />
             </button>
           </div>
@@ -844,6 +923,40 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
               ))}
             </optgroup>
           </select>
+
+          <div className="flex items-center gap-2">
+            <select
+              value={selectedYearView}
+              onChange={(e) => setSelectedYearView(e.target.value)}
+              className="px-4 py-2 rounded-lg border border-stone-200 focus:ring-2 focus:ring-emerald-500 outline-none bg-white font-medium"
+            >
+              <option value="current">Année en cours (Actif)</option>
+              {availableYears.map(year => (
+                <option key={year} value={year}>{year}</option>
+              ))}
+            </select>
+            {selectedYearView === 'current' && (
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={handleArchiveCurrentPlan}
+                  className="px-3 py-2 text-sm font-medium rounded-lg border border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100 transition-colors whitespace-nowrap"
+                  title="Archiver les plantations actuelles pour démarrer une nouvelle saison"
+                >
+                  Nouvelle saison
+                </button>
+                {undoArchiveState && undoArchiveState.length > 0 && (
+                  <button 
+                    onClick={handleUndoArchive}
+                    className="flex items-center gap-1 px-3 py-2 text-sm font-medium rounded-lg border border-stone-200 bg-white text-stone-700 hover:bg-stone-50 transition-colors whitespace-nowrap"
+                    title="Annuler la clôture de la saison"
+                  >
+                    <RotateCcw className="w-4 h-4" />
+                    Annuler
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
 
           <div className="flex items-center gap-2 bg-white rounded-lg border border-stone-200 px-2 py-1 h-[42px]">
             <span className="text-xs text-stone-500 font-medium whitespace-nowrap hidden sm:inline">Échelle impression:</span>
@@ -954,7 +1067,17 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                   className="w-12 h-8 rounded-lg border border-stone-200 p-0.5 bg-white cursor-pointer"
                 />
               </div>
-              <div className="text-sm text-emerald-700 font-medium pb-1.5">
+              <div className="flex items-center gap-2 mb-2">
+                <input 
+                  type="checkbox"
+                  id="isBackground"
+                  checked={newStructure.isBackground}
+                  onChange={e => setNewStructure({...newStructure, isBackground: e.target.checked})}
+                  className="rounded border-stone-300 text-emerald-600 focus:ring-emerald-500"
+                />
+                <label htmlFor="isBackground" className="text-sm text-stone-700">Zone de culture (fond)</label>
+              </div>
+              <div className="text-sm text-emerald-700 font-medium pb-1.5 w-full">
                 Cliquez sur le plan pour placer l'élément.
               </div>
             </div>
@@ -999,23 +1122,25 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                     <div
                       key={`${structure.id}-${idx}`}
                       onMouseDown={(e) => {
+                        if (isAddingStructure || selectedSeedlingId) return; // Allow placing over structures
                         e.stopPropagation();
                         if (e.button !== 0) return; // Only left click
                         setDraggingStructureId(structure.id);
                         setIsActuallyDragging(false);
                       }}
                       onClick={(e) => handleStructureClick(e, structure.id)}
-                      className={`absolute flex items-center justify-center shadow-sm cursor-move hover:ring-2 hover:ring-emerald-400 hover:z-10 transition-shadow group ${isDragging ? 'z-30 ring-2 ring-emerald-500 opacity-70' : ''}`}
+                      className={`absolute flex items-center justify-center cursor-move hover:ring-2 hover:ring-emerald-400 hover:z-10 transition-shadow group ${isDragging ? 'z-30 ring-2 ring-emerald-500 opacity-70' : ''} ${structure.isBackground ? '' : 'shadow-sm'}`}
                       style={{
                         left,
                         top,
                         width,
                         height,
-                        backgroundColor: `${structure.color || '#78716c'}80`,
-                        border: `2px solid ${structure.color || '#78716c'}`,
-                        borderRadius: '8px'
+                        backgroundColor: `${structure.color || '#78716c'}${structure.isBackground ? '30' : '80'}`,
+                        border: structure.isBackground ? `2px dashed ${structure.color || '#78716c'}80` : `2px solid ${structure.color || '#78716c'}`,
+                        borderRadius: '8px',
+                        zIndex: structure.isBackground ? 0 : 5
                       }}
-                      title={`${structure.name}\n${structure.width}x${structure.height}cm\nGlissez pour déplacer, Cliquez pour retirer`}
+                      title={`${structure.name}\n${structure.width}x${structure.height}cm\nGlissez pour déplacer, Cliquez pour éditer`}
                     >
                       <span className="text-xs font-medium text-white drop-shadow-md px-1 text-center leading-tight">{structure.name}</span>
                     </div>
@@ -1047,6 +1172,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                           key={`${seedling.id}-${idx}`}
                           onMouseDown={(e) => handlePlantMouseDown(e, seedling.id, idx)}
                           onClick={(e) => {
+                            if (isAddingStructure || selectedSeedlingId) return;
                             e.stopPropagation();
                             const currentSeedling = seedlings?.find(s => s.id === seedling.id);
                             if (!currentSeedling) return;
@@ -1057,7 +1183,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                               y: e.clientY
                             });
                           }}
-                          className={`absolute rounded-full flex items-center justify-center shadow-md cursor-move hover:z-10 transition-all group hover:scale-110 ${ringClass} ${draggingPlant?.seedlingId === seedling.id && draggingPlant?.positionIndex === idx ? 'opacity-0' : ''}`}
+                          className={`absolute z-10 rounded-full flex items-center justify-center shadow-md cursor-move hover:z-20 transition-all group hover:scale-110 ${ringClass} ${draggingPlant?.seedlingId === seedling.id && draggingPlant?.positionIndex === idx ? 'opacity-0' : ''}`}
                           style={{
                             left,
                             top,
@@ -1266,6 +1392,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                       </>
                     );
                   })()}
+                    {isMeasuring && (
                     <div 
                       className={`absolute bg-stone-800 text-white text-[10px] px-2 py-1 rounded whitespace-nowrap flex flex-col items-center gap-0.5 shadow-lg z-50 ${mousePos.y > (containerRef.current?.clientHeight || 0) / 2 ? '-top-24' : '-bottom-24'}`}
                     >
@@ -1380,6 +1507,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                         })()}
                       </div>
                     </div>
+                    )}
                   </div>
                 )}
             </div>

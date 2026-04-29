@@ -117,6 +117,17 @@ export const StructureEditor = ({ structure, onUpdate, onClose, onRemove }: Stru
         </div>
       </div>
 
+      <div className="flex items-center gap-2 mt-4">
+        <input 
+          type="checkbox"
+          id="isBackground-edit"
+          checked={!!structure.isBackground}
+          onChange={e => onUpdate({ isBackground: e.target.checked })}
+          className="rounded border-stone-300 text-emerald-600 focus:ring-emerald-500"
+        />
+        <label htmlFor="isBackground-edit" className="text-sm font-medium text-stone-700">Définir comme zone de culture (fond non bloquant)</label>
+      </div>
+
       <div className="pt-4 flex gap-3">
         <button
           onClick={onRemove}
