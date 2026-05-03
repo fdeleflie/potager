@@ -8,6 +8,7 @@ interface Structure {
   color?: string;
   width?: number;
   height?: number;
+  isBackground?: boolean;
 }
 
 interface StructureEditorProps {

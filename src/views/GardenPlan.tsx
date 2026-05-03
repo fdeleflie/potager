@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { db, Structure } from '../db';
 import { useFirebaseData, fb } from '../hooks/useFirebaseData';
 import { StructureEditor } from '../components/StructureEditor';
-import { Map as MapIcon, Sprout, Leaf, Flower2, Trees, Apple, Grape, Carrot, Cherry, Citrus, Wheat, Shrub, Palmtree, TreePine, ZoomIn, ZoomOut, Magnet, Home, Square, X, Printer, Trash2, List, Grid3X3, Ruler, BookOpen, CheckCircle2, Type, RotateCcw } from 'lucide-react';
+import { Map as MapIcon, Sprout, Leaf, Flower2, Trees, Apple, Grape, Carrot, Cherry, Citrus, Wheat, Shrub, Palmtree, TreePine, ZoomIn, ZoomOut, Magnet, Home, Square, X, Printer, Trash2, List, Grid3X3, Ruler, BookOpen, CheckCircle2, Type, RotateCcw, EyeOff, Eye } from 'lucide-react';
 import { ConfirmModal, PromptModal } from '../components/Modals';
 import { ICON_MAP, GARDEN_EMOJIS } from '../constants';
 import { v4 as uuidv4 } from 'uuid';
@@ -283,6 +283,75 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
     }
   }, [selectedZoneId]);
 
+  const getMaxQuantity = (s: any) => {
+    if (s.quantityPlanted !== undefined) return s.quantityPlanted;
+    if (s.quantityTransplanted !== undefined) return s.quantityTransplanted;
+    if (s.quantity !== undefined) return s.quantity;
+    return 1;
+  };
+
+  useEffect(() => {
+    if (!seedlings) return;
+    let updates: any = {};
+    let needsUpdate = false;
+
+    // Gather all positions and capacities by vegetable/variety
+    const byType: any = {};
+    seedlings.forEach(s => {
+      const type = `${s.vegetable}_${s.variety || ''}_${s.zoneId || 'unassigned'}`;
+      if (!byType[type]) byType[type] = [];
+      byType[type].push(s);
+    });
+
+    for (const type in byType) {
+      const group = byType[type];
+      let hasOverallocation = false;
+      let hasUnderallocation = false;
+      group.forEach((s: any) => {
+        const max = getMaxQuantity(s);
+        const len = s.positions?.length || 0;
+        if (len > max) hasOverallocation = true;
+        if (len < max && s.state === 'Mise en terre') hasUnderallocation = true;
+      });
+
+      if (hasOverallocation) {
+        let pool: any[] = [];
+        // Extract excesses
+        group.forEach((s: any) => {
+          const max = getMaxQuantity(s);
+          const len = s.positions?.length || 0;
+          if (len > max) {
+            const excess = s.positions.slice(max);
+            pool.push(...excess);
+            updates[s.id] = { positions: s.positions.slice(0, max) };
+            needsUpdate = true;
+          }
+        });
+
+        // Distribute pool to underallocated seedlings ONLY if they are active
+        if (pool.length > 0) {
+          group.forEach((s: any) => {
+            if (s.state !== 'Mise en terre') return;
+            const max = getMaxQuantity(s);
+            let currentPositions = updates[s.id] ? updates[s.id].positions : (s.positions || []);
+            while (currentPositions.length < max && pool.length > 0) {
+               currentPositions.push(pool.shift());
+               updates[s.id] = { positions: currentPositions };
+               needsUpdate = true;
+            }
+          });
+        }
+      }
+    }
+
+    if (needsUpdate && Object.keys(updates).length > 0) {
+      console.log("Fixing overallocated seedlings...", updates);
+      Object.entries(updates).forEach(([id, data]) => {
+        fb.update('seedlings', id, data);
+      });
+    }
+  }, [seedlings]);
+
   const terrainBounds = useMemo(() => {
     if (selectedZone?.attributes?.shape === 'polygon' && Array.isArray(selectedZone.attributes?.points) && selectedZone.attributes.points.length > 0) {
       const points = selectedZone.attributes.points;
@@ -347,15 +416,9 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
     return hasPositionsInZone;
   }).map(s => [s.id, s])).values());
   
-  const getMaxQuantity = (s: any) => {
-    if (s.quantityPlanted !== undefined) return s.quantityPlanted;
-    if (s.quantityTransplanted !== undefined) return s.quantityTransplanted;
-    if (s.quantity !== undefined) return s.quantity;
-    return 1;
-  };
-
   const availableSeedlingsAll = Array.from(new Map<string, any>(seedlings.filter(s => {
     if (s.state !== 'Mise en terre') return false;
+    if (s.ignoredInPlan) return false;
     const maxQuantity = getMaxQuantity(s);
     if (!s.positions || s.positions.length < maxQuantity) return true;
     return false;
@@ -363,6 +426,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
 
   const unplacedSeedlings = availableSeedlingsAll.filter(s => !s.zoneId || s.zoneId === selectedZoneId);
   const otherZoneSeedlings = availableSeedlingsAll.filter(s => s.zoneId && s.zoneId !== selectedZoneId);
+  const ignoredSeedlings = seedlings.filter(s => s.ignoredInPlan && s.state === 'Mise en terre');
 
   const handleSplitFromOtherZone = async (value: string) => {
     const qtyToMove = Number(value);
@@ -1179,7 +1243,6 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                       }}
                       title={`${structure.name}\n${structure.width}x${structure.height}cm\nGlissez pour déplacer, Cliquez pour éditer`}
                     >
-                      <span className="text-xs font-medium text-white drop-shadow-md px-1 text-center leading-tight">{structure.name}</span>
                     </div>
                   );
                 });
@@ -1271,25 +1334,75 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                           </div>
                         )}
                       </div>
-                      {showLabels && zoom >= 0.6 && (
-                        <div className="absolute top-full left-1/2 -translate-x-1/2 mt-0.5 flex flex-col items-center pointer-events-none whitespace-nowrap z-10 transition-opacity">
-                          <div className="bg-white/80 backdrop-blur-sm px-1.5 py-0.5 rounded shadow-sm border border-stone-200/50 flex flex-col items-center">
-                            <span className="text-[9px] font-bold text-stone-800 leading-tight">
-                              {seedling.vegetable}
-                            </span>
-                            {seedling.variety && (
-                              <span className="text-[8px] font-medium text-stone-600 leading-tight">
-                                {seedling.variety}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      )}
                     </div>
                   );
                 });
                 });
               })()}
+
+              {/* Centralized Label Layer: Ensures texts are ALWAYS on top (z-40) */}
+              {/* Structure Labels */}
+              {structures?.filter(s => s.terrainId === selectedZoneId || s.zoneId === selectedZoneId).map(structure => 
+                structure.positions.map((p, idx) => {
+                  const width = (structure.width || 50) * zoom;
+                  const height = (structure.height || 50) * zoom;
+                  const isDragging = draggingStructureId === structure.id;
+                  const left = isDragging && mousePos ? mousePos.x - (width / 2) : (p.x * zoom) - (width / 2);
+                  const top = isDragging && mousePos ? mousePos.y - (height / 2) : (p.y * zoom) - (height / 2);
+                  return (
+                    <div 
+                      key={`label-struct-${structure.id}-${idx}`}
+                      className="absolute pointer-events-none flex items-center justify-center opacity-90"
+                      style={{ left, top, width, height, zIndex: 99999 }}
+                    >
+                      <span className="text-xs font-medium text-white drop-shadow-md px-1 text-center leading-tight">{structure.name}</span>
+                    </div>
+                  );
+                })
+              )}
+
+              {/* Plant Labels */}
+              {showLabels && zoom >= 0.6 && seedlingsInCurrentZone.map(seedling => {
+                const vegConfig = config?.find(c => c.type === 'vegetable' && c.value === seedling.vegetable);
+                const spacing = vegConfig?.attributes?.spacing || VEGETABLE_SPACING[seedling.vegetable] || 30;
+                const radius = (spacing / 2) * zoom;
+                
+                const positionOffsets = new Map<string, number>();
+                return seedling.positions?.map((p: any, originalIdx: number) => ({ p, originalIdx }))
+                  .filter(({ p }: any) => p.zoneId === selectedZoneId || (!p.zoneId && seedling.zoneId === selectedZoneId))
+                  .map(({ p, originalIdx }: any) => {
+                    const key = `${Math.round(p.x)},${Math.round(p.y)}`;
+                    const offsetCount = positionOffsets.get(key) || 0;
+                    positionOffsets.set(key, offsetCount + 1);
+
+                    const left = (p.x * zoom) - radius + (offsetCount * 6);
+                    const top = (p.y * zoom) - radius + (offsetCount * 6);
+                    
+                    return (
+                      <div 
+                        key={`label-plant-${seedling.id}-${originalIdx}`}
+                        className="absolute pointer-events-none flex flex-col items-center whitespace-nowrap"
+                        style={{ 
+                          left: left + (spacing * zoom / 2), 
+                          top: top + (spacing * zoom),
+                          transform: 'translateX(-50%)',
+                          zIndex: 99999
+                        }}
+                      >
+                        <div className="bg-white/90 backdrop-blur-sm px-1.5 py-0.5 rounded shadow-sm border border-stone-200/50 flex flex-col items-center mt-0.5">
+                          <span className="text-[9px] font-bold text-stone-800 leading-tight">
+                            {seedling.vegetable}
+                          </span>
+                          {seedling.variety && (
+                            <span className="text-[8px] font-medium text-stone-600 leading-tight">
+                              {seedling.variety}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  });
+              })}
 
                 {/* Render ghost seedling when placing */}
                 {mousePos && (
@@ -1628,9 +1741,35 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                       <p className="text-xs text-stone-500 truncate">{s.variety}</p>
                       <p className="text-[10px] text-stone-400 mt-0.5">Ø {spacing}cm</p>
                     </div>
-                    <span className="text-xs font-medium bg-stone-100 px-2 py-1 rounded-md mb-auto mt-0.5">
-                      {s.positions?.length || 0}/{getMaxQuantity(s)}
-                    </span>
+                    <div className="flex flex-col items-end gap-1 mb-auto mt-0.5">
+                      <span className="text-xs font-medium bg-stone-100 px-2 py-1 rounded-md">
+                        {s.positions?.length || 0}/{getMaxQuantity(s)}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (setCurrentView) setCurrentView(`seedling-detail-${s.id}`);
+                          }}
+                          className="text-[10px] flex items-center gap-1 text-emerald-600 hover:text-emerald-700 px-1 py-0.5 rounded hover:bg-emerald-50 transition-colors"
+                          title="Voir la fiche"
+                        >
+                          <BookOpen className="w-3 h-3" />
+                          Voir
+                        </button>
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            await fb.update('seedlings', s.id, { ignoredInPlan: true });
+                          }}
+                          className="text-[10px] flex items-center gap-1 text-stone-400 hover:text-stone-600 px-1 py-0.5 rounded hover:bg-stone-100 transition-colors"
+                          title="Ne plus proposer sur le plan (masquer)"
+                        >
+                          <EyeOff className="w-3 h-3" />
+                          Masquer
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 );
               })}
@@ -1662,9 +1801,93 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                         <p className="text-xs text-stone-500 truncate">{s.variety}</p>
                         <p className="text-[10px] text-stone-400 mt-0.5">Ø {spacing}cm</p>
                       </div>
-                      <span className="text-xs font-medium bg-stone-100 px-2 py-1 rounded-md mb-auto mt-0.5">
-                        {s.positions?.length || 0}/{getMaxQuantity(s)}
-                      </span>
+                      <div className="flex flex-col items-end gap-1 mb-auto mt-0.5">
+                        <span className="text-xs font-medium bg-stone-100 px-2 py-1 rounded-md">
+                          {s.positions?.length || 0}/{getMaxQuantity(s)}
+                        </span>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (setCurrentView) setCurrentView(`seedling-detail-${s.id}`);
+                            }}
+                            className="text-[10px] flex items-center gap-1 text-emerald-600 hover:text-emerald-700 px-1 py-0.5 rounded hover:bg-emerald-50 transition-colors"
+                            title="Voir la fiche"
+                          >
+                            <BookOpen className="w-3 h-3" />
+                            Voir
+                          </button>
+                          <button
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              await fb.update('seedlings', s.id, { ignoredInPlan: true });
+                            }}
+                            className="text-[10px] flex items-center gap-1 text-stone-400 hover:text-stone-600 px-1 py-0.5 rounded hover:bg-stone-100 transition-colors"
+                            title="Ne plus proposer sur le plan (masquer)"
+                          >
+                            <EyeOff className="w-3 h-3" />
+                            Masquer
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {ignoredSeedlings.length > 0 && (
+            <div className="mt-8">
+              <h3 className="font-medium text-stone-900 mb-4 flex items-center gap-2">
+                <EyeOff className="w-4 h-4 text-stone-500" />
+                Plants masqués
+              </h3>
+              <p className="text-xs text-stone-500 mb-3">Ces plants ne sont plus proposés au placement.</p>
+              <div className="space-y-2 opacity-60">
+                {ignoredSeedlings.map(s => {
+                  const vegConfig = config?.find(c => c.type === 'vegetable' && c.value === s.vegetable);
+                  const spacing = vegConfig?.attributes?.spacing || VEGETABLE_SPACING[s.vegetable] || 30;
+                  return (
+                    <div 
+                      key={s.id}
+                      className="p-3 rounded-lg border border-stone-200 bg-stone-50 flex items-center gap-3"
+                    >
+                      <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: legendColors[s.vegetable] }}></div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-stone-900 truncate">{s.vegetable}</p>
+                        <p className="text-xs text-stone-500 truncate">{s.variety}</p>
+                        <p className="text-[10px] text-stone-400 mt-0.5">Ø {spacing}cm</p>
+                      </div>
+                      <div className="flex flex-col items-end gap-1 mb-auto mt-0.5">
+                        <span className="text-xs font-medium bg-stone-200 px-2 py-1 rounded-md">
+                          {s.positions?.length || 0}/{getMaxQuantity(s)}
+                        </span>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (setCurrentView) setCurrentView(`seedling-detail-${s.id}`);
+                            }}
+                            className="text-[10px] flex items-center gap-1 text-stone-500 hover:text-stone-700 px-1 py-0.5 rounded hover:bg-stone-200 transition-colors"
+                            title="Voir la fiche"
+                          >
+                            <BookOpen className="w-3 h-3" />
+                            Voir
+                          </button>
+                          <button
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              await fb.update('seedlings', s.id, { ignoredInPlan: false });
+                            }}
+                            className="text-[10px] flex items-center gap-1 text-emerald-600 hover:text-emerald-700 px-1 py-0.5 rounded hover:bg-emerald-50 transition-colors"
+                            title="Proposer à nouveau sur le plan"
+                          >
+                            <Eye className="w-3 h-3" />
+                            Démasquer
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   );
                 })}
