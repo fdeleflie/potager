@@ -284,73 +284,11 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
   }, [selectedZoneId]);
 
   const getMaxQuantity = (s: any) => {
-    if (s.quantityPlanted !== undefined) return s.quantityPlanted;
-    if (s.quantityTransplanted !== undefined) return s.quantityTransplanted;
-    if (s.quantity !== undefined) return s.quantity;
+    if (s.quantityPlanted !== undefined && s.quantityPlanted !== null && s.quantityPlanted !== '') return Number(s.quantityPlanted);
+    if (s.quantityTransplanted !== undefined && s.quantityTransplanted !== null && s.quantityTransplanted !== '') return Number(s.quantityTransplanted);
+    if (s.quantity !== undefined && s.quantity !== null && s.quantity !== '') return Number(s.quantity);
     return 1;
   };
-
-  useEffect(() => {
-    if (!seedlings) return;
-    let updates: any = {};
-    let needsUpdate = false;
-
-    // Gather all positions and capacities by vegetable/variety
-    const byType: any = {};
-    seedlings.forEach(s => {
-      const type = `${s.vegetable}_${s.variety || ''}_${s.zoneId || 'unassigned'}`;
-      if (!byType[type]) byType[type] = [];
-      byType[type].push(s);
-    });
-
-    for (const type in byType) {
-      const group = byType[type];
-      let hasOverallocation = false;
-      let hasUnderallocation = false;
-      group.forEach((s: any) => {
-        const max = getMaxQuantity(s);
-        const len = s.positions?.length || 0;
-        if (len > max) hasOverallocation = true;
-        if (len < max && s.state === 'Mise en terre') hasUnderallocation = true;
-      });
-
-      if (hasOverallocation) {
-        let pool: any[] = [];
-        // Extract excesses
-        group.forEach((s: any) => {
-          const max = getMaxQuantity(s);
-          const len = s.positions?.length || 0;
-          if (len > max) {
-            const excess = s.positions.slice(max);
-            pool.push(...excess);
-            updates[s.id] = { positions: s.positions.slice(0, max) };
-            needsUpdate = true;
-          }
-        });
-
-        // Distribute pool to underallocated seedlings ONLY if they are active
-        if (pool.length > 0) {
-          group.forEach((s: any) => {
-            if (s.state !== 'Mise en terre') return;
-            const max = getMaxQuantity(s);
-            let currentPositions = updates[s.id] ? updates[s.id].positions : (s.positions || []);
-            while (currentPositions.length < max && pool.length > 0) {
-               currentPositions.push(pool.shift());
-               updates[s.id] = { positions: currentPositions };
-               needsUpdate = true;
-            }
-          });
-        }
-      }
-    }
-
-    if (needsUpdate && Object.keys(updates).length > 0) {
-      console.log("Fixing overallocated seedlings...", updates);
-      Object.entries(updates).forEach(([id, data]) => {
-        fb.update('seedlings', id, data);
-      });
-    }
-  }, [seedlings]);
 
   const terrainBounds = useMemo(() => {
     if (selectedZone?.attributes?.shape === 'polygon' && Array.isArray(selectedZone.attributes?.points) && selectedZone.attributes.points.length > 0) {

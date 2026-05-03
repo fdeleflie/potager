@@ -160,19 +160,8 @@ export const backupService = {
   },
 
   initAutoBackup() {
-    this.checkAndRunAutoBackup();
-    
-    if (backupInterval) {
-      window.clearInterval(backupInterval);
-    }
-    
-    // Check every 15 minutes if a backup is needed while app is open
-    backupInterval = window.setInterval(() => {
-      this.checkAndRunAutoBackup();
-    }, 15 * 60 * 1000);
-    
-    return () => {
-      if (backupInterval) window.clearInterval(backupInterval);
-    };
+    // Auto-backups disabled to prevent Firestore quota explosion
+    // User data is already saved in the cloud.
+    return () => {};
   }
 };
