@@ -1737,9 +1737,9 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                   >
                     <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: legendColors[s.vegetable] }}></div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-stone-900 truncate">{s.vegetable}</p>
-                      <p className="text-xs text-stone-500 truncate">{s.variety}</p>
-                      <p className="text-[10px] text-stone-400 mt-0.5">Ø {spacing}cm</p>
+                      <p className="text-sm font-medium text-stone-900 leading-tight mb-0.5">{s.vegetable}</p>
+                      <p className="text-xs text-stone-500 leading-tight">{s.variety}</p>
+                      <p className="text-[10px] text-stone-400 mt-1">Ø {spacing}cm</p>
                     </div>
                     <div className="flex flex-col items-end gap-1 mb-auto mt-0.5">
                       <span className="text-xs font-medium bg-stone-100 px-2 py-1 rounded-md">
@@ -1797,9 +1797,9 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                     >
                       <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: legendColors[s.vegetable] }}></div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-stone-900 truncate">{s.vegetable}</p>
-                        <p className="text-xs text-stone-500 truncate">{s.variety}</p>
-                        <p className="text-[10px] text-stone-400 mt-0.5">Ø {spacing}cm</p>
+                        <p className="text-sm font-medium text-stone-900 leading-tight mb-0.5">{s.vegetable}</p>
+                        <p className="text-xs text-stone-500 leading-tight">{s.variety}</p>
+                        <p className="text-[10px] text-stone-400 mt-1">Ø {spacing}cm</p>
                       </div>
                       <div className="flex flex-col items-end gap-1 mb-auto mt-0.5">
                         <span className="text-xs font-medium bg-stone-100 px-2 py-1 rounded-md">
@@ -1855,9 +1855,9 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                     >
                       <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: legendColors[s.vegetable] }}></div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-stone-900 truncate">{s.vegetable}</p>
-                        <p className="text-xs text-stone-500 truncate">{s.variety}</p>
-                        <p className="text-[10px] text-stone-400 mt-0.5">Ø {spacing}cm</p>
+                        <p className="text-sm font-medium text-stone-900 leading-tight mb-0.5">{s.vegetable}</p>
+                        <p className="text-xs text-stone-500 leading-tight">{s.variety}</p>
+                        <p className="text-[10px] text-stone-400 mt-1">Ø {spacing}cm</p>
                       </div>
                       <div className="flex flex-col items-end gap-1 mb-auto mt-0.5">
                         <span className="text-xs font-medium bg-stone-200 px-2 py-1 rounded-md">
