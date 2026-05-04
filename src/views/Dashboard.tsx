@@ -21,7 +21,8 @@ export function Dashboard({ setCurrentView }: { setCurrentView: (v: string) => v
 
   const error = seedlingsError || tasksError || configError;
 
-  const seedlings = useMemo(() => (rawSeedlings || []).filter(s => !s.isDeleted), [rawSeedlings]);
+  const seedlings = useMemo(() => (rawSeedlings || []).filter(s => !s.isDeleted && !s.isGlobalHarvestTracker), [rawSeedlings]);
+  const harvestSeedlings = useMemo(() => (rawSeedlings || []).filter(s => !s.isDeleted), [rawSeedlings]);
   const manualTasks = useMemo(() => (rawTasks || []).filter(t => !t.isDeleted && !t.isCompleted), [rawTasks]);
   const config = useMemo(() => (rawConfig || []).filter(c => c.type === 'setting'), [rawConfig]);
 
@@ -69,8 +70,8 @@ export function Dashboard({ setCurrentView }: { setCurrentView: (v: string) => v
   const availableYears = useMemo(() => {
     const years = new Set<number>();
     years.add(new Date().getFullYear());
-    if (seedlings) {
-      seedlings.forEach(s => {
+    if (harvestSeedlings) {
+      harvestSeedlings.forEach(s => {
         if (s.dateSown) years.add(new Date(s.dateSown).getFullYear());
         if (s.dateTransplanted) years.add(new Date(s.dateTransplanted).getFullYear());
         if (s.datePlanted) years.add(new Date(s.datePlanted).getFullYear());
@@ -80,7 +81,7 @@ export function Dashboard({ setCurrentView }: { setCurrentView: (v: string) => v
       });
     }
     return Array.from(years).sort((a, b) => b - a);
-  }, [seedlings]);
+  }, [harvestSeedlings]);
 
   const yearSeedlings = useMemo(() => {
     if (!seedlings) return [];
@@ -126,12 +127,12 @@ export function Dashboard({ setCurrentView }: { setCurrentView: (v: string) => v
   // Harvest Data
   const harvestData = useMemo(() => {
     const defaultData = { totalByVeg: [], recentHarvests: [] };
-    if (!yearSeedlings) return defaultData;
+    if (!harvestSeedlings) return defaultData;
 
     const vegTotals: Record<string, Record<string, number>> = {};
     const allHarvests: any[] = [];
 
-    yearSeedlings.forEach(s => {
+    harvestSeedlings.forEach(s => {
       if (s.harvests) {
         s.harvests.forEach(h => {
           if (new Date(h.date).getFullYear() === selectedYear) {

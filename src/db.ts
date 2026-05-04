@@ -43,6 +43,7 @@ export interface Seedling {
   positions?: {x: number, y: number}[];
   salePrice?: number;
   saleComment?: string;
+  isGlobalHarvestTracker?: boolean;
 }
 
 export interface Tree {

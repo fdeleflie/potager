@@ -170,10 +170,10 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
 
   const seedlings = useMemo(() => {
     if (selectedYearView === 'current') {
-      return rawSeedlings?.filter((s:any) => !s.isDeleted && !s.isArchived) || [];
+      return rawSeedlings?.filter((s:any) => !s.isDeleted && !s.isArchived && !s.isGlobalHarvestTracker) || [];
     } else {
       const year = parseInt(selectedYearView);
-      return rawSeedlings?.filter((s:any) => !s.isDeleted && getSeedlingYear(s) === year) || [];
+      return rawSeedlings?.filter((s:any) => !s.isDeleted && !s.isGlobalHarvestTracker && getSeedlingYear(s) === year) || [];
     }
   }, [rawSeedlings, selectedYearView]);
 

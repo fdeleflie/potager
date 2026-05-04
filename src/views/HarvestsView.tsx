@@ -15,6 +15,12 @@ function GlobalHarvestModal({ isOpen, onClose }: { isOpen: boolean, onClose: () 
 
   const { data: rawSeedlings } = useFirebaseData<any>('seedlings');
   const seedlings = (rawSeedlings || []).filter(s => !s.isDeleted && !s.isArchived);
+  
+  const uniqueVegetables = Array.from(new Set(
+    (rawSeedlings || [])
+      .filter((s: any) => !s.isDeleted)
+      .map((s: any) => s.vegetable)
+  )).filter(Boolean).sort();
 
   React.useEffect(() => {
     if (isOpen) {
@@ -30,7 +36,36 @@ function GlobalHarvestModal({ isOpen, onClose }: { isOpen: boolean, onClose: () 
     e.preventDefault();
     if (!selectedSeedlingId || !quantity || isNaN(Number(quantity))) return;
     
-    const seedling = await fb.get<any>("seedlings", selectedSeedlingId);
+    let targetSeedlingId = selectedSeedlingId;
+    
+    if (selectedSeedlingId.startsWith('global_')) {
+      const vegetableName = selectedSeedlingId.replace('global_', '');
+      
+      const existingTracker = (rawSeedlings || []).find((s: any) => s.isGlobalHarvestTracker && s.vegetable === vegetableName);
+      
+      if (existingTracker) {
+        targetSeedlingId = existingTracker.id;
+      } else {
+        const newTracker = {
+          id: uuidv4(),
+          vegetable: vegetableName,
+          variety: 'Mélange / Toutes variétés',
+          dateSown: new Date().toISOString(),
+          state: 'Récolté',
+          location: 'Global',
+          comments: 'Tracker généré automatiquement pour les récoltes globales.',
+          isArchived: false,
+          isDeleted: false,
+          notes: [],
+          harvests: [],
+          isGlobalHarvestTracker: true
+        };
+        await fb.add('seedlings', newTracker);
+        targetSeedlingId = newTracker.id;
+      }
+    }
+    
+    const seedling = await fb.get<any>("seedlings", targetSeedlingId);
     if (seedling) {
       const newHarvest = {
         id: uuidv4(),
@@ -41,7 +76,7 @@ function GlobalHarvestModal({ isOpen, onClose }: { isOpen: boolean, onClose: () 
       };
       
       const harvests = seedling.harvests ? [...seedling.harvests, newHarvest] : [newHarvest];
-      await fb.update('seedlings', selectedSeedlingId, { harvests });
+      await fb.update('seedlings', targetSeedlingId, { harvests });
     }
     
     onClose();
@@ -59,11 +94,39 @@ function GlobalHarvestModal({ isOpen, onClose }: { isOpen: boolean, onClose: () 
             required
           >
             <option value="" disabled>Sélectionnez une culture...</option>
-            {seedlings?.sort((a, b) => a.vegetable.localeCompare(b.vegetable)).map(s => (
-              <option key={s.id} value={s.id}>
-                {s.vegetable} {s.variety ? `- ${s.variety}` : ''} {s.state === 'Mise en terre' ? '(En terre)' : ''}
-              </option>
-            ))}
+            <optgroup label="Récoltes globales (Mélange)">
+               {uniqueVegetables.map(veg => (
+                 <option key={`global_${veg}`} value={`global_${veg}`}>
+                   {veg} (Toutes variétés)
+                 </option>
+               ))}
+            </optgroup>
+            
+            <optgroup label="Plants spécifiques">
+              {seedlings?.filter(s => !s.isGlobalHarvestTracker)
+                .reduce((acc: {seen: Set<string>, list: {seedling: any, label: string}[]}, current: any) => {
+                  const label = `${current.vegetable} ${current.variety ? `- ${current.variety}` : ''}`.trim();
+                  if (!acc.seen.has(label)) {
+                    acc.seen.add(label);
+                    acc.list.push({ seedling: current, label });
+                  } else {
+                    if (current.state === 'Mise en terre') {
+                      const existing = acc.list.find(item => item.label === label);
+                      if (existing && existing.seedling.state !== 'Mise en terre') {
+                        existing.seedling = current;
+                      }
+                    }
+                  }
+                  return acc;
+                }, { seen: new Set<string>(), list: [] })
+                .list
+                .sort((a, b) => a.label.localeCompare(b.label))
+                .map(item => (
+                <option key={item.seedling.id} value={item.seedling.id}>
+                  {item.label}
+                </option>
+              ))}
+            </optgroup>
           </select>
         </div>
         <div>

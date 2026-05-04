@@ -207,7 +207,7 @@ export function SeedlingsList({ setCurrentView, initialFilter = 'active' }: { se
   const { data: config, error: configError } = useFirebaseData<any>('config');
 
   const error = seedlingsError || encError || configError;
-  const seedlings = useMemo(() => (rawSeedlings || []), [rawSeedlings]).filter(s => !s.isDeleted);
+  const seedlings = useMemo(() => (rawSeedlings || []), [rawSeedlings]).filter(s => !s.isDeleted && !s.isGlobalHarvestTracker);
   
   if (error) {
     return (

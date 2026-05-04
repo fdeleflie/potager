@@ -37,7 +37,7 @@ export function CalendarView({ setCurrentView }: { setCurrentView: (v: string) =
     };
 
     seedlings.forEach(s => {
-      if (s.dateSown) {
+      if (s.dateSown && !s.isGlobalHarvestTracker) {
         addEvent(s.dateSown, {
           id: s.id,
           type: 'sown',
@@ -46,7 +46,7 @@ export function CalendarView({ setCurrentView }: { setCurrentView: (v: string) =
           date: s.dateSown
         });
       }
-      if (s.dateTransplanted) {
+      if (s.dateTransplanted && !s.isGlobalHarvestTracker) {
         addEvent(s.dateTransplanted, {
           id: s.id,
           type: 'transplanted',
@@ -55,7 +55,7 @@ export function CalendarView({ setCurrentView }: { setCurrentView: (v: string) =
           date: s.dateTransplanted
         });
       }
-      if (s.datePlanted) {
+      if (s.datePlanted && !s.isGlobalHarvestTracker) {
         addEvent(s.datePlanted, {
           id: s.id,
           type: 'planted',
@@ -77,7 +77,7 @@ export function CalendarView({ setCurrentView }: { setCurrentView: (v: string) =
       }
 
       // Forecasts
-      if (!s.isArchived) {
+      if (!s.isArchived && !s.isGlobalHarvestTracker) {
         const addDays = (dateStr: string, days: number) => {
           const d = new Date(dateStr);
           d.setDate(d.getDate() + days);
