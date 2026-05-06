@@ -13,7 +13,11 @@ import 'jspdf-autotable';
 
 export function SeedlingsList({ setCurrentView, initialFilter = 'active' }: { setCurrentView: (v: string) => void, initialFilter?: string }) {
   const [searchTerm, setSearchTerm] = useState(() => sessionStorage.getItem('seedlings_search') || '');
-  const [filterState, setFilterState] = useState(() => sessionStorage.getItem('seedlings_filter_state') || 'all');
+  const [filterStates, setFilterStates] = useState<string[]>(() => {
+    const saved = sessionStorage.getItem('seedlings_filter_states');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [showStateDropdown, setShowStateDropdown] = useState(false);
   const [filterVegetable, setFilterVegetable] = useState(() => sessionStorage.getItem('seedlings_filter_vegetable') || 'all');
   const [filterCategory, setFilterCategory] = useState(() => sessionStorage.getItem('seedlings_filter_category') || 'all');
   const [viewMode, setViewMode] = useState<'grid' | 'list' | 'kanban'>(() => (sessionStorage.getItem('seedlings_view_mode') as any) || 'grid');
@@ -43,7 +47,7 @@ export function SeedlingsList({ setCurrentView, initialFilter = 'active' }: { se
 
   useEffect(() => {
     sessionStorage.setItem('seedlings_search', searchTerm);
-    sessionStorage.setItem('seedlings_filter_state', filterState);
+    sessionStorage.setItem('seedlings_filter_states', JSON.stringify(filterStates));
     sessionStorage.setItem('seedlings_filter_vegetable', filterVegetable);
     sessionStorage.setItem('seedlings_filter_category', filterCategory);
     sessionStorage.setItem('seedlings_filter_archived', filterArchived);
@@ -51,7 +55,7 @@ export function SeedlingsList({ setCurrentView, initialFilter = 'active' }: { se
     sessionStorage.setItem('seedlings_view_mode', viewMode);
     sessionStorage.setItem('seedlings_filter_month', filterMonth);
     sessionStorage.setItem('seedlings_filter_year', filterYear);
-  }, [searchTerm, filterState, filterVegetable, filterArchived, filterSuccess, viewMode, filterMonth, filterYear]);
+  }, [searchTerm, filterStates, filterVegetable, filterArchived, filterSuccess, viewMode, filterMonth, filterYear]);
 
   useEffect(() => {
     if (initialFilter && initialFilter !== 'active') {
@@ -176,7 +180,7 @@ export function SeedlingsList({ setCurrentView, initialFilter = 'active' }: { se
 
   const resetFilters = () => {
     setSearchTerm('');
-    setFilterState('all');
+    setFilterStates([]);
     setFilterVegetable('all');
     setFilterCategory('all');
     setFilterVariety('all');
@@ -254,7 +258,7 @@ export function SeedlingsList({ setCurrentView, initialFilter = 'active' }: { se
   const filtered = Array.from(new Map<string, any>((seedlings || []).filter(s => {
     const matchesSearch = (s.vegetable || '').toLowerCase().includes(searchTerm.toLowerCase()) || 
                           (s.variety || '').toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesState = filterState === 'all' || s.state === filterState;
+    const matchesState = filterStates.length === 0 || filterStates.includes(s.state);
     const matchesVegetable = filterVegetable === 'all' || s.vegetable === filterVegetable;
     
     // Category filtering
@@ -664,23 +668,81 @@ export function SeedlingsList({ setCurrentView, initialFilter = 'active' }: { se
             >
               <RefreshCw className="w-3.5 h-3.5" />
             </button>
-            <select 
-              value={filterState} 
-              onChange={e => {
-                const val = e.target.value;
-                setFilterState(val);
-                if (val === 'Vendu / Donné' && filterArchived === 'active') {
-                  setFilterArchived('all');
-                }
-              }}
-              className="px-2 py-1 text-xs rounded-lg border border-stone-200 focus:ring-2 focus:ring-emerald-500 outline-none bg-white font-medium text-stone-600"
-            >
-              <option value="all">Tous les états</option>
-              {states.map(state => (
-                <option key={state.id} value={state.value}>{state.value}</option>
-              ))}
-              <option value="Vendu / Donné">Vendu / Donné</option>
-            </select>
+            <div className="relative">
+              <button
+                onClick={() => setShowStateDropdown(!showStateDropdown)}
+                className="px-2 py-1 text-xs rounded-lg border border-stone-200 focus:ring-2 focus:ring-emerald-500 outline-none bg-white font-medium text-stone-600 flex items-center justify-between gap-1 w-32"
+              >
+                <span className="truncate">
+                  {filterStates.length === 0 ? 'Tous les états' : `${filterStates.length} état(s)`}
+                </span>
+                <ChevronDown className="w-3.5 h-3.5 opacity-50 flex-shrink-0" />
+              </button>
+              {showStateDropdown && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowStateDropdown(false)} />
+                  <div className="absolute top-full left-0 mt-1 w-max min-w-full bg-white rounded-lg shadow-lg border border-stone-200 py-1 z-50">
+                    <div 
+                      className="px-3 py-1.5 hover:bg-stone-50 cursor-pointer flex items-center gap-2"
+                      onClick={() => {
+                        setFilterStates([]);
+                      }}
+                    >
+                      <input 
+                        type="checkbox" 
+                        checked={filterStates.length === 0} 
+                        readOnly
+                        className="w-3.5 h-3.5 text-emerald-600 rounded border-stone-300 focus:ring-emerald-500" 
+                      />
+                      <span className="text-xs font-medium text-stone-700">Tous les états</span>
+                    </div>
+                    {states.map(state => (
+                      <div 
+                        key={state.id}
+                        className="px-3 py-1.5 hover:bg-stone-50 cursor-pointer flex items-center gap-2"
+                        onClick={() => {
+                           if (filterStates.includes(state.value)) {
+                             setFilterStates(filterStates.filter(s => s !== state.value));
+                           } else {
+                             setFilterStates([...filterStates, state.value]);
+                           }
+                        }}
+                      >
+                        <input 
+                          type="checkbox" 
+                          checked={filterStates.includes(state.value)} 
+                          readOnly
+                          className="w-3.5 h-3.5 text-emerald-600 rounded border-stone-300 focus:ring-emerald-500" 
+                        />
+                        <span className="text-xs text-stone-700">{state.value}</span>
+                      </div>
+                    ))}
+                    <div 
+                        className="px-3 py-1.5 hover:bg-stone-50 cursor-pointer flex items-center gap-2"
+                        onClick={() => {
+                           const val = 'Vendu / Donné';
+                           if (filterStates.includes(val)) {
+                             setFilterStates(filterStates.filter(s => s !== val));
+                           } else {
+                             setFilterStates([...filterStates, val]);
+                             if (filterArchived === 'active') {
+                               setFilterArchived('all');
+                             }
+                           }
+                        }}
+                      >
+                        <input 
+                          type="checkbox" 
+                          checked={filterStates.includes('Vendu / Donné')} 
+                          readOnly
+                          className="w-3.5 h-3.5 text-emerald-600 rounded border-stone-300 focus:ring-emerald-500" 
+                        />
+                        <span className="text-xs text-stone-700">Vendu / Donné</span>
+                      </div>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         </div>
 
@@ -846,7 +908,7 @@ export function SeedlingsList({ setCurrentView, initialFilter = 'active' }: { se
                   setFilterVariety('all');
                   setSelectedAttributes({});
                   setFilterTasteRating('all');
-                  setFilterState('all');
+                  setFilterStates([]);
                   setFilterArchived('active');
                   setFilterSuccess('all');
                   setFilterMonth('all');

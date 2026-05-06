@@ -12,6 +12,8 @@ function GlobalHarvestModal({ isOpen, onClose }: { isOpen: boolean, onClose: () 
   const [quantity, setQuantity] = useState('');
   const [unit, setUnit] = useState('kg');
   const [notes, setNotes] = useState('');
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const { data: rawSeedlings } = useFirebaseData<any>('seedlings');
   const seedlings = (rawSeedlings || []).filter(s => !s.isDeleted && !s.isArchived);
@@ -20,7 +22,7 @@ function GlobalHarvestModal({ isOpen, onClose }: { isOpen: boolean, onClose: () 
     (rawSeedlings || [])
       .filter((s: any) => !s.isDeleted)
       .map((s: any) => s.vegetable)
-  )).filter(Boolean).sort();
+  )).filter(Boolean).sort((a: any, b: any) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
 
   React.useEffect(() => {
     if (isOpen) {
@@ -29,6 +31,8 @@ function GlobalHarvestModal({ isOpen, onClose }: { isOpen: boolean, onClose: () 
       setUnit('kg');
       setNotes('');
       setSelectedSeedlingId('');
+      setSearchQuery('');
+      setIsDropdownOpen(false);
     }
   }, [isOpen]);
 
@@ -87,47 +91,89 @@ function GlobalHarvestModal({ isOpen, onClose }: { isOpen: boolean, onClose: () 
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label className="block text-sm font-medium text-stone-700 mb-1">Culture</label>
-          <select 
-            value={selectedSeedlingId}
-            onChange={e => setSelectedSeedlingId(e.target.value)}
-            className="w-full px-4 py-2 rounded-lg border border-stone-200 focus:ring-2 focus:ring-emerald-500 outline-none bg-stone-50"
-            required
-          >
-            <option value="" disabled>Sélectionnez une culture...</option>
-            <optgroup label="Récoltes globales (Mélange)">
-               {uniqueVegetables.map(veg => (
-                 <option key={`global_${veg}`} value={`global_${veg}`}>
-                   {veg} (Toutes variétés)
-                 </option>
-               ))}
-            </optgroup>
-            
-            <optgroup label="Plants spécifiques">
-              {seedlings?.filter(s => !s.isGlobalHarvestTracker)
-                .reduce((acc: {seen: Set<string>, list: {seedling: any, label: string}[]}, current: any) => {
-                  const label = `${current.vegetable} ${current.variety ? `- ${current.variety}` : ''}`.trim();
-                  if (!acc.seen.has(label)) {
-                    acc.seen.add(label);
-                    acc.list.push({ seedling: current, label });
-                  } else {
-                    if (current.state === 'Mise en terre') {
-                      const existing = acc.list.find(item => item.label === label);
-                      if (existing && existing.seedling.state !== 'Mise en terre') {
-                        existing.seedling = current;
+          <div className="relative">
+            <input 
+              type="text"
+              value={isDropdownOpen ? searchQuery : (selectedSeedlingId ? (() => {
+                if (selectedSeedlingId.startsWith('global_')) {
+                  return `${selectedSeedlingId.replace('global_', '')} (Toutes variétés)`;
+                }
+                const s = seedlings.find(x => x.id === selectedSeedlingId);
+                if (s) {
+                  return `${s.vegetable} ${s.variety ? `- ${s.variety.replace(/\(En terre\)/ig, '').trim()}` : ''}`.trim();
+                }
+                return '';
+              })() : '')}
+              onChange={e => {
+                setSearchQuery(e.target.value);
+                if (!isDropdownOpen) setIsDropdownOpen(true);
+              }}
+              onFocus={() => setIsDropdownOpen(true)}
+              placeholder="Rechercher ou sélectionner une culture..."
+              className="relative z-50 w-full px-4 py-2 rounded-lg border border-stone-200 focus:ring-2 focus:ring-emerald-500 outline-none bg-stone-50 h-[42px]"
+              required
+            />
+            {isDropdownOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setIsDropdownOpen(false)} />
+                <div className="absolute top-full left-0 mt-1 w-full bg-white rounded-lg shadow-lg border border-stone-200 py-1 z-50 max-h-64 overflow-y-auto">
+                  {uniqueVegetables.filter(v => v.toLowerCase().includes(searchQuery.toLowerCase())).length > 0 && (
+                    <div className="px-3 py-1 text-xs font-bold text-stone-500 bg-stone-50 sticky top-0">Récoltes globales (Mélange)</div>
+                  )}
+                  {uniqueVegetables.filter(v => v.toLowerCase().includes(searchQuery.toLowerCase())).map(veg => (
+                    <div 
+                      key={`global_${veg}`}
+                      className="px-4 py-2 hover:bg-emerald-50 cursor-pointer text-sm"
+                      onClick={() => {
+                        setSelectedSeedlingId(`global_${veg}`);
+                        setIsDropdownOpen(false);
+                        setSearchQuery('');
+                      }}
+                    >
+                      {veg} <span className="text-stone-500 text-xs">(Toutes variétés)</span>
+                    </div>
+                  ))}
+
+                  {seedlings?.filter(s => !s.isGlobalHarvestTracker).length > 0 && (
+                    <div className="px-3 py-1 text-xs font-bold text-stone-500 bg-stone-50 sticky top-0 mt-1">Plants spécifiques</div>
+                  )}
+                  {seedlings?.filter(s => !s.isGlobalHarvestTracker)
+                    .reduce((acc: {seen: Set<string>, list: {seedling: any, label: string}[]}, current: any) => {
+                      const pureVariety = (current.variety || '').replace(/\(En terre\)/ig, '').trim();
+                      const label = `${current.vegetable} ${pureVariety ? `- ${pureVariety}` : ''}`.trim();
+                      if (!acc.seen.has(label)) {
+                        acc.seen.add(label);
+                        acc.list.push({ seedling: current, label });
+                      } else {
+                        if (current.state === 'Mise en terre') {
+                          const existing = acc.list.find(item => item.label === label);
+                          if (existing && existing.seedling.state !== 'Mise en terre') {
+                            existing.seedling = current;
+                          }
+                        }
                       }
-                    }
-                  }
-                  return acc;
-                }, { seen: new Set<string>(), list: [] })
-                .list
-                .sort((a, b) => a.label.localeCompare(b.label))
-                .map(item => (
-                <option key={item.seedling.id} value={item.seedling.id}>
-                  {item.label}
-                </option>
-              ))}
-            </optgroup>
-          </select>
+                      return acc;
+                    }, { seen: new Set<string>(), list: [] })
+                    .list
+                    .filter(item => item.label.toLowerCase().includes(searchQuery.toLowerCase()))
+                    .sort((a, b) => a.label.localeCompare(b.label))
+                    .map(item => (
+                      <div 
+                        key={item.seedling.id}
+                        className="px-4 py-2 hover:bg-emerald-50 cursor-pointer text-sm"
+                        onClick={() => {
+                          setSelectedSeedlingId(item.seedling.id);
+                          setIsDropdownOpen(false);
+                          setSearchQuery('');
+                        }}
+                      >
+                        {item.label}
+                      </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
         </div>
         <div>
           <label className="block text-sm font-medium text-stone-700 mb-1">Date</label>

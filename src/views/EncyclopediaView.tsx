@@ -497,10 +497,10 @@ export function EncyclopediaView() {
                     </select>
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-stone-500 uppercase">Espacement</label>
+                    <label className="text-xs font-bold text-stone-500 uppercase">Espacement sur plan (Ø en cm)</label>
                     <input
-                      type="text"
-                      placeholder="ex: 40 x 50 cm"
+                      type="number"
+                      placeholder="ex: 40"
                       value={editForm.spacing}
                       onChange={e => setEditForm({ ...editForm, spacing: e.target.value })}
                       className="w-full px-4 py-2 bg-stone-50 border border-stone-200 rounded-xl text-sm"

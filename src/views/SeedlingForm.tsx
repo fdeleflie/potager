@@ -8,7 +8,9 @@ import { PLANT_CATALOG } from '../catalog';
 
 export function SeedlingForm({ setCurrentView, seedlingId, onBack }: { setCurrentView: (v: string) => void, seedlingId?: string, onBack?: () => void }) {
   const [vegetable, setVegetable] = useState('');
+  const [isVegetableDropdownOpen, setIsVegetableDropdownOpen] = useState(false);
   const [variety, setVariety] = useState('');
+  const [isVarietyDropdownOpen, setIsVarietyDropdownOpen] = useState(false);
   const [origin, setOrigin] = useState('Semis');
   const [dateSown, setDateSown] = useState(new Date().toISOString().split('T')[0]);
   const [action, setAction] = useState('');
@@ -447,33 +449,77 @@ export function SeedlingForm({ setCurrentView, seedlingId, onBack }: { setCurren
         <div className="grid grid-cols-1 md:grid-cols-6 gap-x-2 gap-y-1.5">
           
           {/* Row 1: Légume, Variété */}
-          <div className="space-y-1 md:col-span-3">
+          <div className="space-y-1 md:col-span-3 relative">
             <label className="block text-[11px] font-medium text-stone-700">Légume *</label>
             <input 
-              list="vegetable-list"
               required
               value={vegetable} 
-              onChange={e => setVegetable(e.target.value)}
-              className="w-full px-2 py-1 text-xs rounded-md border border-stone-200 focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+              onChange={e => {
+                setVegetable(e.target.value);
+                setIsVegetableDropdownOpen(true);
+              }}
+              onFocus={() => setIsVegetableDropdownOpen(true)}
+              onBlur={() => setTimeout(() => setIsVegetableDropdownOpen(false), 200)}
+              className="w-full px-2 py-1 text-xs rounded-md border border-stone-200 focus:ring-2 focus:ring-emerald-500 outline-none bg-white relative z-10"
               placeholder="Sélectionner ou saisir"
+              autoComplete="off"
             />
-            <datalist id="vegetable-list">
-              {allVegetables.map(v => <option key={v} value={v} />)}
-            </datalist>
+            {isVegetableDropdownOpen && allVegetables.filter(v => v.toLowerCase().includes(vegetable.toLowerCase())).length > 0 && (
+              <div className="absolute z-50 w-full mt-1 bg-white rounded-lg shadow-lg border border-stone-200 py-1 max-h-48 overflow-y-auto">
+                {allVegetables
+                  .filter(v => v.toLowerCase().includes(vegetable.toLowerCase()))
+                  .map(v => (
+                    <div 
+                      key={v}
+                      onMouseDown={(e) => {
+                        e.preventDefault(); // Prevent blur
+                        setVegetable(v);
+                        setIsVegetableDropdownOpen(false);
+                      }}
+                      className="px-3 py-1.5 text-xs text-stone-700 hover:bg-emerald-50 hover:text-emerald-700 cursor-pointer"
+                    >
+                      {v}
+                    </div>
+                  ))
+                }
+              </div>
+            )}
           </div>
 
-          <div className="space-y-1 md:col-span-3">
+          <div className="space-y-1 md:col-span-3 relative">
             <label className="block text-[11px] font-medium text-stone-700">Variété (optionnel)</label>
             <input 
-              list="variety-list"
               value={variety} 
-              onChange={e => setVariety(e.target.value)}
-              className="w-full px-2 py-1 text-xs rounded-md border border-stone-200 focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+              onChange={e => {
+                setVariety(e.target.value);
+                setIsVarietyDropdownOpen(true);
+              }}
+              onFocus={() => setIsVarietyDropdownOpen(true)}
+              onBlur={() => setTimeout(() => setIsVarietyDropdownOpen(false), 200)}
+              className="w-full px-2 py-1 text-xs rounded-md border border-stone-200 focus:ring-2 focus:ring-emerald-500 outline-none bg-white relative z-10"
               placeholder="Sélectionner ou saisir"
+              autoComplete="off"
             />
-            <datalist id="variety-list">
-              {allVarieties.map(v => <option key={v} value={v} />)}
-            </datalist>
+            {isVarietyDropdownOpen && allVarieties.filter(v => v.toLowerCase().includes(variety.toLowerCase())).length > 0 && (
+              <div className="absolute z-50 w-full mt-1 bg-white rounded-lg shadow-lg border border-stone-200 py-1 max-h-48 overflow-y-auto">
+                {allVarieties
+                  .filter(v => v.toLowerCase().includes(variety.toLowerCase()))
+                  .map(v => (
+                    <div 
+                      key={v}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        setVariety(v);
+                        setIsVarietyDropdownOpen(false);
+                      }}
+                      className="px-3 py-1.5 text-xs text-stone-700 hover:bg-emerald-50 hover:text-emerald-700 cursor-pointer"
+                    >
+                      {v}
+                    </div>
+                  ))
+                }
+              </div>
+            )}
           </div>
 
           {/* Row 1.5: Origine */}
@@ -520,6 +566,9 @@ export function SeedlingForm({ setCurrentView, seedlingId, onBack }: { setCurren
             >
               <option value="">Sélectionner</option>
               {locations.map(l => <option key={l.id} value={l.value}>{l.value}</option>)}
+              {location && !locations.find(l => l.value === location) && (
+                <option value={location}>{location} (Zone)</option>
+              )}
             </select>
           </div>
 

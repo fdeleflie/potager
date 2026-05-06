@@ -128,7 +128,10 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
   });
   const [mousePos, setMousePos] = useState<{x: number, y: number} | null>(null);
   const [snapToGrid, setSnapToGrid] = useState<boolean>(true);
-  const [gridSize, setGridSize] = useState<number>(10); // in cm
+  const [gridSize, setGridSize] = useState<number>(() => {
+    const saved = localStorage.getItem('gardenPlanGridSize');
+    return saved ? parseInt(saved, 10) : 10;
+  }); // in cm
   const [isMeasuring, setIsMeasuring] = useState(false);
   const [measureStart, setMeasureStart] = useState<{x: number, y: number} | null>(null);
   const [printScale, setPrintScale] = useState<number>(100);
@@ -263,6 +266,10 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
   useEffect(() => {
     localStorage.setItem('gardenPlanZoom', zoom.toString());
   }, [zoom]);
+
+  useEffect(() => {
+    localStorage.setItem('gardenPlanGridSize', gridSize.toString());
+  }, [gridSize]);
 
   useEffect(() => {
     localStorage.setItem('gardenPlanShowLabels', showLabels.toString());
@@ -417,13 +424,20 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
     setSelectedSeedlingId(newSeedling.id);
   };
 
+  const getPlantSpacing = (vegetableName: string | undefined): number => {
+    if (!vegetableName) return 30;
+    const vegEnc = encyclopedia?.find((e: any) => (e.name || '').toLowerCase() === vegetableName.toLowerCase());
+    const vegConfig = config?.find((c: any) => c.type === 'vegetable' && c.value === vegetableName);
+    return (vegEnc?.spacing ? parseInt(vegEnc.spacing, 10) : undefined) || vegConfig?.attributes?.spacing || VEGETABLE_SPACING[vegetableName] || 30;
+  };
+
   const snapStep = gridSize >= 10 ? gridSize / 2 : gridSize;
 
   const getCompanionshipStatus = (seedling: any, p: {x: number, y: number}) => {
     if (!encyclopedia) return 'neutral';
     
     const vegConfig = config?.find(c => c.type === 'vegetable' && c.value === seedling.vegetable);
-    const spacing = vegConfig?.attributes?.spacing || VEGETABLE_SPACING[seedling.vegetable] || 30;
+    const spacing = getPlantSpacing(seedling.vegetable);
     
     const entry = encyclopedia.find(e => e.name === seedling.vegetable);
     if (!entry) return 'neutral';
@@ -434,8 +448,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
     seedlingsInCurrentZone.forEach(otherSeedling => {
       if (otherSeedling.id === seedling.id) return;
       
-      const otherVegConfig = config?.find(c => c.type === 'vegetable' && c.value === otherSeedling.vegetable);
-      const otherSpacing = otherVegConfig?.attributes?.spacing || VEGETABLE_SPACING[otherSeedling.vegetable] || 30;
+      const otherSpacing = getPlantSpacing(otherSeedling.vegetable);
       
       otherSeedling.positions?.forEach(otherP => {
         const dx = p.x - otherP.x;
@@ -464,7 +477,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
     if (!encyclopedia) return { good: [], bad: [] };
     
     const vegConfig = config?.find(c => c.type === 'vegetable' && c.value === seedling.vegetable);
-    const spacing = vegConfig?.attributes?.spacing || VEGETABLE_SPACING[seedling.vegetable] || 30;
+    const spacing = getPlantSpacing(seedling.vegetable);
     
     const entry = encyclopedia.find(e => e.name === seedling.vegetable);
     if (!entry) return { good: [], bad: [] };
@@ -475,8 +488,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
     seedlingsInCurrentZone.forEach(otherSeedling => {
       if (otherSeedling.id === seedling.id) return;
       
-      const otherVegConfig = config?.find(c => c.type === 'vegetable' && c.value === otherSeedling.vegetable);
-      const otherSpacing = otherVegConfig?.attributes?.spacing || VEGETABLE_SPACING[otherSeedling.vegetable] || 30;
+      const otherSpacing = getPlantSpacing(otherSeedling.vegetable);
       
       otherSeedling.positions?.forEach(otherP => {
         const dx = p.x - otherP.x;
@@ -641,7 +653,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
         if (excludePlant && excludePlant.seedlingId === s.id && excludePlant.positionIndex === idx) return;
         const dist = Math.sqrt(Math.pow(p.x - cmX, 2) + Math.pow(p.y - cmY, 2));
         const vegConfig = config?.find(c => c.type === 'vegetable' && c.value === s.vegetable);
-        const spacing = vegConfig?.attributes?.spacing || VEGETABLE_SPACING[s.vegetable] || 30;
+        const spacing = getPlantSpacing(s.vegetable);
         const actualDist = Math.max(0, dist - spacing / 2 - ghostRadius);
         if (actualDist < minDist) {
           minDist = actualDist;
@@ -695,9 +707,9 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
     let cmY = mouseY / zoom;
 
     if (snapToGrid) {
-      const snapStep = gridSize / 2;
-      cmX = Math.round(cmX / snapStep) * snapStep;
-      cmY = Math.round(cmY / snapStep) * snapStep;
+      const currentSnapStep = gridSize >= 10 ? gridSize / 2 : gridSize;
+      cmX = Math.round(cmX / currentSnapStep) * currentSnapStep;
+      cmY = Math.round(cmY / currentSnapStep) * currentSnapStep;
     }
 
     setMousePos({ x: cmX * zoom, y: cmY * zoom });
@@ -711,14 +723,19 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
         let cmY = Math.round((e.clientY - rect.top) / zoom);
         
         if (snapToGrid) {
-          cmX = Math.round(cmX / snapStep) * snapStep;
-          cmY = Math.round(cmY / snapStep) * snapStep;
+          const currentSnapStep = gridSize >= 10 ? gridSize / 2 : gridSize;
+          cmX = Math.round(cmX / currentSnapStep) * currentSnapStep;
+          cmY = Math.round(cmY / currentSnapStep) * currentSnapStep;
         }
 
         const seedling = seedlings?.find(s => s.id === draggingPlant.seedlingId);
         if (seedling && seedling.positions) {
           const newPositions = [...seedling.positions];
-          newPositions[draggingPlant.positionIndex] = { x: cmX, y: cmY };
+          newPositions[draggingPlant.positionIndex] = { 
+            ...newPositions[draggingPlant.positionIndex],
+            x: cmX, 
+            y: cmY 
+          };
           await fb.update('seedlings', draggingPlant.seedlingId, {
             positions: newPositions
           });
@@ -834,10 +851,63 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
 
   const selectedSeedling = seedlings?.find(s => s.id === selectedSeedlingId);
   const selectedSeedlingConfig = config?.find(c => c.type === 'vegetable' && c.value === selectedSeedling?.vegetable);
-  const ghostSpacing = selectedSeedling ? (selectedSeedlingConfig?.attributes?.spacing || VEGETABLE_SPACING[selectedSeedling.vegetable] || 30) : 30;
+  const ghostSpacing = selectedSeedling ? getPlantSpacing(selectedSeedling.vegetable) : 30;
   const ghostRadius = (ghostSpacing / 2) * zoom;
 
   const vegetablesInCurrentZone = Array.from(new Set(seedlingsInCurrentZone.map(s => s.vegetable))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+
+  const vegAndVarieties = useMemo(() => {
+    const result: { veg: string, variety: string, count: number }[] = [];
+    seedlingsInCurrentZone.forEach(s => {
+      const veg = s.vegetable;
+      const variety = s.variety || '';
+      
+      // Only count positions in THIS zone
+      const currentZonePositions = s.positions?.filter((p: any) => p.zoneId === selectedZoneId || (!p.zoneId && s.zoneId === selectedZoneId)) || [];
+      const count = currentZonePositions.length;
+      if (count === 0) return;
+      
+      const existing = result.find(r => r.veg === veg && r.variety === variety);
+      if (existing) {
+        existing.count += count;
+      } else {
+        result.push({ veg, variety, count });
+      }
+    });
+    return result.sort((a, b) => {
+      if (a.veg !== b.veg) return a.veg.localeCompare(b.veg);
+      return a.variety.localeCompare(b.variety);
+    });
+  }, [seedlingsInCurrentZone, selectedZoneId]);
+
+  const globalRecapByVeg = useMemo(() => {
+    const grouped = new Map<string, { total: number, varieties: { variety: string, count: number }[] }>();
+    (seedlings || []).forEach(s => {
+      if (!s.positions || s.positions.length === 0) return;
+      const veg = s.vegetable;
+      const variety = s.variety || 'Sans variété';
+      const count = s.positions.length;
+      
+      if (!grouped.has(veg)) {
+        grouped.set(veg, { total: 0, varieties: [] });
+      }
+      const g = grouped.get(veg)!;
+      g.total += count;
+      
+      const existingVar = g.varieties.find(v => v.variety === variety);
+      if (existingVar) {
+        existingVar.count += count;
+      } else {
+        g.varieties.push({ variety, count });
+      }
+    });
+    
+    grouped.forEach(g => {
+       g.varieties.sort((a, b) => a.variety.localeCompare(b.variety));
+    });
+    
+    return Array.from(grouped.entries()).sort((a,b) => a[0].localeCompare(b[0]));
+  }, [seedlings]);
 
   return (
     <div className="space-y-6">
@@ -1191,7 +1261,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                 const positionOffsets = new Map<string, number>();
                 return seedlingsInCurrentZone.map(seedling => {
                   const vegConfig = config?.find(c => c.type === 'vegetable' && c.value === seedling.vegetable);
-                  const spacing = vegConfig?.attributes?.spacing || VEGETABLE_SPACING[seedling.vegetable] || 30;
+                  const spacing = getPlantSpacing(seedling.vegetable);
                   const radius = (spacing / 2) * zoom;
                   const color = legendColors[seedling.vegetable];
                   const Icon = legendIcons[seedling.vegetable];
@@ -1302,7 +1372,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
               {/* Plant Labels */}
               {showLabels && zoom >= 0.6 && seedlingsInCurrentZone.map(seedling => {
                 const vegConfig = config?.find(c => c.type === 'vegetable' && c.value === seedling.vegetable);
-                const spacing = vegConfig?.attributes?.spacing || VEGETABLE_SPACING[seedling.vegetable] || 30;
+                const spacing = getPlantSpacing(seedling.vegetable);
                 const radius = (spacing / 2) * zoom;
                 
                 const positionOffsets = new Map<string, number>();
@@ -1350,7 +1420,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                       draggingPlant ? (() => {
                         const seedling = seedlings?.find(s => s.id === draggingPlant.seedlingId);
                         const vegConfig = config?.find(c => c.type === 'vegetable' && c.value === seedling?.vegetable);
-                        const spacing = vegConfig?.attributes?.spacing || VEGETABLE_SPACING[seedling?.vegetable || ''] || 30;
+                        const spacing = getPlantSpacing(seedling?.vegetable || '');
                         const color = legendColors[seedling?.vegetable || ''];
                         return {
                           left: mousePos.x - (spacing / 2) * zoom,
@@ -1382,7 +1452,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                       } : selectedSeedlingId ? (() => {
                         const seedling = seedlings?.find(s => s.id === selectedSeedlingId);
                         const vegConfig = config?.find(c => c.type === 'vegetable' && c.value === seedling?.vegetable);
-                        const spacing = vegConfig?.attributes?.spacing || VEGETABLE_SPACING[seedling?.vegetable || ''] || 30;
+                        const spacing = getPlantSpacing(seedling?.vegetable || '');
                         const color = legendColors[seedling?.vegetable || ''];
                         return {
                           left: mousePos.x - (spacing / 2) * zoom,
@@ -1502,7 +1572,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                             if (draggingPlant) {
                               const seedling = seedlings?.find(s => s.id === draggingPlant.seedlingId);
                               const vegConfig = config?.find(c => c.type === 'vegetable' && c.value === seedling?.vegetable);
-                              return ((vegConfig?.attributes?.spacing || VEGETABLE_SPACING[seedling?.vegetable || ''] || 30) / 2) * zoom;
+                              return (getPlantSpacing(seedling?.vegetable || '') / 2) * zoom;
                             }
                             if (draggingStructureId) {
                               const structure = structures?.find(s => s.id === draggingStructureId);
@@ -1512,7 +1582,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                             if (selectedSeedlingId) {
                               const seedling = seedlings?.find(s => s.id === selectedSeedlingId);
                               const vegConfig = config?.find(c => c.type === 'vegetable' && c.value === seedling?.vegetable);
-                              return ((vegConfig?.attributes?.spacing || VEGETABLE_SPACING[seedling?.vegetable || ''] || 30) / 2) * zoom;
+                              return (getPlantSpacing(seedling?.vegetable || '') / 2) * zoom;
                             }
                             return 0;
                           })()) / zoom)}cm</span>
@@ -1520,7 +1590,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                             if (draggingPlant) {
                               const seedling = seedlings?.find(s => s.id === draggingPlant.seedlingId);
                               const vegConfig = config?.find(c => c.type === 'vegetable' && c.value === seedling?.vegetable);
-                              return ((vegConfig?.attributes?.spacing || VEGETABLE_SPACING[seedling?.vegetable || ''] || 30) / 2) * zoom;
+                              return (getPlantSpacing(seedling?.vegetable || '') / 2) * zoom;
                             }
                             if (draggingStructureId) {
                               const structure = structures?.find(s => s.id === draggingStructureId);
@@ -1530,7 +1600,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                             if (selectedSeedlingId) {
                               const seedling = seedlings?.find(s => s.id === selectedSeedlingId);
                               const vegConfig = config?.find(c => c.type === 'vegetable' && c.value === seedling?.vegetable);
-                              return ((vegConfig?.attributes?.spacing || VEGETABLE_SPACING[seedling?.vegetable || ''] || 30) / 2) * zoom;
+                              return (getPlantSpacing(seedling?.vegetable || '') / 2) * zoom;
                             }
                             return 0;
                           })())) / zoom)}cm</span>
@@ -1540,7 +1610,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                             if (draggingPlant) {
                               const seedling = seedlings?.find(s => s.id === draggingPlant.seedlingId);
                               const vegConfig = config?.find(c => c.type === 'vegetable' && c.value === seedling?.vegetable);
-                              return ((vegConfig?.attributes?.spacing || VEGETABLE_SPACING[seedling?.vegetable || ''] || 30) / 2) * zoom;
+                              return (getPlantSpacing(seedling?.vegetable || '') / 2) * zoom;
                             }
                             if (draggingStructureId) {
                               const structure = structures?.find(s => s.id === draggingStructureId);
@@ -1550,7 +1620,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                             if (selectedSeedlingId) {
                               const seedling = seedlings?.find(s => s.id === selectedSeedlingId);
                               const vegConfig = config?.find(c => c.type === 'vegetable' && c.value === seedling?.vegetable);
-                              return ((vegConfig?.attributes?.spacing || VEGETABLE_SPACING[seedling?.vegetable || ''] || 30) / 2) * zoom;
+                              return (getPlantSpacing(seedling?.vegetable || '') / 2) * zoom;
                             }
                             return 0;
                           })()) / zoom)}cm</span>
@@ -1558,7 +1628,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                             if (draggingPlant) {
                               const seedling = seedlings?.find(s => s.id === draggingPlant.seedlingId);
                               const vegConfig = config?.find(c => c.type === 'vegetable' && c.value === seedling?.vegetable);
-                              return ((vegConfig?.attributes?.spacing || VEGETABLE_SPACING[seedling?.vegetable || ''] || 30) / 2) * zoom;
+                              return (getPlantSpacing(seedling?.vegetable || '') / 2) * zoom;
                             }
                             if (draggingStructureId) {
                               const structure = structures?.find(s => s.id === draggingStructureId);
@@ -1568,7 +1638,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                             if (selectedSeedlingId) {
                               const seedling = seedlings?.find(s => s.id === selectedSeedlingId);
                               const vegConfig = config?.find(c => c.type === 'vegetable' && c.value === seedling?.vegetable);
-                              return ((vegConfig?.attributes?.spacing || VEGETABLE_SPACING[seedling?.vegetable || ''] || 30) / 2) * zoom;
+                              return (getPlantSpacing(seedling?.vegetable || '') / 2) * zoom;
                             }
                             return 0;
                           })())) / zoom)}cm</span>
@@ -1578,7 +1648,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                             if (draggingPlant) {
                               const seedling = seedlings?.find(s => s.id === draggingPlant.seedlingId);
                               const vegConfig = config?.find(c => c.type === 'vegetable' && c.value === seedling?.vegetable);
-                              return (vegConfig?.attributes?.spacing || VEGETABLE_SPACING[seedling?.vegetable || ''] || 30) / 2;
+                              return getPlantSpacing(seedling?.vegetable || '') / 2;
                             }
                             if (draggingStructureId) {
                               const structure = structures?.find(s => s.id === draggingStructureId);
@@ -1588,7 +1658,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                             if (selectedSeedlingId) {
                               const seedling = seedlings?.find(s => s.id === selectedSeedlingId);
                               const vegConfig = config?.find(c => c.type === 'vegetable' && c.value === seedling?.vegetable);
-                              return (vegConfig?.attributes?.spacing || VEGETABLE_SPACING[seedling?.vegetable || ''] || 30) / 2;
+                              return getPlantSpacing(seedling?.vegetable || '') / 2;
                             }
                             return 0;
                           })();
@@ -1619,14 +1689,13 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
               <div className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">Récapitulatif</div>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-              {vegetablesInCurrentZone.map(veg => {
+              {vegAndVarieties.map(({veg, variety, count}) => {
                 const vegConfig = config?.find(c => c.type === 'vegetable' && c.value === veg);
                 const color = legendColors[veg];
                 const Icon = legendIcons[veg];
-                const count = seedlingsInCurrentZone.filter(s => s.vegetable === veg).reduce((acc, s) => acc + (s.positions?.length || 0), 0);
                 
                 return (
-                  <div key={veg} className="flex items-center gap-3 bg-white p-3 rounded-xl border border-stone-100 shadow-sm transition-all hover:shadow-md">
+                  <div key={`${veg}-${variety}`} className="flex items-center gap-3 bg-white p-3 rounded-xl border border-stone-100 shadow-sm transition-all hover:shadow-md">
                     <div 
                       className="w-10 h-10 rounded-full flex items-center justify-center shadow-inner shrink-0" 
                       style={{ 
@@ -1642,7 +1711,8 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                     </div>
                     <div className="flex flex-col">
                       <span className="text-stone-800 font-semibold text-sm leading-tight">{veg}</span>
-                      <span className="text-stone-500 text-[10px] font-medium uppercase tracking-tighter">{count} plant{count > 1 ? 's' : ''} placé{count > 1 ? 's' : ''}</span>
+                      {variety && <span className="text-stone-500 text-xs italic">{variety}</span>}
+                      <span className="text-stone-500 text-[10px] font-medium uppercase tracking-tighter mt-0.5">{count} plant{count > 1 ? 's' : ''}</span>
                     </div>
                   </div>
                 );
@@ -1661,7 +1731,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
             <div className="space-y-2">
               {unplacedSeedlings.map(s => {
                 const vegConfig = config?.find(c => c.type === 'vegetable' && c.value === s.vegetable);
-                const spacing = vegConfig?.attributes?.spacing || VEGETABLE_SPACING[s.vegetable] || 30;
+                const spacing = getPlantSpacing(s.vegetable);
                 return (
                   <div 
                     key={s.id}
@@ -1724,7 +1794,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
               <div className="space-y-2 opacity-80">
                 {otherZoneSeedlings.map(s => {
                   const vegConfig = config?.find(c => c.type === 'vegetable' && c.value === s.vegetable);
-                  const spacing = vegConfig?.attributes?.spacing || VEGETABLE_SPACING[s.vegetable] || 30;
+                  const spacing = getPlantSpacing(s.vegetable);
                   return (
                     <div 
                       key={s.id}
@@ -1785,7 +1855,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
               <div className="space-y-2 opacity-60">
                 {ignoredSeedlings.map(s => {
                   const vegConfig = config?.find(c => c.type === 'vegetable' && c.value === s.vegetable);
-                  const spacing = vegConfig?.attributes?.spacing || VEGETABLE_SPACING[s.vegetable] || 30;
+                  const spacing = getPlantSpacing(s.vegetable);
                   return (
                     <div 
                       key={s.id}
@@ -1852,7 +1922,11 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                 </tr>
               </thead>
               <tbody className="divide-y divide-stone-100">
-                {seedlingsInCurrentZone.map(s => {
+                {seedlingsInCurrentZone.slice().sort((a, b) => {
+                  const c = a.vegetable.localeCompare(b.vegetable);
+                  if (c !== 0) return c;
+                  return (a.variety || '').localeCompare(b.variety || '');
+                }).map(s => {
                   const currentZonePositions = s.positions?.filter((p: any) => p.zoneId === selectedZoneId || (!p.zoneId && s.zoneId === selectedZoneId)) || [];
                   return (
                   <tr key={s.id} className="hover:bg-stone-50/50 transition-colors">
@@ -1867,6 +1941,47 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                 )})}
               </tbody>
             </table>
+          </div>
+        )}
+      </div>
+      
+      <div className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200/60 print:mt-8 mt-6">
+        <h3 className="font-serif text-xl font-medium text-stone-900 mb-4">Récapitulatif global (Toutes les zones)</h3>
+        {globalRecapByVeg.length === 0 ? (
+          <p className="text-sm text-stone-500 italic">Aucune plantation dans le potager.</p>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            {globalRecapByVeg.map(([veg, data]) => {
+              const vegConfig = config?.find(c => c.type === 'vegetable' && c.value === veg);
+              const color = legendColors[veg] || '#10b981';
+              const Icon = legendIcons[veg] || Sprout;
+
+              return (
+                <div key={veg} className="flex flex-col gap-2 bg-stone-50 p-4 rounded-xl border border-stone-100 shadow-sm hover:shadow-md transition-all">
+                  <div className="flex items-center justify-between border-b border-stone-200/60 pb-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-full flex items-center justify-center shadow-inner shrink-0" style={{ background: `radial-gradient(circle at 30% 30%, ${color}, ${color}dd)` }}>
+                         {GARDEN_EMOJIS.includes(vegConfig?.attributes?.icon) ? (
+                            <span className="text-sm">{vegConfig?.attributes?.icon}</span>
+                          ) : (
+                            <Icon className="w-4 h-4 text-white drop-shadow-sm" />
+                          )}
+                      </div>
+                      <span className="font-bold text-stone-800 tracking-tight leading-tight">{veg}</span>
+                    </div>
+                    <span className="text-emerald-600 font-bold bg-emerald-100/50 px-2.5 py-1 rounded-md text-sm shrink-0 border border-emerald-200/50 shadow-sm">{data.total}</span>
+                  </div>
+                  <div className="flex flex-col gap-1.5 pt-1">
+                    {data.varieties.map(v => (
+                      <div key={v.variety} className="flex justify-between items-center text-sm">
+                        <span className="text-stone-600 italic pl-1 leading-tight">{v.variety}</span>
+                        <span className="text-rose-500 font-medium tabular-nums shrink-0">{v.count}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
