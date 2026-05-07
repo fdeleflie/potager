@@ -4,7 +4,7 @@ import { useFirebaseData, fb } from '../hooks/useFirebaseData';
 import { StructureEditor } from '../components/StructureEditor';
 import { Map as MapIcon, Sprout, Leaf, Flower2, Trees, Apple, Grape, Carrot, Cherry, Citrus, Wheat, Shrub, Palmtree, TreePine, ZoomIn, ZoomOut, Magnet, Home, Square, X, Printer, Trash2, List, Grid3X3, Ruler, BookOpen, CheckCircle2, Type, RotateCcw, EyeOff, Eye } from 'lucide-react';
 import { ConfirmModal, PromptModal } from '../components/Modals';
-import { ICON_MAP, GARDEN_EMOJIS } from '../constants';
+import { ICON_MAP, GARDEN_EMOJIS, isEmoji } from '../constants';
 import { v4 as uuidv4 } from 'uuid';
 import { printElement } from '../utils/print';
 import { getDistinctColor } from '../utils/colors';
@@ -1326,7 +1326,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                           boxShadow: `0 1px 3px rgba(0,0,0,0.2)`
                         }}
                       >
-                        {GARDEN_EMOJIS.includes(vegConfig?.attributes?.icon) ? (
+                        {isEmoji(vegConfig?.attributes?.icon) ? (
                           <span className="text-sm">{vegConfig.attributes.icon}</span>
                         ) : (
                           <Icon className="w-3.5 h-3.5 text-white drop-shadow-sm" />
@@ -1479,7 +1479,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                       return (
                         <>
                           <div className={`w-6 h-6 rounded-full flex items-center justify-center relative ${ringClass}`} style={{ backgroundColor: color }}>
-                          {GARDEN_EMOJIS.includes(icon) ? (
+                          {isEmoji(icon) ? (
                             <span className="text-sm">{icon}</span>
                           ) : (
                             React.createElement(legendIcons[seedling?.vegetable || ''], { className: "w-3.5 h-3.5 text-white" })
@@ -1526,7 +1526,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                     return (
                       <>
                         <div className={`w-6 h-6 rounded-full flex items-center justify-center relative ${ringClass}`} style={{ backgroundColor: color }}>
-                          {GARDEN_EMOJIS.includes(icon) ? (
+                          {isEmoji(icon) ? (
                             <span className="text-sm">{icon}</span>
                           ) : (
                             React.createElement(legendIcons[seedling?.vegetable || ''], { className: "w-3.5 h-3.5 text-white" })
@@ -1703,7 +1703,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                         boxShadow: `0 2px 4px ${color}40`
                       }}
                     >
-                      {GARDEN_EMOJIS.includes(vegConfig?.attributes?.icon) ? (
+                      {isEmoji(vegConfig?.attributes?.icon) ? (
                         <span className="text-xl">{vegConfig.attributes.icon}</span>
                       ) : (
                         <Icon className="w-5 h-5 text-white drop-shadow-sm" />
@@ -1961,7 +1961,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                   <div className="flex items-center justify-between border-b border-stone-200/60 pb-2">
                     <div className="flex items-center gap-2">
                       <div className="w-8 h-8 rounded-full flex items-center justify-center shadow-inner shrink-0" style={{ background: `radial-gradient(circle at 30% 30%, ${color}, ${color}dd)` }}>
-                         {GARDEN_EMOJIS.includes(vegConfig?.attributes?.icon) ? (
+                         {isEmoji(vegConfig?.attributes?.icon) ? (
                             <span className="text-sm">{vegConfig?.attributes?.icon}</span>
                           ) : (
                             <Icon className="w-4 h-4 text-white drop-shadow-sm" />

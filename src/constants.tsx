@@ -195,8 +195,7 @@ export const GARDEN_EMOJI_CATEGORIES = [
     id: 'legume',
     label: '🥕 Légumes & Herbes',
     emojis: [
-      '🍅', '🍆', '🫑', '🌶️', '🥒', '🎃', '🥑', '🥕', '🥔', '🍠', '🧅', '🧄', '🫚',
-      '🥬', '🥗', '🥦', '🫛', '🫘', '🌽', '🌾', '🍄', '🌿', '🌱', '🍃', '🍀', '☘️', '🪴',
+      '🍅', '🍆', '🫑', '🌶️', '🥒', '🎃', '🥑', '🥕', '🥔', '🍠', '🧅', '🧄', '🫚', '🥦', '🥬', '🥗', '🫛', '🫘', '🌽', '🌾', '🍄', '🌿', '🌱', '🍃', '🍀', '☘️', '🪴',
       '🔴', '🟠', '🟡', '🟢', '🟣', '🟤', '⚪', '⚫', '🟩', '🟫'
     ]
   },
@@ -226,3 +225,8 @@ export const GARDEN_EMOJI_CATEGORIES = [
 ].map(cat => ({ ...cat, emojis: cat.emojis.filter((v, i, a) => a.indexOf(v) === i) }));
 
 export const GARDEN_EMOJIS = GARDEN_EMOJI_CATEGORIES.flatMap(cat => cat.emojis);
+
+export const isEmoji = (str: string | undefined | null): boolean => {
+  if (!str) return false;
+  return !ICON_MAP[str];
+};

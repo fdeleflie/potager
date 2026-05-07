@@ -9,7 +9,7 @@ import {
   ThumbsUp, ThumbsDown, Calendar, Maximize2, ChevronRight, ChevronLeft,
   List, Wand2
 } from 'lucide-react';
-import { GARDEN_EMOJI_CATEGORIES } from '../constants';
+import { GARDEN_EMOJI_CATEGORIES, ICON_LIST, GARDEN_EMOJIS, ICON_MAP, isEmoji } from '../constants';
 
 type Tab = 'vegetables' | 'health';
 type PlantSubTab = 'culture' | 'varieties';
@@ -623,9 +623,9 @@ export function EncyclopediaView() {
                       </div>
                     </div>
                   </div>
-                  <div className="space-y-1.5">
+                  <div className="space-y-3 col-span-1 sm:col-span-2">
                     <div className="flex items-center justify-between">
-                      <label className="text-xs font-bold text-stone-500 uppercase">Icône (Emoji)</label>
+                      <label className="text-xs font-bold text-stone-500 uppercase">Icône (Emoji ou Symbole)</label>
                       <button
                         type="button"
                         onClick={() => {
@@ -639,12 +639,77 @@ export function EncyclopediaView() {
                         Auto
                       </button>
                     </div>
-                    <input
-                      type="text"
-                      value={editForm.icon || 'Sprout'}
-                      onChange={e => setEditForm({ ...editForm, icon: e.target.value })}
-                      className="w-full px-4 py-2 bg-stone-50 border border-stone-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
-                    />
+                    
+                    <div className="flex items-center gap-3">
+                      <div className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0 shadow-inner overflow-hidden" style={{ background: `radial-gradient(circle at 30% 30%, ${editForm.color || '#10b981'}, ${(editForm.color || '#10b981')}dd)` }}>
+                        {editForm.icon && isEmoji(editForm.icon) ? (
+                          <span className="text-2xl drop-shadow-sm">{editForm.icon}</span>
+                        ) : (
+                          React.createElement(ICON_MAP[editForm.icon || 'Sprout'] || ICON_MAP['Sprout'], { className: "w-6 h-6 text-white drop-shadow-sm" })
+                        )}
+                      </div>
+                      <div className="flex-1">
+                        <input
+                          type="text"
+                          value={editForm.icon || 'Sprout'}
+                          onChange={e => setEditForm({ ...editForm, icon: e.target.value })}
+                          className="w-full px-4 py-2 bg-stone-50 border border-stone-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 mb-1"
+                          placeholder="Emoji libre ou nom d'icône"
+                        />
+                        <p className="text-[10px] text-stone-500 italic pl-1 leading-tight">
+                          💡 Astuce : <b>Touche Windows + .</b> ou <b>Cmd + Ctrl + Espace</b> (Mac) pour chercher l'émoji "courgette" 🥒 !
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="bg-stone-50 rounded-xl p-3 border border-stone-200 h-48 overflow-y-auto custom-scrollbar">
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <label className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">Minimalistes</label>
+                          <div className="grid grid-cols-[repeat(auto-fill,minmax(32px,1fr))] gap-1">
+                            {ICON_LIST.map(({ id, icon: Icon }) => (
+                              <button
+                                key={id}
+                                type="button"
+                                onClick={() => setEditForm({ ...editForm, icon: id })}
+                                className={`p-1.5 rounded-lg border transition-all flex items-center justify-center ${
+                                  editForm.icon === id 
+                                    ? 'shadow-sm text-white scale-110 z-10' 
+                                    : 'bg-white border-stone-200 text-stone-600 hover:border-emerald-300 hover:scale-105'
+                                }`}
+                                style={editForm.icon === id ? { backgroundColor: editForm.color || '#10b981', borderColor: editForm.color || '#10b981' } : {}}
+                                title={id}
+                              >
+                                <Icon className="w-4 h-4" />
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {GARDEN_EMOJI_CATEGORIES.map(cat => (
+                          <div key={cat.id} className="space-y-2">
+                            <label className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">{cat.label}</label>
+                            <div className="grid grid-cols-[repeat(auto-fill,minmax(32px,1fr))] gap-1">
+                              {cat.emojis.map(emoji => (
+                                <button
+                                  key={emoji}
+                                  type="button"
+                                  onClick={() => setEditForm({ ...editForm, icon: emoji })}
+                                  className={`w-8 h-8 rounded-lg text-lg flex items-center justify-center transition-all bg-white border ${
+                                    editForm.icon === emoji 
+                                      ? 'border-emerald-500 shadow-sm scale-110 z-10' 
+                                      : 'border-stone-200 hover:border-emerald-300 hover:scale-105'
+                                  }`}
+                                  style={editForm.icon === emoji ? { backgroundColor: `${editForm.color || '#10b981'}20` } : {}}
+                                >
+                                  {emoji}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   </div>
                 </div>
 

@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import { ConfirmModal } from '../components/Modals';
-import { ICON_MAP, ICON_LIST, GARDEN_EMOJIS, GARDEN_EMOJI_CATEGORIES } from '../constants';
+import { ICON_MAP, ICON_LIST, GARDEN_EMOJIS, isEmoji, GARDEN_EMOJI_CATEGORIES } from '../constants';
 import { printElement } from '../utils/print';
 import { getDistinctColor } from '../utils/colors';
 
@@ -1387,7 +1387,7 @@ export function Orchard() {
                       >
                         {tree.photo ? (
                           <img src={tree.photo} alt={tree.species} className="w-full h-full object-cover" />
-                        ) : GARDEN_EMOJIS.includes(encEntry?.icon || '') ? (
+                        ) : isEmoji(encEntry?.icon || '') ? (
                           <span className="text-xl">{encEntry?.icon}</span>
                         ) : (
                           <IconComponent className="w-5 h-5 text-white drop-shadow-sm" />
@@ -1414,7 +1414,7 @@ export function Orchard() {
                       className="w-8 h-8 rounded-full flex items-center justify-center" 
                       style={{ backgroundColor: newTree.color || '#10b981' }}
                     >
-                      {GARDEN_EMOJIS.includes(newTree.icon) ? (
+                      {isEmoji(newTree.icon) ? (
                         <span className="text-xl">{newTree.icon}</span>
                       ) : (
                         React.createElement(ICON_MAP[newTree.icon || 'Trees'] || Trees, { className: "w-5 h-5 text-white" })
@@ -1512,7 +1512,7 @@ export function Orchard() {
                       const icon = encEntry?.icon || 'Trees';
                       return (
                         <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ backgroundColor: color }}>
-                          {GARDEN_EMOJIS.includes(icon) ? (
+                          {isEmoji(icon) ? (
                             <span className="text-xl">{icon}</span>
                           ) : (
                             React.createElement(ICON_MAP[icon] || Trees, { className: "w-5 h-5 text-white" })
@@ -1522,7 +1522,7 @@ export function Orchard() {
                     })()}
                     {(isAddingTree || isMovingTree || isCopyingTree) && (
                       <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ backgroundColor: newTree.color || '#10b981' }}>
-                        {GARDEN_EMOJIS.includes(newTree.icon) ? (
+                        {isEmoji(newTree.icon) ? (
                           <span className="text-xl">{newTree.icon}</span>
                         ) : (
                           React.createElement(ICON_MAP[newTree.icon || 'Trees'] || Trees, { className: "w-5 h-5 text-white" })
@@ -1623,7 +1623,7 @@ export function Orchard() {
                   return (
                     <div key={`print-legend-${species}-${idx}`} className="flex items-center gap-3">
                       <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{ backgroundColor: customColor }}>
-                        {GARDEN_EMOJIS.includes(encEntry?.icon || '') ? (
+                        {isEmoji(encEntry?.icon || '') ? (
                           <span className="text-sm">{encEntry?.icon}</span>
                         ) : (
                           <IconComponent className="w-4 h-4 text-white" />
@@ -1651,7 +1651,7 @@ export function Orchard() {
                     return (
                       <div key={`legend-${species}-${idx}`} className="flex items-center gap-2 px-3 py-1.5 bg-stone-50 rounded-full border border-stone-100">
                         <div className="w-4 h-4 rounded-full flex items-center justify-center" style={{ backgroundColor: customColor }}>
-                          {GARDEN_EMOJIS.includes(encEntry?.icon || '') ? (
+                          {isEmoji(encEntry?.icon || '') ? (
                             <span className="text-[10px]">{encEntry?.icon}</span>
                           ) : (
                             <IconComponent className="w-2.5 h-2.5 text-white" />
@@ -2445,7 +2445,7 @@ export function Orchard() {
                         boxShadow: `0 4px 6px ${color}30`
                       }}
                     >
-                      {GARDEN_EMOJIS.includes(encEntry?.icon || '') ? (
+                      {isEmoji(encEntry?.icon || '') ? (
                         <span className="text-2xl">{encEntry?.icon}</span>
                       ) : (
                         <Icon className="w-6 h-6 text-white drop-shadow-sm" />

@@ -5,7 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { Search, Filter, Plus, Sprout, LayoutGrid, List, Printer, Edit, Trash2, Archive, CheckCircle2, Download, ChevronDown, ChevronUp, X, RefreshCw } from 'lucide-react';
 import { ConfirmModal } from '../components/Modals';
 import { getSeedlingDisplayPhoto } from '../utils/seedling';
-import { ICON_MAP, GARDEN_EMOJIS } from '../constants';
+import { ICON_MAP, GARDEN_EMOJIS, isEmoji } from '../constants';
 
 import { printElement } from '../utils/print';
 import jsPDF from 'jspdf';
@@ -1019,7 +1019,7 @@ export function SeedlingsList({ setCurrentView, initialFilter = 'active' }: { se
                             boxShadow: `0 2px 4px ${color}40`
                           }}
                         >
-                          {GARDEN_EMOJIS.includes(encEntry?.icon || '') ? (
+                          {isEmoji(encEntry?.icon || '') ? (
                             <span className="text-lg">{encEntry?.icon}</span>
                           ) : (
                             <Icon className="w-4 h-4 text-white drop-shadow-sm" />
