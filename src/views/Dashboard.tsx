@@ -161,23 +161,6 @@ export function Dashboard({ setCurrentView }: { setCurrentView: (v: string) => v
     return { totalByVeg, recentHarvests };
   }, [yearSeedlings, selectedYear]);
 
-  if (error) {
-    return (
-      <div className="p-8 text-center bg-red-50 rounded-xl border border-red-200">
-        <p className="text-red-700 font-medium">{error}</p>
-        <p className="text-red-600 text-sm mt-2">Essayez de rafraîchir la page ou contactez le support si le problème persiste.</p>
-        <button 
-          onClick={() => window.location.reload()}
-          className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition-colors"
-        >
-          Rafraîchir
-        </button>
-      </div>
-    );
-  }
-
-  if (!rawSeedlings && !error) return <div className="p-8 text-center text-stone-500 italic">Chargement des données...</div>;
-
   const archived = yearSeedlings.filter(s => s.isArchived);
   const successes = archived.filter(s => s.success === true);
 
@@ -368,6 +351,23 @@ export function Dashboard({ setCurrentView }: { setCurrentView: (v: string) => v
       setCurrentView('seedlings');
     }
   };
+
+  if (error) {
+    return (
+      <div className="p-8 text-center bg-red-50 rounded-xl border border-red-200">
+        <p className="text-red-700 font-medium">{error}</p>
+        <p className="text-red-600 text-sm mt-2">Essayez de rafraîchir la page ou contactez le support si le problème persiste.</p>
+        <button 
+          onClick={() => window.location.reload()}
+          className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition-colors"
+        >
+          Rafraîchir
+        </button>
+      </div>
+    );
+  }
+
+  if (!rawSeedlings && !error) return <div className="p-8 text-center text-stone-500 italic">Chargement des données...</div>;
 
   return (
     <div className="space-y-3" id="dashboard-print-area">

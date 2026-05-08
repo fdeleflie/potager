@@ -15,6 +15,7 @@ import { ConfirmModal } from '../components/Modals';
 import { ICON_MAP, ICON_LIST, GARDEN_EMOJIS, isEmoji, GARDEN_EMOJI_CATEGORIES } from '../constants';
 import { printElement } from '../utils/print';
 import { getDistinctColor } from '../utils/colors';
+import { compressImage } from '../utils/image';
 
 
 
@@ -228,16 +229,16 @@ export function Orchard() {
     return terrainBounds;
   };
 
-  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const base64String = reader.result as string;
-        setPhotoPreview(base64String);
-        setNewTree({ ...newTree, photo: base64String });
-      };
-      reader.readAsDataURL(file);
+      try {
+        const compressedBase64 = await compressImage(file, 800, 800, 0.7);
+        setPhotoPreview(compressedBase64);
+        setNewTree({ ...newTree, photo: compressedBase64 });
+      } catch (error) {
+        console.error("Failed to compress image:", error);
+      }
     }
   };
 
@@ -724,14 +725,15 @@ export function Orchard() {
     });
   };
 
-  const handleNotePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleNotePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setNewNotePhotos(prev => [...prev, reader.result as string]);
-      };
-      reader.readAsDataURL(file);
+      try {
+        const compressedBase64 = await compressImage(file, 800, 800, 0.7);
+        setNewNotePhotos(prev => [...prev, compressedBase64]);
+      } catch (error) {
+        console.error("Failed to compress image:", error);
+      }
     }
   };
 
@@ -1061,13 +1063,13 @@ export function Orchard() {
                     onChange={async (e) => {
                       const file = e.target.files?.[0];
                       if (file && selectedTerrainId) {
-                        const reader = new FileReader();
-                        reader.onloadend = async () => {
-                          const base64 = reader.result as string;
+                        try {
+                          const base64 = await compressImage(file, 2048, 2048, 0.7);
                           const updatedAttributes = { ...selectedTerrain.attributes, backgroundImage: base64 };
                           await fb.update("config", selectedTerrainId, { attributes: updatedAttributes });
-                        };
-                        reader.readAsDataURL(file);
+                        } catch (error) {
+                          console.error("Failed to compress background:", error);
+                        }
                       }
                     }}
                   />
@@ -2147,14 +2149,15 @@ export function Orchard() {
                                     type="file" 
                                     accept="image/*" 
                                     className="sr-only" 
-                                    onChange={e => {
+                                    onChange={async (e) => {
                                       const file = e.target.files?.[0];
                                       if (file) {
-                                        const reader = new FileReader();
-                                        reader.onloadend = () => {
-                                          setEditTreeData({ ...editTreeData, photo: reader.result as string });
-                                        };
-                                        reader.readAsDataURL(file);
+                                        try {
+                                          const compressedBase64 = await compressImage(file, 800, 800, 0.7);
+                                          setEditTreeData({ ...editTreeData, photo: compressedBase64 });
+                                        } catch (error) {
+                                          console.error("Failed to compress image:", error);
+                                        }
                                       }
                                     }} 
                                   />

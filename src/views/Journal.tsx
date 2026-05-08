@@ -5,6 +5,7 @@ import { useFirebaseData, fb } from '../hooks/useFirebaseData';
 import { v4 as uuidv4 } from 'uuid';
 import { BookOpen, Plus, Save, Trash2, Search, Filter, Edit, X, Camera } from 'lucide-react';
 import { ConfirmModal } from '../components/Modals';
+import { compressImage } from '../utils/image';
 
 export interface CombinedEntry {
   id: string;
@@ -97,18 +98,19 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
     return Array.from(uniqueMap.values()).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [rawJournalEntries, rawSeedlings, rawTrees]);
 
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>, isEdit: boolean = false) => {
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>, isEdit: boolean = false) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
+      try {
+        const compressedBase64 = await compressImage(file, 800, 800, 0.7);
         if (isEdit) {
-          setEditPhotos(prev => [...prev, reader.result as string]);
+          setEditPhotos(prev => [...prev, compressedBase64]);
         } else {
-          setPhotos(prev => [...prev, reader.result as string]);
+          setPhotos(prev => [...prev, compressedBase64]);
         }
-      };
-      reader.readAsDataURL(file);
+      } catch (error) {
+        console.error("Failed to compress image:", error);
+      }
     }
   };
 

@@ -4,6 +4,7 @@ import { db, Seedling } from '../db';
 import { v4 as uuidv4 } from 'uuid';
 import { ArrowLeft, Camera, Save, CheckCircle } from 'lucide-react';
 import { stringToColor, getDistinctColor } from '../utils/colors';
+import { compressImage } from '../utils/image';
 import { PLANT_CATALOG } from '../catalog';
 
 export function SeedlingForm({ setCurrentView, seedlingId, onBack }: { setCurrentView: (v: string) => void, seedlingId?: string, onBack?: () => void }) {
@@ -137,14 +138,15 @@ export function SeedlingForm({ setCurrentView, seedlingId, onBack }: { setCurren
     }
   };
 
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setPhoto(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+      try {
+        const compressedBase64 = await compressImage(file, 800, 800, 0.7);
+        setPhoto(compressedBase64);
+      } catch (error) {
+        console.error("Failed to compress image:", error);
+      }
     }
   };
 

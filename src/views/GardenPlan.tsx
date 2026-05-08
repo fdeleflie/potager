@@ -315,31 +315,6 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
     };
   }, [selectedZone]);
 
-  if (error) {
-    return (
-      <div className="p-8 text-center bg-red-50 rounded-xl border border-red-200">
-        <p className="text-red-700 font-medium">{error}</p>
-        <button 
-          onClick={() => window.location.reload()}
-          className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700"
-        >
-          Rafraîchir
-        </button>
-      </div>
-    );
-  }
-
-  if (!zones || !seedlings || !rawConfig) return <div className="p-8 text-center text-stone-500 italic">Chargement...</div>;
-
-  if (zones.length === 0) {
-    return (
-      <div className="text-center py-12 bg-white rounded-2xl border border-stone-200 border-dashed">
-        <MapIcon className="w-12 h-12 text-stone-300 mx-auto mb-4" />
-        <h3 className="text-lg font-medium text-stone-900">Aucune zone définie</h3>
-        <p className="text-stone-500 mt-1">Allez dans la configuration pour créer vos serres et espaces extérieurs.</p>
-      </div>
-    );
-  }
   
   const vegetablesInPlan = Array.from(new Set((seedlings || []).map(s => s.vegetable || ''))).filter(Boolean).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
   const legendColors = (vegetablesInPlan || []).reduce((acc, veg) => {
@@ -908,6 +883,32 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
     
     return Array.from(grouped.entries()).sort((a,b) => a[0].localeCompare(b[0]));
   }, [seedlings]);
+
+  if (error) {
+    return (
+      <div className="p-8 text-center bg-red-50 rounded-xl border border-red-200">
+        <p className="text-red-700 font-medium">{error}</p>
+        <button 
+          onClick={() => window.location.reload()}
+          className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700"
+        >
+          Rafraîchir
+        </button>
+      </div>
+    );
+  }
+
+  if (!zones || !seedlings || !rawConfig) return <div className="p-8 text-center text-stone-500 italic">Chargement...</div>;
+
+  if (zones.length === 0) {
+    return (
+      <div className="text-center py-12 bg-white rounded-2xl border border-stone-200 border-dashed">
+        <MapIcon className="w-12 h-12 text-stone-300 mx-auto mb-4" />
+        <h3 className="text-lg font-medium text-stone-900">Aucune zone définie</h3>
+        <p className="text-stone-500 mt-1">Allez dans la configuration pour créer vos serres et espaces extérieurs.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

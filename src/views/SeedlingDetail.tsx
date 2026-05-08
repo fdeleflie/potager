@@ -5,7 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { ArrowLeft, Edit, Archive, Trash2, Plus, Camera, CheckCircle2, XCircle, Printer, Split, ShoppingBag, BookOpen } from 'lucide-react';
 import { ConfirmModal, PromptModal, SellModal, HarvestModal } from '../components/Modals';
 import { getSeedlingDisplayPhoto } from '../utils/seedling';
-
+import { compressImage } from '../utils/image';
 import { printElement } from '../utils/print';
 
 export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurrentView: (v: string) => void, seedlingId: string, onBack?: () => void }) {
@@ -124,14 +124,15 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
     });
   };
 
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setNewNotePhotos(prev => [...prev, reader.result as string]);
-      };
-      reader.readAsDataURL(file);
+      try {
+        const compressedBase64 = await compressImage(file, 800, 800, 0.7);
+        setNewNotePhotos(prev => [...prev, compressedBase64]);
+      } catch (error) {
+        console.error("Failed to compress image:", error);
+      }
     }
   };
 

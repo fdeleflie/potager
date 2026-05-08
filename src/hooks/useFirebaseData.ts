@@ -50,11 +50,41 @@ export function useFirebaseData<T>(collectionName: string) {
       activeListeners.set(key, () => {}); 
       const q = query(collection(dbFirebase, `users/${uid}/${collectionName}`));
       const unsubscribe = onSnapshot(q, (snapshot) => {
-        const items = snapshot.docs.map(docSnapshot => ({
-          ...docSnapshot.data(),
-          id: docSnapshot.id
-        }));
-        globalCache.set(key, { data: items, error: null });
+        let currentData = globalCache.get(key)?.data || [];
+        
+        // S'il y a très peu de changements, on optimise en ne remplaçant que les éléments modifiés
+        // Cela maintient l'indépendance de référence (shallow equality) pour les éléments identiques
+        let needsUpdate = false;
+        
+        // Lors du tout premier chargement, snapshot.docChanges() contient tous les ajouts.
+        if (currentData.length === 0 || snapshot.docChanges().length > snapshot.docs.length / 2) {
+            // Chargement initial ou rechargement complet : on initialise tout
+            const items = snapshot.docs.map(docSnapshot => ({
+              ...docSnapshot.data(),
+              id: docSnapshot.id
+            }));
+            globalCache.set(key, { data: items, error: null });
+        } else {
+            // Modification incrémentale : on mute localement la copie du tableau
+            const newData = [...currentData];
+            snapshot.docChanges().forEach((change) => {
+              const docData = { ...change.doc.data(), id: change.doc.id };
+              if (change.type === 'added') {
+                newData.push(docData);
+              }
+              if (change.type === 'modified') {
+                const index = newData.findIndex(item => item.id === change.doc.id);
+                if (index !== -1) newData[index] = docData;
+              }
+              if (change.type === 'removed') {
+                const index = newData.findIndex(item => item.id === change.doc.id);
+                if (index !== -1) newData.splice(index, 1);
+              }
+            });
+            globalCache.set(key, { data: newData, error: null });
+        }
+        
+        // On notifie les composants
         updateCallbacks.get(key)?.forEach(cb => cb());
       }, (err: any) => {
         let errorMsg = err.message || 'Une erreur est survenue lors de la récupération des données.';
