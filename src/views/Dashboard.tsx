@@ -235,18 +235,28 @@ export function Dashboard({ setCurrentView }: { setCurrentView: (v: string) => v
   const legendColors = useMemo(() => {
     return (vegetablesInPlan || []).reduce((acc, veg) => {
       const encEntry = rawEncyclopedia?.find((e: any) => (e.name || '').toLowerCase().trim() === (veg || '').toLowerCase().trim());
-      acc[veg] = encEntry?.color || stringToColor(veg);
+      const configEntry = rawConfig?.find((c: any) => c.type === 'vegetable' && (c.value || '').toLowerCase().trim() === (veg || '').toLowerCase().trim());
+      acc[veg] = encEntry?.color || configEntry?.attributes?.color || configEntry?.color || stringToColor(veg);
       return acc;
     }, {} as Record<string, string>);
-  }, [vegetablesInPlan, rawEncyclopedia]);
+  }, [vegetablesInPlan, rawEncyclopedia, rawConfig]);
+
+  const legendIconNames = useMemo(() => {
+    return (vegetablesInPlan || []).reduce((acc, veg) => {
+      const encEntry = rawEncyclopedia?.find((e: any) => (e.name || '').toLowerCase().trim() === (veg || '').toLowerCase().trim());
+      const configEntry = rawConfig?.find((c: any) => c.type === 'vegetable' && (c.value || '').toLowerCase().trim() === (veg || '').toLowerCase().trim());
+      acc[veg] = encEntry?.icon || configEntry?.attributes?.icon || configEntry?.icon || '';
+      return acc;
+    }, {} as Record<string, string>);
+  }, [vegetablesInPlan, rawEncyclopedia, rawConfig]);
 
   const legendIcons = useMemo(() => {
     return (vegetablesInPlan || []).reduce((acc, veg) => {
-      const encEntry = rawEncyclopedia?.find((e: any) => (e.name || '').toLowerCase().trim() === (veg || '').toLowerCase().trim());
-      acc[veg] = ICON_MAP[encEntry?.icon || ''] || Sprout;
+      const iconName = legendIconNames[veg];
+      acc[veg] = ICON_MAP[iconName] || Sprout;
       return acc;
     }, {} as Record<string, any>);
-  }, [vegetablesInPlan, rawEncyclopedia]);
+  }, [vegetablesInPlan, legendIconNames]);
 
   const globalRecapByVeg = useMemo(() => {
     const grouped = new Map<string, { total: number; varieties: { variety: string; count: number }[] }>();
@@ -909,8 +919,7 @@ export function Dashboard({ setCurrentView }: { setCurrentView: (v: string) => v
                 {globalRecapByVeg.map(([veg, data]) => {
                   const color = legendColors[veg] || '#10b981';
                   const Icon = legendIcons[veg] || Sprout;
-                  const encEntry = rawEncyclopedia?.find((e: any) => (e.name || '').toLowerCase().trim() === (veg || '').toLowerCase().trim());
-                  const iconSvg = encEntry?.icon;
+                  const iconSvg = legendIconNames[veg];
 
                   return (
                     <div key={veg} className="flex flex-col gap-2 bg-stone-50 p-4 rounded-xl border border-stone-100 shadow-sm hover:shadow-md transition-all break-inside-avoid print:border-stone-200 print:shadow-none">
@@ -954,8 +963,7 @@ export function Dashboard({ setCurrentView }: { setCurrentView: (v: string) => v
                       const result = [];
                       const color = legendColors[veg] || '#10b981';
                       const Icon = legendIcons[veg] || Sprout;
-                      const encEntry = rawEncyclopedia?.find((e: any) => (e.name || '').toLowerCase().trim() === (veg || '').toLowerCase().trim());
-                      const iconSvg = encEntry?.icon;
+                      const iconSvg = legendIconNames[veg];
 
                       result.push(
                         <tr key={`${veg}-total`} className="bg-stone-50/50 font-medium">

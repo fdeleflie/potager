@@ -1009,8 +1009,10 @@ export function SeedlingsList({ setCurrentView, initialFilter = 'active' }: { se
                   <div className="flex gap-2 items-start">
                     {(() => {
                       const encEntry = encyclopedia?.find(e => e.name.toLowerCase().trim() === s.vegetable.toLowerCase().trim());
-                      const color = encEntry?.color || '#10b981';
-                      const Icon = ICON_MAP[encEntry?.icon || ''] || ICON_MAP['Trees'];
+                      const configEntry = config?.find(c => c.type === 'vegetable' && (c.value || '').toLowerCase().trim() === s.vegetable.toLowerCase().trim());
+                      const color = encEntry?.color || configEntry?.attributes?.color || configEntry?.color || '#10b981';
+                      const iconVal = encEntry?.icon || configEntry?.attributes?.icon || configEntry?.icon || '';
+                      const Icon = ICON_MAP[iconVal] || ICON_MAP['Trees'];
                       return (
                         <div 
                           className="w-8 h-8 rounded-full flex items-center justify-center shadow-inner shrink-0 mt-0.5" 
@@ -1019,8 +1021,8 @@ export function SeedlingsList({ setCurrentView, initialFilter = 'active' }: { se
                             boxShadow: `0 2px 4px ${color}40`
                           }}
                         >
-                          {isEmoji(encEntry?.icon || '') ? (
-                            <span className="text-lg">{encEntry?.icon}</span>
+                          {isEmoji(iconVal) ? (
+                            <span className="text-lg">{iconVal}</span>
                           ) : (
                             <Icon className="w-4 h-4 text-white drop-shadow-sm" />
                           )}

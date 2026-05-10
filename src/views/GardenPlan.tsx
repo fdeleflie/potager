@@ -319,13 +319,21 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
   const vegetablesInPlan = Array.from(new Set((seedlings || []).map(s => s.vegetable || ''))).filter(Boolean).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
   const legendColors = (vegetablesInPlan || []).reduce((acc, veg) => {
     const encEntry = encyclopedia?.find(e => (e.name || '').toLowerCase().trim() === (veg || '').toLowerCase().trim());
-    acc[veg] = encEntry?.color || stringToColor(veg);
+    const configEntry = rawConfig?.find(c => c.type === 'vegetable' && (c.value || '').toLowerCase().trim() === (veg || '').toLowerCase().trim());
+    acc[veg] = encEntry?.color || configEntry?.attributes?.color || configEntry?.color || stringToColor(veg);
+    return acc;
+  }, {} as Record<string, string>);
+
+  const legendIconNames = (vegetablesInPlan || []).reduce((acc, veg) => {
+    const encEntry = encyclopedia?.find(e => (e.name || '').toLowerCase().trim() === (veg || '').toLowerCase().trim());
+    const configEntry = rawConfig?.find(c => c.type === 'vegetable' && (c.value || '').toLowerCase().trim() === (veg || '').toLowerCase().trim());
+    acc[veg] = encEntry?.icon || configEntry?.attributes?.icon || configEntry?.icon || '';
     return acc;
   }, {} as Record<string, string>);
 
   const legendIcons = (vegetablesInPlan || []).reduce((acc, veg) => {
-    const encEntry = encyclopedia?.find(e => (e.name || '').toLowerCase().trim() === (veg || '').toLowerCase().trim());
-    acc[veg] = ICON_MAP[encEntry?.icon || ''] || Sprout;
+    const iconName = legendIconNames[veg];
+    acc[veg] = ICON_MAP[iconName] || Sprout;
     return acc;
   }, {} as Record<string, any>);
 
@@ -1111,7 +1119,11 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
               {vegetablesInCurrentZone.map(veg => (
                 <div key={veg} className="flex items-center gap-2 text-sm px-3 py-1.5 bg-stone-50 rounded-full border border-stone-100">
                   <div className="w-4 h-4 rounded-full flex items-center justify-center" style={{ backgroundColor: legendColors[veg] }}>
-                    {React.createElement(legendIcons[veg], { className: "w-2.5 h-2.5 text-white" })}
+                    {isEmoji(legendIconNames[veg]) ? (
+                      <span className="text-[10px]">{legendIconNames[veg]}</span>
+                    ) : (
+                      React.createElement(legendIcons[veg], { className: "w-2.5 h-2.5 text-white" })
+                    )}
                   </div>
                   <span className="text-stone-700">{veg}</span>
                 </div>
@@ -1327,8 +1339,8 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                           boxShadow: `0 1px 3px rgba(0,0,0,0.2)`
                         }}
                       >
-                        {isEmoji(vegConfig?.attributes?.icon) ? (
-                          <span className="text-sm">{vegConfig.attributes.icon}</span>
+                        {isEmoji(legendIconNames[seedling.vegetable]) ? (
+                          <span className="text-sm">{legendIconNames[seedling.vegetable]}</span>
                         ) : (
                           <Icon className="w-3.5 h-3.5 text-white drop-shadow-sm" />
                         )}
@@ -1470,7 +1482,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                       const seedling = seedlings?.find(s => s.id === draggingPlant.seedlingId);
                       const vegConfig = config?.find(c => c.type === 'vegetable' && c.value === seedling?.vegetable);
                       const color = legendColors[seedling?.vegetable || ''];
-                      const icon = vegConfig?.attributes?.icon;
+                      const icon = legendIconNames[seedling?.vegetable || ''];
                       
                       const compStatus = getCompanionshipStatus(seedling, { x: mousePos.x / zoom, y: mousePos.y / zoom });
                       let ringClass = '';
@@ -1517,7 +1529,7 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                     const seedling = seedlings?.find(s => s.id === selectedSeedlingId);
                     const vegConfig = config?.find(c => c.type === 'vegetable' && c.value === seedling?.vegetable);
                     const color = legendColors[seedling?.vegetable || ''];
-                    const icon = vegConfig?.attributes?.icon;
+                    const icon = legendIconNames[seedling?.vegetable || ''];
 
                     const compStatus = getCompanionshipStatus(seedling, { x: mousePos.x / zoom, y: mousePos.y / zoom });
                     let ringClass = '';
@@ -1704,8 +1716,8 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                         boxShadow: `0 2px 4px ${color}40`
                       }}
                     >
-                      {isEmoji(vegConfig?.attributes?.icon) ? (
-                        <span className="text-xl">{vegConfig.attributes.icon}</span>
+                      {isEmoji(legendIconNames[veg]) ? (
+                        <span className="text-xl">{legendIconNames[veg]}</span>
                       ) : (
                         <Icon className="w-5 h-5 text-white drop-shadow-sm" />
                       )}
@@ -1962,8 +1974,8 @@ export function GardenPlan({ setCurrentView }: { setCurrentView?: (view: string)
                   <div className="flex items-center justify-between border-b border-stone-200/60 pb-2">
                     <div className="flex items-center gap-2">
                       <div className="w-8 h-8 rounded-full flex items-center justify-center shadow-inner shrink-0" style={{ background: `radial-gradient(circle at 30% 30%, ${color}, ${color}dd)` }}>
-                         {isEmoji(vegConfig?.attributes?.icon) ? (
-                            <span className="text-sm">{vegConfig?.attributes?.icon}</span>
+                         {isEmoji(legendIconNames[veg]) ? (
+                            <span className="text-sm">{legendIconNames[veg]}</span>
                           ) : (
                             <Icon className="w-4 h-4 text-white drop-shadow-sm" />
                           )}
