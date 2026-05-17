@@ -101,7 +101,7 @@ export default function App() {
         await db.config.delete(existingZone.id);
       }
     };
-    setupTerrain();
+    // setupTerrain(); // Disabled to save Firebase quota
 
     // Migration for states and origin
     const migrateStates = async () => {
@@ -152,7 +152,7 @@ export default function App() {
         await db.config.update(defaultState.id, { value: 'Démarrage' });
       }
     };
-    migrateStates();
+    // migrateStates(); // Disabled to save Firebase quota
 
     // Function to deduplicate entries
     const deduplicate = async () => {
