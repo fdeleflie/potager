@@ -1,8 +1,8 @@
-import { useFirebaseData, fb } from '../hooks/useFirebaseData';
-import React, { useState } from 'react';
+import { useFirebaseData, fb, getFirebaseWriteCount } from '../hooks/useFirebaseData';
+import React, { useState, useEffect } from 'react';
 import { db, ConfigItem } from '../db';
 import { v4 as uuidv4 } from 'uuid';
-import { Settings, Plus, Trash2, Edit2, Palette, XCircle, CheckCircle2, Trees, BookOpen, Info } from 'lucide-react';
+import { Settings, Plus, Trash2, Edit2, Palette, XCircle, CheckCircle2, Trees, BookOpen, Info, Activity } from 'lucide-react';
 import { ConfirmModal } from '../components/Modals';
 import { ICON_LIST, ICON_MAP, GARDEN_EMOJIS, GARDEN_EMOJI_CATEGORIES } from '../constants';
 import { getDistinctColor } from '../utils/colors';
@@ -16,6 +16,16 @@ export function Config({ onNavigate }: { onNavigate?: (view: any) => void }) {
   const [newParentId, setNewParentId] = useState('');
   const [activeTab, setActiveTab] = useState<'state' | 'location' | 'zone' | 'terrain' | 'variety_option' | 'variety_attr_type' | 'weather' | 'expense_category' | 'category'>('state');
   const [selectedAttrType, setSelectedAttrType] = useState<string>('');
+
+  const [writeCount, setWriteCount] = useState(getFirebaseWriteCount());
+
+  useEffect(() => {
+    const handleUpdate = () => {
+      setWriteCount(getFirebaseWriteCount());
+    };
+    window.addEventListener('firebase_writes_updated', handleUpdate);
+    return () => window.removeEventListener('firebase_writes_updated', handleUpdate);
+  }, []);
 
   const [editingZoneId, setEditingZoneId] = useState<string | null>(null);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -233,10 +243,19 @@ export function Config({ onNavigate }: { onNavigate?: (view: any) => void }) {
       <header>
         <div className="flex justify-between items-start">
           <div>
-            <h1 className="text-xl font-serif font-medium text-stone-900 flex items-center gap-1.5">
-              <Settings className="w-5 h-5 text-emerald-600" />
-              Configuration
-            </h1>
+            <div className="flex items-center gap-3">
+              <h1 className="text-xl font-serif font-medium text-stone-900 flex items-center gap-1.5">
+                <Settings className="w-5 h-5 text-emerald-600" />
+                Configuration
+              </h1>
+              <div 
+                className="flex items-center gap-1 px-2 py-1 bg-blue-50 border border-blue-100 text-blue-700 rounded-lg text-xs font-medium cursor-help"
+                title="Nombre d'enregistrements en base de données aujourd'hui (utile pour suivre les quotas)"
+              >
+                <Activity className="w-3.5 h-3.5" />
+                <span className="tabular-nums">{writeCount}</span>
+              </div>
+            </div>
             <p className="text-xs text-stone-500 mt-0.5">Gérez les listes déroulantes de l'application.</p>
           </div>
           {onNavigate && (

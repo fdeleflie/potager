@@ -15,6 +15,38 @@ auth.onAuthStateChanged((user) => {
   }
 });
 
+export const getFirebaseWriteCount = () => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const statsStr = localStorage.getItem('firebase_writes_stats');
+    if (statsStr) {
+      const stats = JSON.parse(statsStr);
+      return stats[today] || 0;
+    }
+  } catch(e) {
+    console.error('Failed to get firebase write count', e);
+  }
+  return 0;
+};
+
+const trackFirebaseWrite = () => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const statsStr = localStorage.getItem('firebase_writes_stats');
+    let stats: Record<string, number> = {};
+    if (statsStr) {
+      stats = JSON.parse(statsStr);
+    }
+    stats[today] = (stats[today] || 0) + 1;
+    localStorage.setItem('firebase_writes_stats', JSON.stringify(stats));
+    
+    // Dispatch an event so the configuration tab can react to it in real-time
+    window.dispatchEvent(new Event('firebase_writes_updated'));
+  } catch(e) {
+    console.error('Failed to track firebase write', e);
+  }
+};
+
 export function useFirebaseData<T>(collectionName: string) {
   const uid = auth.currentUser?.uid;
   const key = uid ? `${uid}_${collectionName}` : null;
@@ -129,6 +161,7 @@ export const fb = {
       }
     }
     await setDoc(docRef, cleanedData);
+    trackFirebaseWrite();
     return id;
   },
   put: async <T extends { id: string }>(collectionName: string, data: T) => {
@@ -142,6 +175,7 @@ export const fb = {
       }
     }
     await setDoc(docRef, cleanedData);
+    trackFirebaseWrite();
     return data.id;
   },
   update: async (collectionName: string, id: string, data: any) => {
@@ -158,11 +192,13 @@ export const fb = {
       }
     }
     await updateDoc(docRef, updateData);
+    trackFirebaseWrite();
   },
   delete: async (collectionName: string, id: string) => {
     if (!auth.currentUser) throw new Error("No user logged in");
     const docRef = doc(dbFirebase, `users/${auth.currentUser.uid}/${collectionName}`, id);
     await deleteDoc(docRef);
+    trackFirebaseWrite();
   },
   get: async <T>(collectionName: string, id: string): Promise<T | undefined> => {
     if (!auth.currentUser) throw new Error("No user logged in");
