@@ -4,7 +4,7 @@ import { db, Seedling } from '../db';
 import { v4 as uuidv4 } from 'uuid';
 import { Search, Filter, Plus, Sprout, LayoutGrid, List, Printer, Edit, Trash2, Archive, CheckCircle2, Download, ChevronDown, ChevronUp, X, RefreshCw } from 'lucide-react';
 import { ConfirmModal } from '../components/Modals';
-import { getSeedlingDisplayPhoto } from '../utils/seedling';
+import { getSeedlingDisplayPhoto } from '../utils/image';
 import { ICON_MAP, GARDEN_EMOJIS, isEmoji } from '../constants';
 
 import { printElement } from '../utils/print';

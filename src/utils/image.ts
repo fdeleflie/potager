@@ -1,3 +1,17 @@
+import { Seedling } from '../db';
+
+export const getSeedlingDisplayPhoto = (seedling: Seedling): string | undefined => {
+  if (seedling.notes && seedling.notes.length > 0) {
+    const sortedNotes = [...seedling.notes].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    for (const note of sortedNotes) {
+      if (note.photos && note.photos.length > 0) {
+        return note.photos[note.photos.length - 1];
+      }
+    }
+  }
+  return seedling.photo;
+};
+
 export const compressImage = (file: File, maxWidth = 800, maxHeight = 800, quality = 0.7): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();

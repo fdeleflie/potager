@@ -4,8 +4,7 @@ import { db, Note, Seedling, HarvestEvent } from '../db';
 import { v4 as uuidv4 } from 'uuid';
 import { ArrowLeft, Edit, Archive, Trash2, Plus, Camera, CheckCircle2, XCircle, Printer, Split, ShoppingBag, BookOpen } from 'lucide-react';
 import { ConfirmModal, PromptModal, SellModal, HarvestModal } from '../components/Modals';
-import { getSeedlingDisplayPhoto } from '../utils/seedling';
-import { compressImage } from '../utils/image';
+import { getSeedlingDisplayPhoto, compressImage } from '../utils/image';
 import { printElement } from '../utils/print';
 import { shouldPublishNoteToJournal, isSystemLogNote } from '../utils/notes';
 
