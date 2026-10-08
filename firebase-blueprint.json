@@ -1,0 +1,310 @@
+{
+  "entities": {
+    "Note": {
+      "title": "Note",
+      "description": "A note with optional photos",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "text": { "type": "string" },
+        "photos": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["id", "date", "text"]
+    },
+    "HarvestEvent": {
+      "title": "HarvestEvent",
+      "description": "A harvest event",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "quantity": { "type": "number" },
+        "unit": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["id", "date", "quantity", "unit"]
+    },
+    "Position": {
+      "title": "Position",
+      "description": "X/Y coordinates",
+      "type": "object",
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" }
+      },
+      "required": ["x", "y"]
+    },
+    "Seedling": {
+      "title": "Seedling",
+      "description": "Represents a planted seedling",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "vegetable": { "type": "string" },
+        "variety": { "type": "string" },
+        "origin": { "type": "string" },
+        "dateSown": { "type": "string" },
+        "action": { "type": "string" },
+        "dateTransplanted": { "type": "string" },
+        "datePlanted": { "type": "string" },
+        "state": { "type": "string" },
+        "location": { "type": "string" },
+        "comments": { "type": "string" },
+        "photo": { "type": "string" },
+        "isArchived": { "type": "boolean" },
+        "isDeleted": { "type": "boolean" },
+        "notes": { "type": "array", "items": { "$ref": "#/entities/Note" } },
+        "harvests": { "type": "array", "items": { "$ref": "#/entities/HarvestEvent" } },
+        "success": { "type": "boolean" },
+        "failureReason": { "type": "string" },
+        "quantity": { "type": "number" },
+        "quantityTransplanted": { "type": "number" },
+        "quantityPlanted": { "type": "number" },
+        "quantityLostSown": { "type": "number" },
+        "quantityLostTransplanted": { "type": "number" },
+        "zoneId": { "type": "string" },
+        "positions": { "type": "array", "items": { "$ref": "#/entities/Position" } },
+        "salePrice": { "type": "number" },
+        "saleComment": { "type": "string" }
+      },
+      "required": ["id", "userId", "vegetable", "variety", "dateSown", "state", "location", "comments", "isArchived", "isDeleted"]
+    },
+    "JournalEntry": {
+      "title": "JournalEntry",
+      "description": "A journal log entry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "date": { "type": "string" },
+        "content": { "type": "string" },
+        "photos": { "type": "array", "items": { "type": "string" } },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "weatherCondition": { "type": "string" },
+        "temperature": { "type": "number" },
+        "temperatureMin": { "type": "number" },
+        "temperatureMax": { "type": "number" },
+        "rainfall": { "type": "number" },
+        "isDeleted": { "type": "boolean" }
+      },
+      "required": ["id", "userId", "date", "content", "isDeleted"]
+    },
+    "ConfigItem": {
+      "title": "ConfigItem",
+      "description": "Configuration item for the user",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "type": { "type": "string" },
+        "value": { "type": "string" },
+        "parentId": { "type": "string" },
+        "attributes": { "type": "object" }
+      },
+      "required": ["id", "userId", "type", "value"]
+    },
+    "Tree": {
+      "title": "Tree",
+      "description": "Perennial tree for the orchard",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "terrainId": { "type": "string" },
+        "species": { "type": "string" },
+        "variety": { "type": "string" },
+        "datePlanted": { "type": "string" },
+        "comments": { "type": "string" },
+        "photo": { "type": "string" },
+        "positionX": { "type": "number" },
+        "positionY": { "type": "number" },
+        "spacing": { "type": "number" },
+        "isLocked": { "type": "boolean" },
+        "isDeleted": { "type": "boolean" },
+        "notes": { "type": "array", "items": { "$ref": "#/entities/Note" } }
+      },
+      "required": ["id", "userId", "terrainId", "species", "variety", "datePlanted", "comments", "positionX", "positionY", "isDeleted"]
+    },
+    "Structure": {
+      "title": "Structure",
+      "description": "A structural item like a greenhouse",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "terrainId": { "type": "string" },
+        "zoneId": { "type": "string" },
+        "name": { "type": "string" },
+        "type": { "type": "string" },
+        "positions": { "type": "array", "items": { "$ref": "#/entities/Position" } },
+        "width": { "type": "number" },
+        "height": { "type": "number" },
+        "color": { "type": "string" },
+        "icon": { "type": "string" }
+      },
+      "required": ["id", "userId", "name", "type", "positions"]
+    },
+    "Task": {
+      "title": "Task",
+      "description": "A user-defined or automatic task",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "dateCreated": { "type": "string" },
+        "dateDue": { "type": "string" },
+        "dateCompleted": { "type": "string" },
+        "isCompleted": { "type": "boolean" },
+        "priority": { "type": "string" },
+        "type": { "type": "string" },
+        "seedlingId": { "type": "string" },
+        "isDeleted": { "type": "boolean" }
+      },
+      "required": ["id", "userId", "title", "dateCreated", "isCompleted", "priority", "type", "isDeleted"]
+    },
+    "EncyclopediaEntry": {
+      "title": "EncyclopediaEntry",
+      "description": "An encyclopedia entry for a plant",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "sowingPeriod": { "type": "string" },
+        "plantingPeriod": { "type": "string" },
+        "harvestPeriod": { "type": "string" },
+        "exposure": { "type": "string" },
+        "waterNeeds": { "type": "string" },
+        "spacing": { "type": "string" },
+        "goodCompanions": { "type": "array", "items": { "type": "string" } },
+        "badCompanions": { "type": "array", "items": { "type": "string" } },
+        "tips": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "pricePerKg": { "type": "number" },
+        "color": { "type": "string" },
+        "icon": { "type": "string" }
+      },
+      "required": ["id", "userId", "name", "category", "sowingPeriod", "plantingPeriod", "harvestPeriod", "exposure", "waterNeeds", "spacing", "updatedAt"]
+    },
+    "HealthIssue": {
+      "title": "HealthIssue",
+      "description": "A health issue description",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "type": { "type": "string" },
+        "symptoms": { "type": "string" },
+        "solutions": { "type": "array", "items": { "type": "string" } },
+        "prevention": { "type": "string" },
+        "affectedPlants": { "type": "array", "items": { "type": "string" } },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "name", "type", "symptoms", "prevention", "updatedAt"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "An expense item",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "date": { "type": "string" },
+        "category": { "type": "string" },
+        "amount": { "type": "number" },
+        "description": { "type": "string" }
+      },
+      "required": ["id", "userId", "date", "category", "amount", "description"]
+    },
+    "Season": {
+      "title": "Season",
+      "description": "A season for the application",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "startDate": { "type": "string" },
+        "endDate": { "type": "string" }
+      },
+      "required": ["id", "userId", "name", "startDate"]
+    },
+    "PerpetualTask": {
+      "title": "PerpetualTask",
+      "description": "A perpetual recurring garden gesture or task",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "plant": { "type": "string" },
+        "category": { "type": "string" },
+        "month": { "type": "number" },
+        "period": { "type": "string" },
+        "description": { "type": "string" },
+        "photos": { "type": "array", "items": { "type": "string" } },
+        "sourceNoteDate": { "type": "string" },
+        "sourceNoteId": { "type": "string" },
+        "isDeleted": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "title", "category", "month", "period", "isDeleted", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/perpetualTasks/{taskId}": {
+      "schema": { "$ref": "#/entities/PerpetualTask" },
+      "description": "A user's perpetual recurring tasks and gestures"
+    },
+    "/users/{userId}/seasons/{seasonId}": {
+      "schema": { "$ref": "#/entities/Season" },
+      "description": "A user's seasons"
+    },
+    "/users/{userId}/seedlings/{seedlingId}": {
+      "schema": { "$ref": "#/entities/Seedling" },
+      "description": "A user's seedlings"
+    },
+    "/users/{userId}/journal/{journalId}": {
+      "schema": { "$ref": "#/entities/JournalEntry" },
+      "description": "A user's journal entries"
+    },
+    "/users/{userId}/config/{configId}": {
+      "schema": { "$ref": "#/entities/ConfigItem" },
+      "description": "A user's configuration item"
+    },
+    "/users/{userId}/trees/{treeId}": {
+      "schema": { "$ref": "#/entities/Tree" },
+      "description": "A user's orchard trees"
+    },
+    "/users/{userId}/structures/{structureId}": {
+      "schema": { "$ref": "#/entities/Structure" },
+      "description": "A user's structures"
+    },
+    "/users/{userId}/tasks/{taskId}": {
+      "schema": { "$ref": "#/entities/Task" },
+      "description": "A user's tasks"
+    },
+    "/users/{userId}/encyclopedia/{encyclopediaId}": {
+      "schema": { "$ref": "#/entities/EncyclopediaEntry" },
+      "description": "A user's encyclopedia additions"
+    },
+    "/users/{userId}/healthIssues/{healthId}": {
+      "schema": { "$ref": "#/entities/HealthIssue" },
+      "description": "A user's custom health issues"
+    },
+    "/users/{userId}/expenses/{expenseId}": {
+      "schema": { "$ref": "#/entities/Expense" },
+      "description": "A user's expenses"
+    }
+  }
+}

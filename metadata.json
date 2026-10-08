@@ -1,0 +1,6 @@
+{
+  "name": "Potager",
+  "description": "Application de gestion de semis et potager avec suivi, journal, statistiques et sauvegarde.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

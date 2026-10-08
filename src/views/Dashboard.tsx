@@ -1,0 +1,997 @@
+import React, { useState, useMemo, useEffect } from 'react';
+import { useFirebaseData } from '../hooks/useFirebaseData';
+import { db, Task } from '../db';
+import { Sprout, CheckCircle2, TrendingUp, BarChart3, PieChart as PieChartIcon, Printer, Archive, Coins, Gift, ShoppingBag, CheckSquare, Clock, ArrowRight, CalendarClock } from 'lucide-react';
+import { 
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
+  PieChart, Pie, Cell, Legend
+} from 'recharts';
+import { differenceInDays, parseISO } from 'date-fns';
+
+import { printElement } from '../utils/print';
+
+import { stringToColor } from '../utils/colors';
+import { ICON_MAP, GARDEN_EMOJIS, isEmoji } from '../constants';
+import { checkWeatherAlerts, WeatherAlert } from '../services/weatherService';
+import { getPerpetualTaskMonths } from '../components/PerpetualTaskModal';
+
+export const normalizeName = (name: string | undefined | null) => {
+  if (!name) return 'Inconnu';
+  const trimmed = name.trim();
+  if (!trimmed) return 'Inconnu';
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1).toLowerCase();
+};
+
+import { useSeason } from '../contexts/SeasonContext';
+
+export function Dashboard({ setCurrentView }: { setCurrentView: (v: string) => void }) {
+  const { currentSeasonId, seasons, isItemInCurrentSeason } = useSeason();
+  const [activeTab, setActiveTab] = useState<'overview' | 'sales' | 'harvests' | 'plantations'>('overview');
+  const [plantationsViewMode, setPlantationsViewMode] = useState<'grid' | 'list'>('grid');
+  const { data: rawSeedlings, error: seedlingsError } = useFirebaseData<any>('seedlings');
+  const { data: rawTasks, error: tasksError } = useFirebaseData<any>('tasks');
+  const { data: rawPerpetualTasks } = useFirebaseData<any>('perpetualTasks');
+  const { data: rawConfig, error: configError } = useFirebaseData<any>('config');
+  const { data: rawEncyclopedia, error: encyclopediaError } = useFirebaseData<any>('encyclopedia');
+
+  const error = seedlingsError || tasksError || configError || encyclopediaError;
+
+  const seedlings = useMemo(() => (rawSeedlings || []).filter(s => !s.isDeleted && !s.isGlobalHarvestTracker && isItemInCurrentSeason(s)), [rawSeedlings, isItemInCurrentSeason]);
+  const harvestSeedlings = useMemo(() => (rawSeedlings || []).filter(s => !s.isDeleted && isItemInCurrentSeason(s)), [rawSeedlings, isItemInCurrentSeason]);
+  const manualTasks = useMemo(() => (rawTasks || []).filter(t => !t.isDeleted && !t.isCompleted && isItemInCurrentSeason(t)), [rawTasks, isItemInCurrentSeason]);
+  const perpetualTasks = useMemo(() => (rawPerpetualTasks || []).filter(t => !t.isDeleted), [rawPerpetualTasks]);
+  const config = useMemo(() => (rawConfig || []).filter(c => c.type === 'setting'), [rawConfig]);
+
+  const [weatherAlerts, setWeatherAlerts] = useState<WeatherAlert[]>([]);
+
+  useEffect(() => {
+    if (config) {
+      const loc = config.find(c => c.id === 'weather_location')?.value;
+      const tMin = config.find(c => c.id === 'weather_temp_min')?.value;
+      const wMax = config.find(c => c.id === 'weather_wind_max')?.value;
+      const wDirs = config.find(c => c.id === 'weather_wind_dirs')?.value;
+
+      if (loc && loc.trim()) {
+        checkWeatherAlerts(
+          loc.trim(),
+          tMin !== undefined && tMin !== '' ? Number(tMin) : undefined,
+          wMax !== undefined && wMax !== '' ? Number(wMax) : undefined,
+          wDirs ? wDirs.split(',') : []
+        )
+          .then(alerts => setWeatherAlerts(alerts || []))
+          .catch(() => setWeatherAlerts([]));
+      } else {
+        setWeatherAlerts([]);
+      }
+    }
+  }, [config]);
+
+  // Auto tasks logic for dashboard
+  const pendingAutoTasks = useMemo(() => {
+    const generated: any[] = [];
+    const today = new Date();
+    const currentMonth = today.getMonth() + 1;
+
+    if (seedlings) {
+      seedlings.filter(s => !s.isArchived).forEach(s => {
+        if (s.state === 'Démarrage' && s.dateSown) {
+          const days = differenceInDays(today, parseISO(s.dateSown));
+          if (days >= 21) generated.push({ id: s.id, title: `Repiquer ${s.vegetable}`, priority: days >= 28 ? 'high' : 'medium', type: 'auto' });
+        }
+        if (s.state === 'Repiquage' && s.dateTransplanted) {
+          const days = differenceInDays(today, parseISO(s.dateTransplanted));
+          if (days >= 28) generated.push({ id: s.id, title: `Planter ${s.vegetable}`, priority: days >= 35 ? 'high' : 'medium', type: 'auto' });
+        }
+      });
+    }
+
+    if (perpetualTasks) {
+      perpetualTasks.forEach(pt => {
+        const covered = getPerpetualTaskMonths(pt);
+        if (covered.includes(currentMonth)) {
+          const isOptimal = pt.optimalMonth === currentMonth;
+          generated.push({ 
+            id: pt.id, 
+            title: isOptimal ? `⭐🔄 ${pt.title} (Moment idéal)` : `🔄 ${pt.title}`, 
+            priority: isOptimal ? 'high' : 'medium', 
+            type: 'perpetual' 
+          });
+        }
+      });
+    }
+
+    return generated;
+  }, [seedlings, perpetualTasks]);
+
+  const totalPendingTasks = (manualTasks?.length || 0) + pendingAutoTasks.length;
+
+  // Sales Data
+  const salesData = useMemo(() => {
+    if (!seedlings) return { sold: [], donated: [], totalRevenue: 0, totalSoldQty: 0, totalDonatedQty: 0, revenueByVeg: [], allTransactions: [] };
+    
+    const sold = seedlings.filter(s => s.state === 'Vendu / Donné' && s.salePrice !== undefined && s.salePrice > 0);
+    const donated = seedlings.filter(s => s.state === 'Vendu / Donné' && (!s.salePrice || s.salePrice === 0));
+
+    const totalRevenue = sold.reduce((sum, s) => sum + (Number(s.salePrice) || 0), 0);
+    const totalSoldQty = sold.reduce((sum, s) => sum + (Number(s.quantity) || 0), 0);
+    const totalDonatedQty = donated.reduce((sum, s) => sum + (Number(s.quantity) || 0), 0);
+
+    const revByVegMap = sold.reduce((acc, s) => {
+      const veg = normalizeName(s.vegetable);
+      acc[veg] = (acc[veg] || 0) + (Number(s.salePrice) || 0);
+      return acc;
+    }, {} as Record<string, number>);
+
+    const revenueByVeg = Object.entries(revByVegMap)
+      .map(([name, value]) => ({ name, value: Number(value) }))
+      .sort((a, b) => b.value - a.value);
+
+    const allTransactions = Array.from(new Map<string, any>([...sold, ...donated].map(item => [item.id, item])).values()).sort((a, b) => {
+      const dateA = a.notes.length > 0 ? new Date(a.notes[a.notes.length - 1].date).getTime() : 0;
+      const dateB = b.notes.length > 0 ? new Date(b.notes[b.notes.length - 1].date).getTime() : 0;
+      return dateB - dateA;
+    });
+
+    return { sold, donated, totalRevenue, totalSoldQty, totalDonatedQty, revenueByVeg, allTransactions };
+  }, [seedlings]);
+
+  // Harvest Data
+  const harvestData = useMemo(() => {
+    const defaultData = { totalByVeg: [], recentHarvests: [] };
+    if (!harvestSeedlings) return defaultData;
+
+    const vegTotals: Record<string, Record<string, number>> = {};
+    const allHarvests: any[] = [];
+
+    harvestSeedlings.forEach(s => {
+      if (s.harvests) {
+        s.harvests.forEach(h => {
+          const veg = normalizeName(s.vegetable);
+          allHarvests.push({ ...h, vegetable: veg, variety: s.variety, seedlingId: s.id });
+          
+          if (!vegTotals[veg]) vegTotals[veg] = {};
+          vegTotals[veg][h.unit] = (vegTotals[veg][h.unit] || 0) + h.quantity;
+        });
+      }
+    });
+
+    const totalByVeg = Object.entries(vegTotals).map(([vegetable, units]) => {
+      return {
+        vegetable,
+        units: Object.entries(units).map(([unit, quantity]) => ({ unit, quantity }))
+      };
+    }).sort((a, b) => (a.vegetable || '').localeCompare(b.vegetable || ''));
+
+    const recentHarvests = allHarvests.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+    return { totalByVeg, recentHarvests };
+  }, [harvestSeedlings]);
+
+  const archived = seedlings.filter(s => s.isArchived);
+  const successes = archived.filter(s => s.success === true);
+
+  const archivedSown = archived.reduce((sum, s) => sum + (Number(s.quantity) || 0), 0);
+  const archivedSuccessQty = archived.reduce((sum, s) => {
+    if (s.success === true) {
+      return sum + (Number(s.quantityPlanted) || Number(s.quantityTransplanted) || Number(s.quantity) || 0);
+    }
+    return sum;
+  }, 0);
+
+  const successRate = archivedSown > 0 ? Math.round((archivedSuccessQty / archivedSown) * 100) : 0;
+  const stateData = Object.entries(
+    seedlings.reduce((acc, s) => {
+      const state = s.state || 'Inconnu';
+      acc[state] = (acc[state] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>)
+  ).map(([name, value]) => ({ name, value }));
+
+  interface VegetableStat {
+    name: string;
+    totalSown: number;
+    totalTransplanted: number;
+    totalPlanted: number;
+    archivedSown: number;
+    archivedSuccess: number;
+  }
+  const vegetableStats = seedlings.reduce((acc, s) => {
+    const vegName = normalizeName(s.vegetable);
+    if (!acc[vegName]) {
+      acc[vegName] = { 
+        name: vegName, 
+        totalSown: 0, 
+        totalTransplanted: 0,
+        totalPlanted: 0,
+        archivedSown: 0,
+        archivedSuccess: 0
+      };
+    }
+    acc[vegName].totalSown += (Number(s.quantity) || 0);
+    acc[vegName].totalTransplanted += (Number(s.quantityTransplanted) || 0);
+    acc[vegName].totalPlanted += (Number(s.quantityPlanted) || 0);
+    
+    if (s.isArchived) {
+      acc[vegName].archivedSown += (Number(s.quantity) || 0);
+      if (s.success === true) {
+        acc[vegName].archivedSuccess += (Number(s.quantityPlanted) || Number(s.quantityTransplanted) || Number(s.quantity) || 0);
+      }
+    }
+    return acc;
+  }, {} as Record<string, VegetableStat>);
+
+  const topVegetablesData = (Object.values(vegetableStats) as VegetableStat[])
+    .sort((a, b) => b.totalSown - a.totalSown)
+    .slice(0, 10)
+    .map((stat: VegetableStat) => ({
+      name: stat.name,
+      repiques: stat.totalTransplanted,
+      semes_restants: Math.max(0, stat.totalSown - stat.totalTransplanted),
+      total: stat.totalSown
+    }));
+
+  const vegetableTableData = (Object.values(vegetableStats) as VegetableStat[])
+    .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+    .map((stat: VegetableStat) => ({
+      ...stat,
+      successRate: stat.archivedSown > 0 ? Math.round((stat.archivedSuccess / stat.archivedSown) * 100) : null
+    }));
+
+  const vegetablesInPlan = Array.from(new Set((seedlings || []).map(s => normalizeName(s.vegetable)))).filter(Boolean).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+  const legendColors = useMemo(() => {
+    return (vegetablesInPlan || []).reduce((acc, veg) => {
+      const encEntry = rawEncyclopedia?.find((e: any) => (e.name || '').toLowerCase().trim() === (veg || '').toLowerCase().trim());
+      const configEntry = rawConfig?.find((c: any) => c.type === 'vegetable' && (c.value || '').toLowerCase().trim() === (veg || '').toLowerCase().trim());
+      acc[veg] = encEntry?.color || configEntry?.attributes?.color || configEntry?.color || stringToColor(veg);
+      return acc;
+    }, {} as Record<string, string>);
+  }, [vegetablesInPlan, rawEncyclopedia, rawConfig]);
+
+  const legendIconNames = useMemo(() => {
+    return (vegetablesInPlan || []).reduce((acc, veg) => {
+      const encEntry = rawEncyclopedia?.find((e: any) => (e.name || '').toLowerCase().trim() === (veg || '').toLowerCase().trim());
+      const configEntry = rawConfig?.find((c: any) => c.type === 'vegetable' && (c.value || '').toLowerCase().trim() === (veg || '').toLowerCase().trim());
+      acc[veg] = encEntry?.icon || configEntry?.attributes?.icon || configEntry?.icon || '';
+      return acc;
+    }, {} as Record<string, string>);
+  }, [vegetablesInPlan, rawEncyclopedia, rawConfig]);
+
+  const legendIcons = useMemo(() => {
+    return (vegetablesInPlan || []).reduce((acc, veg) => {
+      const iconName = legendIconNames[veg];
+      acc[veg] = ICON_MAP[iconName] || Sprout;
+      return acc;
+    }, {} as Record<string, any>);
+  }, [vegetablesInPlan, legendIconNames]);
+
+  const globalRecapByVeg = useMemo(() => {
+    const grouped = new Map<string, { total: number; varieties: { variety: string; count: number }[] }>();
+    (seedlings || []).forEach(s => {
+      if (!s.positions || s.positions.length === 0) return;
+      const veg = normalizeName(s.vegetable);
+      const variety = normalizeName(s.variety) === 'Inconnu' ? 'Sans variété' : normalizeName(s.variety);
+      const count = s.positions.length;
+      
+      if (!grouped.has(veg)) {
+        grouped.set(veg, { total: 0, varieties: [] });
+      }
+      const g = grouped.get(veg)!;
+      g.total += count;
+      
+      const existingVar = g.varieties.find(v => v.variety === variety);
+      if (existingVar) {
+        existingVar.count += count;
+      } else {
+        g.varieties.push({ variety, count });
+      }
+    });
+    
+    grouped.forEach(g => {
+       g.varieties.sort((a, b) => a.variety.localeCompare(b.variety));
+    });
+    
+    return Array.from(grouped.entries()).sort((a,b) => a[0].localeCompare(b[0]));
+  }, [seedlings]);
+
+  const monthNames = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sep', 'Oct', 'Nov', 'Déc'];
+  const monthlyData = monthNames.map((name, index) => {
+    let semisCount = 0;
+    let repiquageCount = 0;
+    let plantationCount = 0;
+
+    seedlings.forEach(s => {
+      if (s.dateSown) {
+        const d = new Date(s.dateSown);
+        if (d.getMonth() === index) semisCount += (Number(s.quantity) || 0);
+      }
+      if (s.dateTransplanted) {
+        const d = new Date(s.dateTransplanted);
+        if (d.getMonth() === index) repiquageCount += (Number(s.quantityTransplanted) || 0);
+      }
+      if (s.datePlanted) {
+        const d = new Date(s.datePlanted);
+        if (d.getMonth() === index) plantationCount += (Number(s.quantityPlanted) || 0);
+      }
+    });
+
+    return {
+      name,
+      monthIndex: index,
+      semis: semisCount,
+      repiquage: repiquageCount,
+      plantation: plantationCount,
+    };
+  });
+
+  const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4'];
+
+  const totalSown = seedlings.reduce((sum, s) => {
+    return sum + (Number(s.quantity) || 0);
+  }, 0);
+  
+  const totalTransplanted = seedlings.reduce((sum, s) => {
+    return sum + (Number(s.quantityTransplanted) || 0);
+  }, 0);
+  
+  const totalPlanted = seedlings.reduce((sum, s) => {
+    return sum + (Number(s.quantityPlanted) || 0);
+  }, 0);
+
+  const handleMonthClick = (data: any) => {
+    let monthIndex;
+    if (data && data.activePayload && data.activePayload.length > 0) {
+      monthIndex = data.activePayload[0].payload.monthIndex;
+    } else if (data && data.monthIndex !== undefined) {
+      monthIndex = data.monthIndex;
+    } else if (data && data.activeTooltipIndex !== undefined) {
+      monthIndex = data.activeTooltipIndex;
+    }
+
+    if (monthIndex !== undefined) {
+      sessionStorage.setItem('seedlings_filter_month', monthIndex.toString());
+      
+      // Reset other filters to ensure the user sees the data
+      sessionStorage.setItem('seedlings_filter_state', 'all');
+      sessionStorage.setItem('seedlings_filter_vegetable', 'all');
+      sessionStorage.setItem('seedlings_filter_archived', 'all');
+      sessionStorage.setItem('seedlings_filter_success', 'all');
+      sessionStorage.setItem('seedlings_search', '');
+      
+      setCurrentView('seedlings');
+    }
+  };
+
+  if (error) {
+    return (
+      <div className="p-8 text-center bg-red-50 rounded-xl border border-red-200">
+        <p className="text-red-700 font-medium">{error}</p>
+        <p className="text-red-600 text-sm mt-2">Essayez de rafraîchir la page ou contactez le support si le problème persiste.</p>
+        <button 
+          onClick={() => window.location.reload()}
+          className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition-colors"
+        >
+          Rafraîchir
+        </button>
+      </div>
+    );
+  }
+
+  if (!rawSeedlings && !error) return <div className="p-8 text-center text-stone-500 italic">Chargement des données...</div>;
+
+  return (
+    <div className="space-y-3" id="dashboard-print-area">
+      <header className="flex justify-between items-end">
+        <div>
+          <h1 className="text-xl font-serif font-medium tracking-tight text-stone-900">Tableau de bord</h1>
+          <p className="text-xs text-stone-500 mt-0.5">Vue d'ensemble et statistiques de votre potager.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button 
+            onClick={() => printElement('dashboard-print-area', 'Tableau de bord')}
+            className="p-1 text-stone-600 hover:bg-stone-200 rounded-md transition-colors print:hidden"
+            title="Imprimer / PDF"
+          >
+            <Printer className="w-3.5 h-3.5" />
+          </button>
+          <button 
+            onClick={() => {
+              sessionStorage.setItem('seedlings_filter_archived', 'archived');
+              sessionStorage.setItem('seedlings_filter_state', 'all');
+              sessionStorage.setItem('seedlings_filter_vegetable', 'all');
+              sessionStorage.setItem('seedlings_filter_success', 'all');
+              sessionStorage.setItem('seedlings_filter_month', 'all');
+              sessionStorage.setItem('seedlings_filter_year', 'all');
+              sessionStorage.setItem('seedlings_search', '');
+              setCurrentView('seedlings');
+            }}
+            className="bg-stone-100 hover:bg-stone-200 text-stone-700 px-3 py-1.5 rounded-lg text-xs font-medium shadow-sm transition-colors flex items-center gap-1.5 print:hidden"
+          >
+            <Archive className="w-3.5 h-3.5" />
+            Archives
+          </button>
+          <button 
+            onClick={() => setCurrentView('seedling-new')}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium shadow-sm transition-colors flex items-center gap-1.5 print:hidden"
+          >
+            <Sprout className="w-3.5 h-3.5" />
+            Nouveau semis
+          </button>
+        </div>
+      </header>
+
+      {weatherAlerts.length > 0 && (
+        <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-r-lg shadow-sm">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-red-600 font-medium">Alertes Météo</span>
+          </div>
+          <ul className="space-y-2">
+            {weatherAlerts.map((alert, idx) => (
+              <li key={idx} className="text-sm text-red-800 flex items-start gap-2">
+                <span className="font-semibold">{alert.date} :</span>
+                <span>{alert.message}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="flex gap-4 border-b border-stone-200 mb-4 print:hidden overflow-x-auto">
+        <button
+          onClick={() => setActiveTab('overview')}
+          className={`pb-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${activeTab === 'overview' ? 'border-emerald-500 text-emerald-700' : 'border-transparent text-stone-500 hover:text-stone-700'}`}
+        >
+          Vue d'ensemble
+        </button>
+        <button
+          onClick={() => setActiveTab('plantations')}
+          className={`pb-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${activeTab === 'plantations' ? 'border-emerald-500 text-emerald-700' : 'border-transparent text-stone-500 hover:text-stone-700'}`}
+        >
+          Plan du potager
+        </button>
+        <button
+          onClick={() => setActiveTab('sales')}
+          className={`pb-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${activeTab === 'sales' ? 'border-emerald-500 text-emerald-700' : 'border-transparent text-stone-500 hover:text-stone-700'}`}
+        >
+          Ventes & Dons
+        </button>
+        <button
+          onClick={() => setActiveTab('harvests')}
+          className={`pb-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${activeTab === 'harvests' ? 'border-emerald-500 text-emerald-700' : 'border-transparent text-stone-500 hover:text-stone-700'}`}
+        >
+          Récoltes
+        </button>
+      </div>
+
+      {/* OVERVIEW TAB */}
+      <div className={activeTab === 'overview' ? 'space-y-3' : 'hidden'}>
+        {/* Volume Global Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="bg-white p-3 rounded-xl shadow-sm border border-stone-200/60 flex items-center gap-2.5">
+          <div className="p-2 rounded-lg bg-emerald-100">
+            <Sprout className="w-5 h-5 text-emerald-600" />
+          </div>
+          <div>
+            <p className="text-[9px] font-medium text-stone-500 uppercase tracking-wider">Graines semées</p>
+            <p className="text-xl font-semibold text-stone-900">{totalSown}</p>
+          </div>
+        </div>
+        
+        <div className="bg-white p-3 rounded-xl shadow-sm border border-stone-200/60 flex items-center gap-2.5">
+          <div className="p-2 rounded-lg bg-blue-100">
+            <TrendingUp className="w-5 h-5 text-blue-600" />
+          </div>
+          <div>
+            <p className="text-[9px] font-medium text-stone-500 uppercase tracking-wider">Plants repiqués</p>
+            <p className="text-xl font-semibold text-stone-900">{totalTransplanted}</p>
+          </div>
+        </div>
+
+        <div className="bg-white p-3 rounded-xl shadow-sm border border-stone-200/60 flex items-center gap-2.5">
+          <div className="p-2 rounded-lg bg-amber-100">
+            <CheckCircle2 className="w-5 h-5 text-amber-600" />
+          </div>
+          <div>
+            <p className="text-[9px] font-medium text-stone-500 uppercase tracking-wider">Mis en terre</p>
+            <p className="text-xl font-semibold text-stone-900">{totalPlanted}</p>
+          </div>
+        </div>
+
+        <div className="bg-white p-3 rounded-xl shadow-sm border border-stone-200/60 flex items-center gap-2.5 cursor-pointer hover:bg-stone-50 transition-colors" onClick={() => setCurrentView('tasks')}>
+          <div className="p-2 rounded-lg bg-red-100">
+            <CheckSquare className="w-5 h-5 text-red-600" />
+          </div>
+          <div>
+            <p className="text-[9px] font-medium text-stone-500 uppercase tracking-wider">Tâches en attente</p>
+            <p className="text-xl font-semibold text-stone-900">{totalPendingTasks}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Tasks Summary Section */}
+      {(manualTasks?.length || 0) > 0 || pendingAutoTasks.length > 0 ? (
+        <div className="bg-white p-4 rounded-xl shadow-sm border border-stone-200/60">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <CheckSquare className="w-4 h-4 text-emerald-600" />
+              <h2 className="text-sm font-bold text-stone-800">Tâches prioritaires</h2>
+            </div>
+            <button 
+              onClick={() => setCurrentView('tasks')}
+              className="text-[10px] font-bold text-emerald-600 hover:text-emerald-700 uppercase tracking-wider flex items-center gap-1"
+            >
+              Tout voir
+              <ArrowRight className="w-3 h-3" />
+            </button>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {[...(manualTasks || []), ...pendingAutoTasks].slice(0, 3).map((task, i) => (
+              <div 
+                key={`${task.id || 'task'}-${task.type || 'manual'}-${i}`} 
+                onClick={() => {
+                  if (task.type === 'auto' && task.id) {
+                    setCurrentView(`seedling-detail-${task.id}`);
+                  } else if (task.type === 'perpetual') {
+                    setCurrentView('calendar');
+                  } else {
+                    setCurrentView('tasks');
+                  }
+                }}
+                className="p-3 rounded-lg bg-stone-50 border border-stone-100 flex items-start gap-3 cursor-pointer hover:bg-stone-100 hover:border-emerald-200 transition-all"
+              >
+                <div className={`mt-0.5 ${task.priority === 'high' ? 'text-red-500' : 'text-stone-400'}`}>
+                  {task.type === 'auto' ? <Sprout className="w-4 h-4" /> : task.type === 'perpetual' ? <CalendarClock className="w-4 h-4" /> : <Clock className="w-4 h-4" />}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-bold text-stone-900 truncate">{task.title}</p>
+                  <p className="text-[10px] text-stone-500 mt-0.5">
+                    {task.type === 'auto' ? 'Suggestion automatique' : task.type === 'perpetual' ? 'Geste perpétuel' : 'Tâche manuelle'}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {/* Charts */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <div className="bg-white p-3 rounded-xl shadow-sm border border-stone-200/60 lg:col-span-2">
+          <div className="flex items-center gap-1.5 mb-3">
+            <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
+            <h2 className="text-base font-serif font-medium">Top 10 des légumes semés</h2>
+          </div>
+          <div className="h-48">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={topVegetablesData} margin={{ top: 10, right: 30, left: 0, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#6b7280', fontSize: 11 }} />
+                <YAxis axisLine={false} tickLine={false} tick={{ fill: '#6b7280', fontSize: 11 }} />
+                <Tooltip cursor={{ fill: '#f3f4f6' }} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)', fontSize: '12px' }} />
+                <Legend wrapperStyle={{ fontSize: '11px' }} />
+                <Bar dataKey="repiques" stackId="a" fill="#3b82f6" name="Repiqués" />
+                <Bar dataKey="semes_restants" stackId="a" fill="#10b981" radius={[4, 4, 0, 0]} name="Semés (non repiqués)" />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        <div className="bg-white p-3 rounded-xl shadow-sm border border-stone-200/60">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-1.5">
+              <BarChart3 className="w-3.5 h-3.5 text-emerald-600" />
+              <h2 className="text-base font-serif font-medium">Activité mensuelle</h2>
+            </div>
+          </div>
+          <div className="h-48">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={monthlyData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }} onClick={handleMonthClick} style={{ cursor: 'pointer' }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f5f5f5" />
+                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#78716c', fontSize: 11}} />
+                <YAxis axisLine={false} tickLine={false} tick={{fill: '#78716c', fontSize: 11}} />
+                <Tooltip 
+                  contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)', fontSize: '12px' }}
+                />
+                <Legend verticalAlign="top" height={24} wrapperStyle={{ fontSize: '11px' }}/>
+                <Bar dataKey="semis" name="Semis" fill="#10b981" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="repiquage" name="Repiquage" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="plantation" name="Plantation" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        <div className="bg-white p-3 rounded-xl shadow-sm border border-stone-200/60">
+          <div className="flex items-center gap-1.5 mb-3">
+            <PieChartIcon className="w-3.5 h-3.5 text-emerald-600" />
+            <h2 className="text-base font-serif font-medium">Répartition par état</h2>
+          </div>
+          <div className="h-48">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={stateData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={50}
+                  outerRadius={80}
+                  paddingAngle={5}
+                  dataKey="value"
+                >
+                  {stateData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip 
+                  contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)', fontSize: '12px' }}
+                />
+                <Legend wrapperStyle={{ fontSize: '11px' }} />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      </div>
+
+      {/* Table: Bilan par légume */}
+      <div className="bg-white p-3 rounded-xl shadow-sm border border-stone-200/60 mt-3">
+        <div className="flex items-center gap-1.5 mb-3">
+          <Sprout className="w-3.5 h-3.5 text-emerald-600" />
+          <h2 className="text-base font-serif font-medium">Bilan par légume</h2>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs text-stone-600">
+            <thead className="bg-stone-50 text-stone-500 uppercase font-medium text-[10px]">
+              <tr>
+                <th className="px-3 py-2">Légume</th>
+                <th className="px-3 py-2 text-right">Semés</th>
+                <th className="px-3 py-2 text-right">Repiqués</th>
+                <th className="px-3 py-2 text-right">Plantés</th>
+                <th className="px-3 py-2 text-right">Réussite (Archivés)</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-stone-100">
+              {vegetableTableData.map(stat => (
+                <tr key={stat.name} className="hover:bg-stone-50">
+                  <td className="px-3 py-2 font-medium text-stone-900">{stat.name}</td>
+                  <td className="px-3 py-2 text-right">{stat.totalSown}</td>
+                  <td className="px-3 py-2 text-right">{stat.totalTransplanted}</td>
+                  <td className="px-3 py-2 text-right">{stat.totalPlanted}</td>
+                  <td className="px-3 py-2 text-right">
+                    {stat.successRate !== null ? (
+                      <span className={`font-medium ${stat.successRate >= 80 ? 'text-emerald-600' : stat.successRate >= 50 ? 'text-amber-600' : 'text-red-600'}`}>
+                        {stat.successRate}%
+                      </span>
+                    ) : (
+                      <span className="text-stone-400">-</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+              {vegetableTableData.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-3 py-4 text-center text-stone-400 italic">
+                    Aucune donnée pour cette année
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </div>
+
+      {/* SALES TAB */}
+      <div className={activeTab === 'sales' ? 'space-y-4' : 'hidden'}>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="bg-white p-4 rounded-xl shadow-sm border border-stone-200/60 flex items-center gap-3">
+            <div className="p-2.5 rounded-lg bg-emerald-100">
+              <Coins className="w-6 h-6 text-emerald-600" />
+            </div>
+            <div>
+              <p className="text-[10px] font-medium text-stone-500 uppercase tracking-wider">Revenus totaux</p>
+              <p className="text-2xl font-semibold text-stone-900">{salesData.totalRevenue} €</p>
+            </div>
+          </div>
+          
+          <div className="bg-white p-4 rounded-xl shadow-sm border border-stone-200/60 flex items-center gap-3">
+            <div className="p-2.5 rounded-lg bg-purple-100">
+              <ShoppingBag className="w-6 h-6 text-purple-600" />
+            </div>
+            <div>
+              <p className="text-[10px] font-medium text-stone-500 uppercase tracking-wider">Plants vendus</p>
+              <p className="text-2xl font-semibold text-stone-900">{salesData.totalSoldQty}</p>
+            </div>
+          </div>
+
+          <div className="bg-white p-4 rounded-xl shadow-sm border border-stone-200/60 flex items-center gap-3">
+            <div className="p-2.5 rounded-lg bg-amber-100">
+              <Gift className="w-6 h-6 text-amber-600" />
+            </div>
+            <div>
+              <p className="text-[10px] font-medium text-stone-500 uppercase tracking-wider">Plants donnés</p>
+              <p className="text-2xl font-semibold text-stone-900">{salesData.totalDonatedQty}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className="lg:col-span-1 bg-white p-4 rounded-xl shadow-sm border border-stone-200/60">
+            <h2 className="text-sm font-semibold text-stone-800 mb-4">Revenus par légume</h2>
+            <div className="h-64">
+              {salesData.revenueByVeg.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={salesData.revenueByVeg}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={60}
+                      outerRadius={80}
+                      paddingAngle={2}
+                      dataKey="value"
+                    >
+                      {salesData.revenueByVeg.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(value) => `${value} €`} />
+                    <Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-full flex items-center justify-center text-stone-400 text-sm italic">
+                  Aucune vente enregistrée
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-stone-200/60 overflow-hidden flex flex-col">
+            <div className="p-4 border-b border-stone-100">
+              <h2 className="text-sm font-semibold text-stone-800">Historique des ventes & dons</h2>
+            </div>
+            <div className="overflow-x-auto flex-1">
+              <table className="w-full text-sm text-left">
+                <thead className="text-[10px] uppercase tracking-wider text-stone-500 bg-stone-50/50">
+                  <tr>
+                    <th className="px-4 py-3 font-medium">Date</th>
+                    <th className="px-4 py-3 font-medium">Légume</th>
+                    <th className="px-4 py-3 font-medium">Type</th>
+                    <th className="px-4 py-3 font-medium text-right">Qté</th>
+                    <th className="px-4 py-3 font-medium text-right">Prix</th>
+                    <th className="px-4 py-3 font-medium">Commentaire</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-stone-100">
+                  {salesData.allTransactions.map(t => {
+                    const isSale = t.salePrice !== undefined && t.salePrice > 0;
+                    const dateStr = t.notes.length > 0 ? new Date(t.notes[t.notes.length - 1].date).toLocaleDateString() : '-';
+                    return (
+                      <tr key={t.id} className="hover:bg-stone-50 transition-colors cursor-pointer" onClick={() => setCurrentView(`seedling-detail-${t.id}`)}>
+                        <td className="px-4 py-3 text-stone-500">{dateStr}</td>
+                        <td className="px-4 py-3">
+                          <div className="font-medium text-stone-900">{t.vegetable}</div>
+                          <div className="text-xs text-stone-500">{t.variety}</div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${isSale ? 'bg-purple-100 text-purple-700' : 'bg-amber-100 text-amber-700'}`}>
+                            {isSale ? 'Vente' : 'Don'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right font-medium text-stone-900">{t.quantity}</td>
+                        <td className="px-4 py-3 text-right">
+                          {isSale ? <span className="font-medium text-emerald-600">{t.salePrice} €</span> : <span className="text-stone-400">-</span>}
+                        </td>
+                        <td className="px-4 py-3 text-stone-500 text-xs max-w-[200px] truncate" title={t.saleComment || ''}>
+                          {t.saleComment || '-'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {salesData.allTransactions.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="px-4 py-8 text-center text-stone-400 italic">
+                        Aucune transaction pour cette année
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* HARVESTS TAB */}
+      <div className={activeTab === 'harvests' ? 'space-y-4' : 'hidden'}>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className="lg:col-span-1 bg-white p-4 rounded-xl shadow-sm border border-stone-200/60">
+            <h2 className="text-sm font-semibold text-stone-800 mb-4 flex items-center gap-2">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-wheat text-emerald-600"><path d="M2 22 22 2"/><path d="M3.4 16.2 6.2 19"/><path d="M5.5 12.7 9.8 17"/><path d="M8.4 9.8 14.1 15.5"/><path d="M12 7 18.4 13.4"/><path d="M16.2 4.9 21.2 9.9"/></svg>
+              Totaux par légume
+            </h2>
+            <div className="space-y-3">
+              {harvestData.totalByVeg.length > 0 ? (
+                harvestData.totalByVeg.map(veg => (
+                  <div key={veg.vegetable} className="p-3 rounded-lg border border-stone-100 bg-stone-50/50">
+                    <h3 className="font-medium text-stone-900 mb-2">{veg.vegetable}</h3>
+                    <div className="flex flex-wrap gap-2">
+                      {veg.units.map(u => (
+                        <span key={u.unit} className="inline-flex items-center px-2 py-1 rounded bg-emerald-100 text-emerald-800 text-xs font-medium">
+                          {u.quantity} {u.unit}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="text-center text-stone-400 text-sm italic py-4">
+                  Aucune récolte enregistrée cette année
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-stone-200/60 overflow-hidden flex flex-col">
+            <div className="p-4 border-b border-stone-100">
+              <h2 className="text-sm font-semibold text-stone-800">Historique des récoltes</h2>
+            </div>
+            <div className="overflow-x-auto flex-1">
+              <table className="w-full text-sm text-left">
+                <thead className="text-[10px] uppercase tracking-wider text-stone-500 bg-stone-50/50">
+                  <tr>
+                    <th className="px-4 py-3 font-medium">Date</th>
+                    <th className="px-4 py-3 font-medium">Légume</th>
+                    <th className="px-4 py-3 font-medium text-right">Quantité</th>
+                    <th className="px-4 py-3 font-medium">Notes</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-stone-100">
+                  {harvestData.recentHarvests.map(h => (
+                    <tr key={`${h.id}-${h.seedlingId}`} className="hover:bg-stone-50 transition-colors cursor-pointer" onClick={() => setCurrentView(`seedling-detail-${h.seedlingId}`)}>
+                      <td className="px-4 py-3 text-stone-500">{new Date(h.date).toLocaleDateString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="font-medium text-stone-900">{h.vegetable}</div>
+                        <div className="text-xs text-stone-500">{h.variety}</div>
+                      </td>
+                      <td className="px-4 py-3 text-right font-medium text-emerald-600">
+                        {h.quantity} {h.unit}
+                      </td>
+                      <td className="px-4 py-3 text-stone-500 text-xs max-w-[200px] truncate" title={h.notes || ''}>
+                        {h.notes || '-'}
+                      </td>
+                    </tr>
+                  ))}
+                  {harvestData.recentHarvests.length === 0 && (
+                    <tr>
+                      <td colSpan={4} className="px-4 py-8 text-center text-stone-400 italic">
+                        Aucune récolte pour cette année
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* PLANTATIONS TAB */}
+      <div className={activeTab === 'plantations' ? 'space-y-4' : 'hidden'} id="plantations-print-area">
+        <div className="flex items-center justify-between mb-4 print:hidden">
+          <h2 className="text-lg font-semibold text-stone-800">Récapitulatif global (Toutes les zones)</h2>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setPlantationsViewMode('grid')}
+              className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-colors border ${plantationsViewMode === 'grid' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-stone-200 text-stone-600 hover:bg-stone-50'}`}
+            >
+              Grille
+            </button>
+            <button
+              onClick={() => setPlantationsViewMode('list')}
+              className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-colors border ${plantationsViewMode === 'list' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-stone-200 text-stone-600 hover:bg-stone-50'}`}
+            >
+              Liste
+            </button>
+            <button
+              onClick={() => printElement('plantations-print-area', 'Plan du potager - Récapitulatif', 100)}
+              className="p-1.5 text-stone-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors border border-stone-200 bg-white ml-2 flex items-center gap-2 px-3"
+            >
+              <Printer className="w-4 h-4" />
+              <span className="text-sm font-medium">Imprimer</span>
+            </button>
+          </div>
+        </div>
+
+        {globalRecapByVeg.length === 0 ? (
+          <p className="text-sm text-stone-500 italic p-6 text-center bg-white rounded-2xl shadow-sm border border-stone-200/60">Aucune plantation dans le potager.</p>
+        ) : (
+          <>
+            {plantationsViewMode === 'grid' ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                {globalRecapByVeg.map(([veg, data]) => {
+                  const color = legendColors[veg] || '#10b981';
+                  const Icon = legendIcons[veg] || Sprout;
+                  const iconSvg = legendIconNames[veg];
+
+                  return (
+                    <div key={veg} className="flex flex-col gap-2 bg-stone-50 p-4 rounded-xl border border-stone-100 shadow-sm hover:shadow-md transition-all break-inside-avoid print:border-stone-200 print:shadow-none">
+                      <div className="flex items-center justify-between border-b border-stone-200/60 pb-2">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 rounded-full flex items-center justify-center shadow-inner shrink-0" style={{ background: `radial-gradient(circle at 30% 30%, ${color}, ${color}dd)` }}>
+                            {isEmoji(iconSvg) ? (
+                              <span className="text-sm">{iconSvg}</span>
+                            ) : (
+                              <Icon className="w-4 h-4 text-white drop-shadow-sm" />
+                            )}
+                          </div>
+                          <span className="font-bold text-stone-800 tracking-tight leading-tight">{veg}</span>
+                        </div>
+                        <span className="text-emerald-600 font-bold bg-emerald-100/50 px-2.5 py-1 rounded-md text-sm shrink-0 border border-emerald-200/50 shadow-sm">{data.total}</span>
+                      </div>
+                      <div className="flex flex-col gap-1.5 pt-1">
+                        {data.varieties.map(v => (
+                          <div key={v.variety} className="flex justify-between items-center text-sm">
+                            <span className="text-stone-600 italic pl-1 leading-tight">{v.variety}</span>
+                            <span className="text-rose-500 font-medium tabular-nums shrink-0">{v.count}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="bg-white rounded-2xl shadow-sm border border-stone-200/60 overflow-hidden print:shadow-none print:border-stone-200">
+                <table className="w-full text-sm text-left text-stone-600">
+                  <thead className="text-xs text-stone-500 uppercase bg-stone-50 border-b border-stone-200">
+                    <tr>
+                      <th className="px-4 py-3 font-medium">Légume</th>
+                      <th className="px-4 py-3 font-medium">Variété</th>
+                      <th className="px-4 py-3 font-medium text-right">Quantité placée</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-stone-100">
+                    {globalRecapByVeg.flatMap(([veg, data]) => {
+                      const result = [];
+                      const color = legendColors[veg] || '#10b981';
+                      const Icon = legendIcons[veg] || Sprout;
+                      const iconSvg = legendIconNames[veg];
+
+                      result.push(
+                        <tr key={`${veg}-total`} className="bg-stone-50/50 font-medium">
+                          <td className="px-4 py-3 text-stone-900 flex items-center gap-2">
+                            <div className="w-5 h-5 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: color }}>
+                              {isEmoji(iconSvg) ? (
+                                <span className="text-[10px]">{iconSvg}</span>
+                              ) : (
+                                <Icon className="w-3 h-3 text-white" />
+                              )}
+                            </div>
+                            {veg}
+                          </td>
+                          <td className="px-4 py-3 text-stone-400 text-xs uppercase tracking-wider">Total {veg}</td>
+                          <td className="px-4 py-3 text-right text-emerald-600 text-base">{data.total}</td>
+                        </tr>
+                      );
+                      data.varieties.forEach(v => {
+                        result.push(
+                          <tr key={`${veg}-${v.variety}`} className="hover:bg-stone-50/50 transition-colors">
+                            <td className="px-4 py-2 border-l-2 border-transparent"></td>
+                            <td className="px-4 py-2 pl-8">{v.variety}</td>
+                            <td className="px-4 py-2 text-right">{v.count}</td>
+                          </tr>
+                        );
+                      });
+                      return result;
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+    </div>
+  );
+}

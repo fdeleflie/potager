@@ -1,0 +1,100 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() { return request.auth != null; }
+    function isAllowed(userId) { 
+      return isSignedIn() && (
+        request.auth.uid == userId || 
+        request.auth.token.email == 'kdeleflie@gmail.com' ||
+        request.auth.token.email == 'fdeleflie@gmail.com'
+      ); 
+    }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    match /public_shares/{shareId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
+    }
+
+    match /users/{userId} {
+      match /seasons/{seasonId} {
+        allow read: if isAllowed(userId);
+        allow create: if isAllowed(userId) && isValidId(seasonId);
+        allow update: if isAllowed(userId) && isValidId(seasonId);
+        allow delete: if isAllowed(userId) && isValidId(seasonId);
+      }
+      match /seedlings/{seedlingId} {
+        allow read: if isAllowed(userId);
+        allow create: if isAllowed(userId) && isValidId(seedlingId);
+        allow update: if isAllowed(userId) && isValidId(seedlingId);
+        allow delete: if isAllowed(userId) && isValidId(seedlingId);
+      }
+      match /journal/{journalId} {
+        allow read: if isAllowed(userId);
+        allow create: if isAllowed(userId) && isValidId(journalId);
+        allow update: if isAllowed(userId) && isValidId(journalId);
+        allow delete: if isAllowed(userId) && isValidId(journalId);
+      }
+      match /config/{configId} {
+        allow read: if isAllowed(userId);
+        allow create: if isAllowed(userId) && isValidId(configId);
+        allow update: if isAllowed(userId) && isValidId(configId);
+        allow delete: if isAllowed(userId) && isValidId(configId);
+      }
+      match /trees/{treeId} {
+        allow read: if isAllowed(userId);
+        allow create: if isAllowed(userId) && isValidId(treeId);
+        allow update: if isAllowed(userId) && isValidId(treeId);
+        allow delete: if isAllowed(userId) && isValidId(treeId);
+      }
+      match /structures/{structureId} {
+        allow read: if isAllowed(userId);
+        allow create: if isAllowed(userId) && isValidId(structureId);
+        allow update: if isAllowed(userId) && isValidId(structureId);
+        allow delete: if isAllowed(userId) && isValidId(structureId);
+      }
+      match /tasks/{taskId} {
+        allow read: if isAllowed(userId);
+        allow create: if isAllowed(userId) && isValidId(taskId);
+        allow update: if isAllowed(userId) && isValidId(taskId);
+        allow delete: if isAllowed(userId) && isValidId(taskId);
+      }
+      match /encyclopedia/{encyclopediaId} {
+        allow read: if isAllowed(userId);
+        allow create: if isAllowed(userId) && isValidId(encyclopediaId);
+        allow update: if isAllowed(userId) && isValidId(encyclopediaId);
+        allow delete: if isAllowed(userId) && isValidId(encyclopediaId);
+      }
+      match /healthIssues/{healthId} {
+        allow read: if isAllowed(userId);
+        allow create: if isAllowed(userId) && isValidId(healthId);
+        allow update: if isAllowed(userId) && isValidId(healthId);
+        allow delete: if isAllowed(userId) && isValidId(healthId);
+      }
+      match /expenses/{expenseId} {
+        allow read: if isAllowed(userId);
+        allow create: if isAllowed(userId) && isValidId(expenseId);
+        allow update: if isAllowed(userId) && isValidId(expenseId);
+        allow delete: if isAllowed(userId) && isValidId(expenseId);
+      }
+      match /backups/{backupId} {
+        allow read: if isAllowed(userId);
+        allow create: if isAllowed(userId) && isValidId(backupId);
+        allow update: if isAllowed(userId) && isValidId(backupId);
+        allow delete: if isAllowed(userId) && isValidId(backupId);
+      }
+      match /perpetualTasks/{taskId} {
+        allow read: if isAllowed(userId);
+        allow create: if isAllowed(userId) && isValidId(taskId);
+        allow update: if isAllowed(userId) && isValidId(taskId);
+        allow delete: if isAllowed(userId) && isValidId(taskId);
+      }
+    }
+  }
+}
