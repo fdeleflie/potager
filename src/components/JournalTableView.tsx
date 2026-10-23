@@ -133,36 +133,52 @@ export function JournalTableView({
                         <button
                           type="button"
                           onClick={() => onCycleSuccess(entry.id, entry.success)}
-                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition-all ${
-                            entry.success === true
-                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border transition-all ${
+                            entry.statut 
+                              ? (entry.statut.toLowerCase().includes('réussi') || entry.statut.toLowerCase().includes('succès') || entry.statut.toLowerCase().includes('fait') || entry.statut.toLowerCase().includes('terminé')
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                                : entry.statut.toLowerCase().includes('échec') || entry.statut.toLowerCase().includes('raté')
+                                ? 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100'
+                                : entry.statut.toLowerCase().includes('cours')
+                                ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
+                                : entry.statut.toLowerCase().includes('faire')
+                                ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
+                                : 'bg-stone-100 text-stone-600 border-stone-200 hover:bg-stone-200/60')
+                              : entry.success === true
+                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
                               : entry.success === false
-                              ? 'bg-red-50 text-red-700 border border-red-200 hover:bg-red-100'
+                              ? 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100'
                               : 'bg-stone-100 text-stone-500 border border-stone-200 hover:bg-stone-200/60'
                           }`}
                           title="Cliquer pour changer le statut (Réussite / Échec / Neutre)"
                         >
-                          {entry.success === true && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />}
-                          {entry.success === false && <XCircle className="w-3.5 h-3.5 text-red-600" />}
-                          {entry.success === undefined && <span className="w-2 h-2 rounded-full bg-stone-400 mr-0.5" />}
-                          <span>{entry.success === true ? 'Réussite' : entry.success === false ? 'Échec' : 'Neutre'}</span>
+                          {(entry.statut?.toLowerCase().includes('réussi') || entry.statut?.toLowerCase().includes('succès') || entry.statut?.toLowerCase().includes('fait') || entry.statut?.toLowerCase().includes('terminé') || entry.success === true) && (
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                          )}
+                          {(entry.statut?.toLowerCase().includes('échec') || entry.statut?.toLowerCase().includes('raté') || entry.success === false) && (
+                            <XCircle className="w-3.5 h-3.5 text-red-600" />
+                          )}
+                          {(!entry.statut || (!entry.statut.toLowerCase().includes('réussi') && !entry.statut.toLowerCase().includes('succès') && !entry.statut.toLowerCase().includes('fait') && !entry.statut.toLowerCase().includes('terminé') && !entry.statut.toLowerCase().includes('échec') && !entry.statut.toLowerCase().includes('raté'))) && entry.success === undefined && (
+                            <span className="w-2 h-2 rounded-full bg-stone-400 mr-0.5" />
+                          )}
+                          <span>{entry.statut || (entry.success === true ? 'Réussite' : entry.success === false ? 'Échec' : 'Neutre')}</span>
                         </button>
                       ) : (
                         <>
                           {entry.success === true && (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-medium">
                               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                              <span>Réussite</span>
+                              <span>{entry.statut || 'Réussite'}</span>
                             </span>
                           )}
                           {entry.success === false && (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-200 text-xs font-medium" title={entry.failureReason ? `Raison : ${entry.failureReason}` : undefined}>
                               <XCircle className="w-3.5 h-3.5 text-red-600" />
-                              <span>Échec</span>
+                              <span>{entry.statut || 'Échec'}</span>
                             </span>
                           )}
                           {entry.success === undefined && (
-                            <span className="text-stone-400 text-xs">-</span>
+                            <span className="text-stone-400 text-xs">{entry.statut || '-'}</span>
                           )}
                         </>
                       )}
@@ -170,9 +186,9 @@ export function JournalTableView({
 
                     {/* Observation text & photos */}
                     <td className="px-3.5 py-3 whitespace-normal text-stone-700">
-                      {entry.title && (
+                      {(entry.description || entry.title) && (
                         <div className="font-semibold text-stone-900 text-xs mb-0.5">
-                          {entry.title}
+                          {entry.description || entry.title}
                         </div>
                       )}
                       {entry.tags && entry.tags.length > 0 && (

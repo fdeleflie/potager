@@ -3,7 +3,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db, JournalEntry } from '../db';
 import { useFirebaseData, fb, syncPriorityCollections } from '../hooks/useFirebaseData';
 import { v4 as uuidv4 } from 'uuid';
-import { BookOpen, Plus, Save, Trash2, Search, Filter, Edit, X, Camera, CheckCircle2, XCircle, CalendarClock, CalendarPlus, Printer, RotateCcw, Calendar, AlignJustify, Table, CalendarDays, ExternalLink, Sparkles, RefreshCw, Zap, Copy, AlertTriangle, Eye, Tag, Settings, Thermometer, CloudRain, Droplets, Scissors } from 'lucide-react';
+import { BookOpen, Plus, Save, Trash2, Search, Filter, Edit, X, Camera, CheckCircle2, XCircle, CalendarClock, CalendarPlus, Printer, RotateCcw, Calendar, AlignJustify, Table, CalendarDays, ExternalLink, Sparkles, RefreshCw, Zap, Copy, AlertTriangle, Eye, Tag, Settings, Thermometer, CloudRain, Droplets, Scissors, ArrowUpDown } from 'lucide-react';
 import { ConfirmModal } from '../components/Modals';
 import { JournalPrintModal } from '../components/JournalPrintModal';
 import { compressImage } from '../utils/image';
@@ -17,6 +17,8 @@ import { JournalDuplicatesModal, DuplicateGroup } from '../components/JournalDup
 import { JournalRetrospective } from '../components/JournalRetrospective';
 import { WeatherReadingModal } from '../components/WeatherReadingModal';
 import { MultiplicationGuideModal } from '../components/MultiplicationGuideModal';
+import { JournalIntegrationModal } from '../components/JournalIntegrationModal';
+import { VoiceDictationControl } from '../components/VoiceDictationControl';
 import { matchUserPlantsWithMultiplications } from '../utils/multiplicationMatcher';
 import { 
   getEffectiveWeatherIndicators, 
@@ -53,6 +55,9 @@ export const JOURNAL_QUARTERS = [
 export interface CombinedEntry {
   id: string;
   title?: string;
+  description?: string;
+  commentaire?: string;
+  statut?: string;
   tags?: string[];
   date: string;
   content: string;
@@ -79,6 +84,8 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
+  const [newEntryStatut, setNewEntryStatut] = useState('Fait');
+  const [isIntegrationModalOpen, setIsIntegrationModalOpen] = useState(false);
   const [photos, setPhotos] = useState<string[]>([]);
   const [newEntrySuccessStatus, setNewEntrySuccessStatus] = useState<'none' | 'success' | 'failure'>('none');
   const [searchTerm, setSearchTerm] = useState('');
@@ -554,18 +561,23 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
       const parsedMin = temperatureMin.trim() !== '' ? parseFloat(temperatureMin) : undefined;
       const parsedMax = temperatureMax.trim() !== '' ? parseFloat(temperatureMax) : undefined;
       const parsedRain = rainfall.trim() !== '' ? parseFloat(rainfall) : undefined;
+      const isSuccess = newEntrySuccessStatus === 'success' || newEntryStatut.toLowerCase().includes('réussi') || newEntryStatut.toLowerCase().includes('succès');
+      const isFailure = newEntrySuccessStatus === 'failure' || newEntryStatut.toLowerCase().includes('échec') || newEntryStatut.toLowerCase().includes('raté');
 
       const entry: JournalEntry = {
         id: uuidv4(),
         title: title.trim() || undefined,
+        description: title.trim() || undefined,
+        commentaire: content.trim(),
+        statut: newEntryStatut.trim() || (isSuccess ? 'Réussite' : isFailure ? 'Échec' : 'Fait'),
         tags: selectedTags.length > 0 ? selectedTags : undefined,
         date,
         content: content.trim(),
         photos,
         isDeleted: false,
         seasonId: (currentSeasonId && currentSeasonId !== 'all') ? currentSeasonId : seasons[0]?.id,
-        successStatus: newEntrySuccessStatus,
-        success: newEntrySuccessStatus === 'success' ? true : newEntrySuccessStatus === 'failure' ? false : undefined,
+        successStatus: isSuccess ? 'success' : isFailure ? 'failure' : newEntrySuccessStatus,
+        success: isSuccess ? true : isFailure ? false : undefined,
         weatherCondition: weatherCondition || undefined,
         temperature: parsedTemp,
         temperatureMin: parsedMin,
@@ -577,6 +589,7 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
       setTitle('');
       setSelectedTags([]);
       setContent('');
+      setNewEntryStatut('Fait');
       setPhotos([]);
       setNewEntrySuccessStatus('none');
       setWeatherCondition('');
@@ -1008,6 +1021,18 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
             <span className="hidden md:inline">Imprimer</span>
           </button>
 
+          {/* External tool integration (Import/Export: Date, Description, Commentaire, Statut) */}
+          <button
+            type="button"
+            onClick={() => setIsIntegrationModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 rounded-xl transition shadow-2xs text-xs font-semibold cursor-pointer"
+            title="Intégration du journal avec un nouvel outil (Export & Import : Date, Description, Commentaire, Statut)"
+          >
+            <ArrowUpDown className="w-3.5 h-3.5 text-indigo-600" />
+            <span className="hidden sm:inline">Intégration</span>
+            <span className="sm:hidden">Intégrer</span>
+          </button>
+
           {/* Priority sync */}
           <button
             type="button"
@@ -1104,6 +1129,12 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
             className="w-full px-3 py-1.5 text-xs font-medium rounded-xl border border-stone-200 bg-stone-50/60 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all placeholder:text-stone-400"
           />
 
+          {/* Voice Dictation Speech-to-Text */}
+          <VoiceDictationControl
+            value={content}
+            onChange={setContent}
+          />
+
           <textarea 
             required
             autoFocus
@@ -1111,7 +1142,7 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
             onChange={e => setContent(e.target.value)}
             rows={2}
             className="w-full px-3 py-2 text-xs rounded-xl border border-stone-200 focus:ring-2 focus:ring-emerald-500 outline-none resize-none leading-relaxed"
-            placeholder="Aujourd'hui au potager, j'ai observé / réalisé..."
+            placeholder="Aujourd'hui au potager, j'ai observé / réalisé (ou dictez oralement au micro)..."
           />
 
           {photos.length > 0 && (
@@ -1600,6 +1631,11 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
                     onChange={e => setEditTitle(e.target.value)}
                     placeholder="Titre de la note (optionnel)"
                     className="w-full px-2 py-1 text-xs font-medium rounded-lg border border-stone-200 bg-stone-50/50 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none placeholder:text-stone-400"
+                  />
+                  <VoiceDictationControl
+                    value={editContent}
+                    onChange={setEditContent}
+                    compact
                   />
                   <textarea 
                     required
@@ -2130,6 +2166,15 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
       <MultiplicationGuideModal
         isOpen={isMultiplicationModalOpen}
         onClose={() => setIsMultiplicationModalOpen(false)}
+      />
+
+      {/* Modal d'intégration externe (Export & Import 4 colonnes : Date, Description, Commentaire, Statut) */}
+      <JournalIntegrationModal
+        isOpen={isIntegrationModalOpen}
+        onClose={() => setIsIntegrationModalOpen(false)}
+        entries={entries || []}
+        seasons={seasons}
+        currentSeasonId={currentSeasonId}
       />
     </div>
   );

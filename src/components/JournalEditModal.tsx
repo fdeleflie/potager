@@ -5,6 +5,7 @@ import { compressImage } from '../utils/image';
 import { fb, useFirebaseData } from '../hooks/useFirebaseData';
 import { getEffectiveWeatherIndicators, matchBestWeatherIndicator, isWeatherOptionActive, WeatherIndicatorItem } from '../utils/weatherIndicators';
 import { getCurrentWeather } from '../services/weatherService';
+import { VoiceDictationControl } from './VoiceDictationControl';
 
 interface Props {
   isOpen: boolean;
@@ -19,6 +20,7 @@ export function JournalEditModal({ isOpen, onClose, entry, onDelete, availableTa
   const [tags, setTags] = useState<string[]>([]);
   const [content, setContent] = useState('');
   const [date, setDate] = useState('');
+  const [statut, setStatut] = useState('');
   const [photos, setPhotos] = useState<string[]>([]);
   const [successStatus, setSuccessStatus] = useState<'none' | 'success' | 'failure'>('none');
   const [weatherCondition, setWeatherCondition] = useState('');
@@ -80,6 +82,7 @@ export function JournalEditModal({ isOpen, onClose, entry, onDelete, availableTa
       setTags(entry.tags || []);
       setContent(entry.content || '');
       setDate(entry.date || new Date().toISOString().split('T')[0]);
+      setStatut(entry.statut || (entry.success === true ? 'Réussite' : entry.success === false ? 'Échec' : 'Fait'));
       setPhotos(entry.photos || []);
       setSuccessStatus(
         entry.success === true ? 'success' :
@@ -138,14 +141,20 @@ export function JournalEditModal({ isOpen, onClose, entry, onDelete, availableTa
 
     setIsSaving(true);
     try {
+      const isSuccess = successStatus === 'success' || statut.toLowerCase().includes('réussi') || statut.toLowerCase().includes('succès');
+      const isFailure = successStatus === 'failure' || statut.toLowerCase().includes('échec') || statut.toLowerCase().includes('raté');
+
       await fb.update('journal', entry.id, {
         title: title.trim() || undefined,
+        description: title.trim() || undefined,
+        statut: statut.trim() || (isSuccess ? 'Réussite' : isFailure ? 'Échec' : 'Fait'),
+        commentaire: content.trim(),
         tags: tags.length > 0 ? tags : [],
         content: content.trim(),
         date,
         photos,
-        successStatus,
-        success: successStatus === 'success' ? true : successStatus === 'failure' ? false : undefined,
+        successStatus: isSuccess ? 'success' : isFailure ? 'failure' : successStatus,
+        success: isSuccess ? true : isFailure ? false : undefined,
         weatherCondition: weatherCondition || undefined,
         temperature: temperature.trim() !== '' ? parseFloat(temperature) : undefined,
         temperatureMin: temperatureMin.trim() !== '' ? parseFloat(temperatureMin) : undefined,
@@ -213,46 +222,45 @@ export function JournalEditModal({ isOpen, onClose, entry, onDelete, availableTa
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-stone-700 mb-1">
-              Statut de culture / résultat
+            <label className="block text-xs font-semibold text-stone-700 mb-1 flex items-center justify-between">
+              <span>Statut de l'observation</span>
+              <span className="text-[11px] font-normal text-stone-400">Intégration outil : {statut || 'Fait'}</span>
             </label>
-            <div className="grid grid-cols-3 gap-2">
-              <button
-                type="button"
-                onClick={() => setSuccessStatus('none')}
-                className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl border text-xs font-medium transition-all ${
-                  successStatus === 'none'
-                    ? 'bg-stone-100 border-stone-300 text-stone-800 font-semibold shadow-2xs'
-                    : 'bg-white border-stone-200 text-stone-500 hover:bg-stone-50'
-                }`}
-              >
-                ⚪ Neutre
-              </button>
-              <button
-                type="button"
-                onClick={() => setSuccessStatus('success')}
-                className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl border text-xs font-medium transition-all ${
-                  successStatus === 'success'
-                    ? 'bg-emerald-600 border-emerald-600 text-white font-semibold shadow-xs'
-                    : 'bg-emerald-50/60 border-emerald-200 text-emerald-700 hover:bg-emerald-100/60'
-                }`}
-              >
-                <CheckCircle2 className="w-4 h-4" />
-                Réussite
-              </button>
-              <button
-                type="button"
-                onClick={() => setSuccessStatus('failure')}
-                className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl border text-xs font-medium transition-all ${
-                  successStatus === 'failure'
-                    ? 'bg-red-600 border-red-600 text-white font-semibold shadow-xs'
-                    : 'bg-red-50/60 border-red-200 text-red-700 hover:bg-red-100/60'
-                }`}
-              >
-                <XCircle className="w-4 h-4" />
-                Échec
-              </button>
+            <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 mb-2">
+              {[
+                { label: 'Fait', color: 'bg-emerald-50 text-emerald-800 border-emerald-300' },
+                { label: 'En cours', color: 'bg-amber-50 text-amber-800 border-amber-300' },
+                { label: 'À faire', color: 'bg-blue-50 text-blue-800 border-blue-300' },
+                { label: 'Réussite', color: 'bg-emerald-600 text-white border-emerald-600' },
+                { label: 'Échec', color: 'bg-red-600 text-white border-red-600' },
+                { label: 'Neutre', color: 'bg-stone-100 text-stone-700 border-stone-300' }
+              ].map(item => (
+                <button
+                  key={item.label}
+                  type="button"
+                  onClick={() => {
+                    setStatut(item.label);
+                    if (item.label === 'Réussite') setSuccessStatus('success');
+                    else if (item.label === 'Échec') setSuccessStatus('failure');
+                    else setSuccessStatus('none');
+                  }}
+                  className={`py-1.5 px-2 rounded-xl border text-xs font-semibold transition-all cursor-pointer text-center ${
+                    statut === item.label
+                      ? 'ring-2 ring-emerald-500 shadow-2xs font-bold scale-102 ' + item.color
+                      : 'bg-white border-stone-200 text-stone-600 hover:bg-stone-50'
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
             </div>
+            <input
+              type="text"
+              value={statut}
+              onChange={e => setStatut(e.target.value)}
+              placeholder="Ou saisissez un statut personnalisé (ex: Validé, Récolté...)"
+              className="w-full px-3 py-1.5 text-xs rounded-xl border border-stone-200 bg-white text-stone-800 placeholder:text-stone-400 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none"
+            />
           </div>
 
           {/* Quick Activity Tags */}
@@ -407,16 +415,20 @@ export function JournalEditModal({ isOpen, onClose, entry, onDelete, availableTa
             </div>
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-stone-700 mb-1">
+          <div className="space-y-1.5">
+            <label className="block text-xs font-semibold text-stone-700">
               Contenu de la note / observation
             </label>
+            <VoiceDictationControl 
+              value={content}
+              onChange={setContent}
+            />
             <textarea
               required
               rows={4}
               value={content}
               onChange={e => setContent(e.target.value)}
-              placeholder="Décrivez vos observations, la météo, un geste accompli..."
+              placeholder="Décrivez vos observations, la météo, un geste accompli (ou dictez oralement au micro)..."
               className="w-full px-3 py-2 text-sm rounded-xl border border-stone-200 bg-white text-stone-800 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none resize-y"
             />
           </div>

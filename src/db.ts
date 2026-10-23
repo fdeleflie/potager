@@ -94,6 +94,9 @@ export interface Structure {
 export interface JournalEntry {
   id: string;
   title?: string;
+  description?: string;
+  commentaire?: string;
+  statut?: string;
   tags?: string[];
   date: string;
   content: string;
