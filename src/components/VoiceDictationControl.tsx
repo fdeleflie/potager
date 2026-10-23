@@ -93,34 +93,37 @@ export function VoiceDictationControl({
         let finalTranscript = '';
         let currentInterim = '';
 
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          const trans = event.results[i][0].transcript;
-          if (event.results[i].isFinal) {
-            finalTranscript += trans + ' ';
+        // Iterate over all results in current session from 0 to length - 1.
+        // Chrome maintains the full list in event.results; accumulating manually in a ref
+        // was causing words to repeat on every interim update.
+        for (let i = 0; i < event.results.length; ++i) {
+          const result = event.results[i];
+          const text = result[0]?.transcript || '';
+          if (result.isFinal) {
+            finalTranscript += text + ' ';
           } else {
-            currentInterim += trans;
+            currentInterim += text;
           }
         }
 
-        if (finalTranscript) {
-          accumulatedTranscriptRef.current += finalTranscript;
-        }
-
-        const totalSpoken = cleanFrenchSpeech(
-          (accumulatedTranscriptRef.current + (currentInterim ? ' ' + currentInterim : '')).trim()
-        );
+        const rawSpoken = (finalTranscript + currentInterim).trim();
+        const totalSpoken = cleanFrenchSpeech(rawSpoken);
         setInterimText(totalSpoken);
+
+        if (!totalSpoken) return;
 
         // Apply immediately to the note depending on selected mode
         if (modeRef.current === 'replace') {
           onChange(totalSpoken);
         } else {
-          // Append mode
+          // Append mode: append to baseTextRef snapshot taken when listening started
           const base = baseTextRef.current.trim();
           if (!base) {
             onChange(totalSpoken);
           } else {
-            const separator = base.endsWith('\n') ? '' : (base.endsWith('.') || base.endsWith('!') || base.endsWith('?')) ? ' ' : '. ';
+            const needsNewline = base.endsWith('\n');
+            const needsSpace = base.endsWith('.') || base.endsWith('!') || base.endsWith('?') || base.endsWith(':');
+            const separator = needsNewline ? '' : needsSpace ? ' ' : '. ';
             onChange(base + separator + totalSpoken);
           }
         }
