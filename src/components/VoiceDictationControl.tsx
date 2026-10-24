@@ -22,10 +22,97 @@ interface Props {
   compact?: boolean;
 }
 
-// Map common spoken French punctuation
+// Normalize word for phonetic and spelling comparison (strip accents, punctuation, lowercase)
+function norm(w: string): string {
+  return w
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.,!?;:()'"«»\-]/g, '')
+    .trim();
+}
+
+/**
+ * Robustly merges two transcripts, eliminating mobile accumulative duplicates
+ * and phrase boundary overlaps caused by Android Chrome / mobile speech services.
+ */
+function mergeTranscripts(existing: string, incoming: string): string {
+  const a = (existing || '').trim();
+  const b = (incoming || '').trim();
+  if (!a) return b;
+  if (!b) return a;
+  if (a === b) return a;
+
+  const aWords = a.split(/\s+/).filter(Boolean);
+  const bWords = b.split(/\s+/).filter(Boolean);
+
+  const aNorm = aWords.map(norm).join(' ');
+  const bNorm = bWords.map(norm).join(' ');
+
+  // 1. If incoming starts with existing or contains it (classic Android accumulative bug)
+  if (bNorm.startsWith(aNorm)) {
+    return b;
+  }
+  // 2. If existing already contains incoming in full
+  if (aNorm.endsWith(bNorm) || aNorm.includes(bNorm)) {
+    return a;
+  }
+
+  // 3. Boundary overlap check: check if end of `a` overlaps with start of `b` (up to 12 words)
+  const maxOverlap = Math.min(aWords.length, bWords.length, 12);
+  for (let len = maxOverlap; len >= 1; len--) {
+    const aTail = aWords.slice(aWords.length - len).map(norm).join(' ');
+    const bHead = bWords.slice(0, len).map(norm).join(' ');
+
+    if (aTail && bHead && aTail === bHead) {
+      // Overlap matched of length `len` words! Stitch without duplicate words:
+      return aWords.concat(bWords.slice(len)).join(' ');
+    }
+  }
+
+  // 4. Disjoint: return concatenated
+  return a + ' ' + b;
+}
+
+/**
+ * Removes any consecutive duplicate single words or multi-word phrases (e.g. "tomates tomates" -> "tomates")
+ */
+function removeConsecutiveDuplicateWords(text: string): string {
+  if (!text) return '';
+
+  const words = text.split(/\s+/).filter(Boolean);
+  const deduped: string[] = [];
+
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    const prev = deduped[deduped.length - 1];
+    if (prev && norm(w) && norm(w) === norm(prev)) {
+      // Duplicate consecutive word! Preserve punctuation if current has one
+      if (/[.,!?;:]/.test(w) && !/[.,!?;:]/.test(prev)) {
+        deduped[deduped.length - 1] = prev + w.replace(/[^.,!?;:]/g, '');
+      }
+      continue;
+    }
+    deduped.push(w);
+  }
+
+  let result = deduped.join(' ');
+
+  // Remove consecutive identical 2-word phrases ("sous serre sous serre" -> "sous serre")
+  result = result.replace(/\b(\w+[\s'-]+\w+)\s+\1\b/gi, '$1');
+
+  // Remove consecutive identical 3-word phrases
+  result = result.replace(/\b(\w+[\s'-]+\w+[\s'-]+\w+)\s+\1\b/gi, '$1');
+
+  return result;
+}
+
+// Map common spoken French punctuation and format clean French text
 function cleanFrenchSpeech(text: string): string {
-  let res = text;
-  // Common oral punctuation
+  if (!text) return '';
+  let res = text.replace(/[ \t]+/g, ' ');
+
+  // Common oral punctuation in French
   res = res.replace(/\s+à la ligne\s*/gi, '\n');
   res = res.replace(/\s+nouveau paragraphe\s*/gi, '\n\n');
   res = res.replace(/\s+point d'interrogation\s*/gi, '? ');
@@ -35,10 +122,15 @@ function cleanFrenchSpeech(text: string): string {
   res = res.replace(/\s+virgule\s*/gi, ', ');
   res = res.replace(/\s+point\s+/gi, '. ');
   res = res.replace(/\s+point$/gi, '.');
-  
+
+  // Clean spacing around punctuation
+  res = res.replace(/\s*([.,!?;:])\s*/g, '$1 ');
+  res = res.replace(/\s*\n\s*/g, '\n');
+
   // Capitalize first letter of sentences
-  res = res.replace(/(^|[.?!]\s+)([a-zà-öø-ÿ])/g, (match, prefix, char) => prefix + char.toUpperCase());
-  return res;
+  res = res.replace(/(^|[.?!]\s+|\n)([a-zà-öø-ÿ])/g, (match, prefix, char) => prefix + char.toUpperCase());
+
+  return res.trim();
 }
 
 export function VoiceDictationControl({
@@ -61,7 +153,6 @@ export function VoiceDictationControl({
   const isListeningRef = useRef<boolean>(false);
   const baseTextRef = useRef<string>('');
   const modeRef = useRef<'append' | 'replace'>('append');
-  const accumulatedTranscriptRef = useRef<string>('');
 
   // Detect whether we are embedded inside an iframe (like AI Studio preview)
   const isEmbeddedInIframe = typeof window !== 'undefined' && window.self !== window.top;
@@ -93,21 +184,23 @@ export function VoiceDictationControl({
         let finalTranscript = '';
         let currentInterim = '';
 
-        // Iterate over all results in current session from 0 to length - 1.
-        // Chrome maintains the full list in event.results; accumulating manually in a ref
-        // was causing words to repeat on every interim update.
+        // Mobile Chrome quirk: event.results often contains the entire accumulated sentence
+        // across indices, or re-emits overlapping text chunks.
+        // We merge each piece using mergeTranscripts to eliminate any duplicates.
         for (let i = 0; i < event.results.length; ++i) {
           const result = event.results[i];
-          const text = result[0]?.transcript || '';
+          const text = (result[0]?.transcript || '').trim();
+          if (!text) continue;
+
           if (result.isFinal) {
-            finalTranscript += text + ' ';
+            finalTranscript = mergeTranscripts(finalTranscript, text);
           } else {
-            currentInterim += text;
+            currentInterim = text;
           }
         }
 
-        const rawSpoken = (finalTranscript + currentInterim).trim();
-        const totalSpoken = cleanFrenchSpeech(rawSpoken);
+        const rawSpoken = mergeTranscripts(finalTranscript, currentInterim);
+        const totalSpoken = cleanFrenchSpeech(removeConsecutiveDuplicateWords(rawSpoken));
         setInterimText(totalSpoken);
 
         if (!totalSpoken) return;
@@ -210,7 +303,6 @@ export function VoiceDictationControl({
     if (!recognitionRef.current) return;
     setLastOriginalText(value);
     baseTextRef.current = value;
-    accumulatedTranscriptRef.current = '';
     setInterimText('');
 
     try {
