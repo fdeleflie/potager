@@ -148,6 +148,7 @@ export interface EncyclopediaEntry {
   id: string;
   name: string;
   category: string;
+  categories?: string[];
   sowingPeriod: string;
   plantingPeriod: string;
   harvestPeriod: string;

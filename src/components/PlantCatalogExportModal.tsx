@@ -21,7 +21,7 @@ export interface PlantCatalogExportModalProps {
   selectedPlant: ExportPlantItem | null;
   healthIssues: ExportHealthItem[];
   attributeTypes?: Array<{ id: string; value: string }>;
-  activeFilterCategory?: string;
+  activeFilterCategory?: string | string[];
   searchTerm?: string;
 }
 
@@ -79,8 +79,9 @@ export function PlantCatalogExportModal({
 
   const getSuggestedFilename = () => {
     const dateStr = new Date().toISOString().split('T')[0];
-    const categorySuffix = activeFilterCategory && exportScope === 'filtered' 
-      ? `_${activeFilterCategory.toLowerCase().replace(/[^a-z0-9]/g, '_')}` 
+    const catStr = Array.isArray(activeFilterCategory) ? activeFilterCategory.join('_') : activeFilterCategory;
+    const categorySuffix = catStr && exportScope === 'filtered' 
+      ? `_${catStr.toLowerCase().replace(/[^a-z0-9]/g, '_')}` 
       : '';
     
     if (exportType === 'summary_csv') {

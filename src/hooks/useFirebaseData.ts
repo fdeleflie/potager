@@ -707,3 +707,41 @@ export const syncPriorityCollections = async (): Promise<{
   }
 };
 
+/**
+ * Réinitialise l'avertissement de dépassement de quota
+ */
+export const resetQuotaExceededWarning = () => {
+  sessionStorage.removeItem('firebase_quota_exceeded_today');
+  window.dispatchEvent(new CustomEvent('firebase_quota_warning'));
+  window.dispatchEvent(new Event('firebase_reads_updated'));
+};
+
+/**
+ * Teste la connectivité directe avec Firestore pour vérifier si le quota est redevenu disponible
+ */
+export const testFirebaseConnection = async (): Promise<{ success: boolean; message: string }> => {
+  try {
+    const targetUid = await getTargetUid();
+    if (!targetUid) {
+      return { success: false, message: 'Utilisateur non connecté' };
+    }
+    const testDoc = doc(dbFirebase, `users/${targetUid}/config`, 'default_state');
+    await getDoc(testDoc);
+    trackFirebaseRead(1);
+    // Success! Clear quota flag
+    sessionStorage.removeItem('firebase_quota_exceeded_today');
+    window.dispatchEvent(new CustomEvent('firebase_quota_warning'));
+    window.dispatchEvent(new Event('firebase_reads_updated'));
+    return { success: true, message: 'Connexion Firestore active ! Vos données sont synchronisées en direct.' };
+  } catch (err: any) {
+    const isQuota = err?.message?.includes('Quota') || err?.message?.includes('quota') || err?.code === 'resource-exhausted' || err?.message?.includes('Free daily read units');
+    if (isQuota) {
+      const today = new Date().toISOString().split('T')[0];
+      sessionStorage.setItem('firebase_quota_exceeded_today', today);
+      window.dispatchEvent(new CustomEvent('firebase_quota_warning'));
+      return { success: false, message: 'Le serveur Google Firestore confirme que le quota de 50 000 lectures/jour est atteint. Le cache local reste actif.' };
+    }
+    return { success: false, message: `Erreur de communication : ${err.message || 'Réseau indisponible'}` };
+  }
+};
+

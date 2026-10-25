@@ -1,8 +1,8 @@
-import { useFirebaseData, fb, getFirebaseWriteCount, getFirebaseQuotaStats, syncPriorityCollections, setManualEconomyMode, QuotaStats } from '../hooks/useFirebaseData';
+import { useFirebaseData, fb, getFirebaseWriteCount, getFirebaseQuotaStats, syncPriorityCollections, setManualEconomyMode, testFirebaseConnection, QuotaStats } from '../hooks/useFirebaseData';
 import React, { useState, useEffect, useMemo } from 'react';
 import { db, ConfigItem } from '../db';
 import { v4 as uuidv4 } from 'uuid';
-import { Settings, Plus, Trash2, Edit2, Palette, XCircle, CheckCircle2, Trees, BookOpen, Info, Activity, Calendar, RefreshCw, Sparkles, AlertCircle, AlertTriangle, Zap, ShieldCheck, Database, HardDrive, CheckCircle, ExternalLink, ArrowRight } from 'lucide-react';
+import { Settings, Plus, Trash2, Edit2, Palette, XCircle, CheckCircle2, Trees, BookOpen, Info, Activity, Calendar, RefreshCw, Sparkles, AlertCircle, AlertTriangle, Zap, ShieldCheck, Database, HardDrive, CheckCircle, ExternalLink, ArrowRight, Check, X, CheckSquare, Square } from 'lucide-react';
 import { ConfirmModal } from '../components/Modals';
 import { ICON_LIST, ICON_MAP, GARDEN_EMOJIS, GARDEN_EMOJI_CATEGORIES } from '../constants';
 import { getDistinctColor } from '../utils/colors';
@@ -273,6 +273,15 @@ export function Config({ onNavigate, initialTab }: { onNavigate?: (view: any) =>
     else if (activeTab === 'expense_category') setNewEmoji('🛒');
     else setNewEmoji('');
   }, [activeTab]);
+
+  const [selectedCategoryIds, setSelectedCategoryIds] = useState<Set<string>>(new Set());
+  const [isMergeModalOpen, setIsMergeModalOpen] = useState(false);
+  const [mergeTargetCategory, setMergeTargetCategory] = useState('');
+
+  useEffect(() => {
+    setSelectedCategoryIds(new Set());
+  }, [activeTab]);
+
   const [selectedAttrType, setSelectedAttrType] = useState<string>('');
   const [newSeasonName, setNewSeasonName] = useState('');
   const [editingSeasonId, setEditingSeasonId] = useState<string | null>(null);
@@ -314,6 +323,23 @@ export function Config({ onNavigate, initialTab }: { onNavigate?: (view: any) =>
       setPrioritySyncFeedback(e.message || 'Erreur');
     } finally {
       setIsSyncingPriority(false);
+      setTimeout(() => setPrioritySyncFeedback(null), 6000);
+    }
+  };
+
+  const [isTestingConnection, setIsTestingConnection] = useState(false);
+
+  const handleTestConnection = async () => {
+    setIsTestingConnection(true);
+    setPrioritySyncFeedback(null);
+    try {
+      const res = await testFirebaseConnection();
+      setPrioritySyncFeedback(res.message);
+      setQuotaStats(getFirebaseQuotaStats());
+    } catch (e: any) {
+      setPrioritySyncFeedback(e.message || 'Erreur lors du test');
+    } finally {
+      setIsTestingConnection(false);
       setTimeout(() => setPrioritySyncFeedback(null), 6000);
     }
   };
@@ -478,6 +504,74 @@ export function Config({ onNavigate, initialTab }: { onNavigate?: (view: any) =>
         }
       }
     });
+  };
+
+  const handleBatchDeleteCategories = () => {
+    if (selectedCategoryIds.size === 0) return;
+    const selectedItems = items.filter(i => selectedCategoryIds.has(i.id));
+    const totalPlantsAffected = selectedItems.reduce((acc, it) => {
+      return acc + (plantCategoryUsage.get(normalizeCategoryKey(it.value)) || 0);
+    }, 0);
+
+    setConfirmState({
+      isOpen: true,
+      title: `Supprimer ${selectedCategoryIds.size} catégorie(s)`,
+      message: totalPlantsAffected > 0
+        ? `Attention : ${totalPlantsAffected} plante(s) du catalogue utilisent actuellement les catégories sélectionnées. Si vous les supprimez, vous devrez leur réassigner une autre catégorie.\nConfirmer la suppression ?`
+        : `Voulez-vous vraiment supprimer les ${selectedCategoryIds.size} catégorie(s) sélectionnée(s) ?`,
+      isDanger: true,
+      onConfirm: async () => {
+        for (const it of selectedItems) {
+          await fb.delete('config', it.id);
+        }
+        setSelectedCategoryIds(new Set());
+        setCleanFeedback(`${selectedItems.length} catégorie(s) supprimée(s) avec succès !`);
+        setTimeout(() => setCleanFeedback(null), 3500);
+      }
+    });
+  };
+
+  const handleExecuteMerge = async () => {
+    if (!mergeTargetCategory.trim() || selectedCategoryIds.size <= 1) return;
+    const selectedItems = items.filter(i => selectedCategoryIds.has(i.id));
+    const targetName = mergeTargetCategory.trim();
+    
+    // Update plants in encyclopedia
+    if (encyclopedia) {
+      for (const p of encyclopedia) {
+        const plantCats: string[] = Array.isArray(p.categories) && p.categories.length > 0 
+          ? p.categories 
+          : (p.category ? [p.category] : []);
+        
+        const hasMatch = plantCats.some(cat => 
+          selectedItems.some(it => areCategoriesEqual(it.value, cat))
+        );
+        
+        if (hasMatch) {
+          const updatedCats = plantCats.map(cat => {
+            const matched = selectedItems.some(it => areCategoriesEqual(it.value, cat));
+            return matched ? targetName : cat;
+          });
+          const uniqueCats = Array.from(new Set(updatedCats));
+          await fb.update('encyclopedia', p.id, {
+            categories: uniqueCats,
+            category: uniqueCats[0] || targetName
+          });
+        }
+      }
+    }
+    
+    // Delete other selected items in config that don't match targetName
+    for (const it of selectedItems) {
+      if (!areCategoriesEqual(it.value, targetName)) {
+        await fb.delete('config', it.id);
+      }
+    }
+    
+    setSelectedCategoryIds(new Set());
+    setIsMergeModalOpen(false);
+    setCleanFeedback(`Catégories fusionnées avec succès dans « ${targetName} » !`);
+    setTimeout(() => setCleanFeedback(null), 4000);
   };
 
   const handleCleanDuplicates = async () => {
@@ -816,15 +910,27 @@ export function Config({ onNavigate, initialTab }: { onNavigate?: (view: any) =>
                     </div>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={handlePrioritySync}
-                    disabled={isSyncingPriority}
-                    className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold shadow-sm transition-all flex items-center gap-2 shrink-0 disabled:opacity-50"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${isSyncingPriority ? 'animate-spin' : ''}`} />
-                    <span>{isSyncingPriority ? 'Synchronisation...' : 'Synchroniser en priorité'}</span>
-                  </button>
+                  <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap shrink-0">
+                    <button
+                      type="button"
+                      onClick={handleTestConnection}
+                      disabled={isTestingConnection}
+                      className="px-3.5 py-2 bg-white hover:bg-stone-50 border border-stone-300 text-stone-800 rounded-xl text-xs font-semibold shadow-2xs transition-all flex items-center gap-2 shrink-0 disabled:opacity-50 cursor-pointer"
+                    >
+                      <CheckCircle className={`w-3.5 h-3.5 ${isTestingConnection ? 'animate-spin text-amber-600' : 'text-emerald-600'}`} />
+                      <span>{isTestingConnection ? 'Vérification...' : 'Tester connexion'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handlePrioritySync}
+                      disabled={isSyncingPriority}
+                      className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold shadow-sm transition-all flex items-center gap-2 shrink-0 disabled:opacity-50 cursor-pointer"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isSyncingPriority ? 'animate-spin' : ''}`} />
+                      <span>{isSyncingPriority ? 'Synchronisation...' : 'Synchroniser en priorité'}</span>
+                    </button>
+                  </div>
                 </div>
 
                 {prioritySyncFeedback && (
@@ -1245,6 +1351,69 @@ export function Config({ onNavigate, initialTab }: { onNavigate?: (view: any) =>
           </div>
 
           <div className="space-y-2">
+            {activeTab === 'category' && items.length > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 bg-stone-50 border border-stone-200 rounded-xl text-xs">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={selectedCategoryIds.size === items.length && items.length > 0}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSelectedCategoryIds(new Set(items.map(i => i.id)));
+                      } else {
+                        setSelectedCategoryIds(new Set());
+                      }
+                    }}
+                    className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 border-stone-300 cursor-pointer"
+                    id="select_all_categories"
+                  />
+                  <label htmlFor="select_all_categories" className="font-semibold text-stone-700 cursor-pointer select-none">
+                    {selectedCategoryIds.size > 0 
+                      ? `${selectedCategoryIds.size} sur ${items.length} catégorie(s) sélectionnée(s)`
+                      : 'Sélection multiple des catégories'}
+                  </label>
+                </div>
+
+                {selectedCategoryIds.size > 0 && (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {selectedCategoryIds.size > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const firstSel = items.find(i => selectedCategoryIds.has(i.id))?.value || '';
+                          setMergeTargetCategory(firstSel);
+                          setIsMergeModalOpen(true);
+                        }}
+                        className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
+                        title="Fusionner les catégories sélectionnées en une seule"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+                        Fusionner ({selectedCategoryIds.size})
+                      </button>
+                    )}
+                    
+                    <button
+                      type="button"
+                      onClick={handleBatchDeleteCategories}
+                      className="px-2.5 py-1 bg-red-50 hover:bg-red-100 text-red-700 border border-red-300 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
+                      title="Supprimer les catégories sélectionnées"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                      Supprimer ({selectedCategoryIds.size})
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCategoryIds(new Set())}
+                      className="px-2 py-1 text-stone-500 hover:text-stone-700 text-xs font-medium cursor-pointer"
+                    >
+                      Désélectionner tout
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
             {items.length === 0 ? (
               <p className="text-stone-500 italic text-sm text-center py-6">Aucun élément configuré.</p>
             ) : (
@@ -1257,6 +1426,19 @@ export function Config({ onNavigate, initialTab }: { onNavigate?: (view: any) =>
                     <li key={item.id} className="flex flex-col p-2 hover:bg-stone-50 transition-colors">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2 flex-1">
+                          {activeTab === 'category' && (
+                            <input
+                              type="checkbox"
+                              checked={selectedCategoryIds.has(item.id)}
+                              onChange={(e) => {
+                                const next = new Set(selectedCategoryIds);
+                                if (e.target.checked) next.add(item.id);
+                                else next.delete(item.id);
+                                setSelectedCategoryIds(next);
+                              }}
+                              className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 border-stone-300 cursor-pointer shrink-0 mr-1"
+                            />
+                          )}
                           {editingItemId === item.id ? (
                             <form onSubmit={handleSaveItemName} className="flex flex-1 items-center gap-2 mr-4">
                               <EmojiLogoPicker
@@ -1664,6 +1846,74 @@ export function Config({ onNavigate, initialTab }: { onNavigate?: (view: any) =>
           )}
         </div>
       </div>
+      {/* Category Merge Modal */}
+      {isMergeModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl shadow-xl border border-stone-200 max-w-md w-full p-6 space-y-4 animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-amber-100 text-amber-700 rounded-xl">
+                  <Sparkles className="w-5 h-5" />
+                </div>
+                <h3 className="font-serif text-lg font-medium text-stone-900">
+                  Fusionner les catégories
+                </h3>
+              </div>
+              <button
+                onClick={() => setIsMergeModalOpen(false)}
+                className="text-stone-400 hover:text-stone-600 p-1 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-stone-600">
+              Vous avez sélectionné <strong>{selectedCategoryIds.size} catégories</strong>. Choisissez la catégorie cible dans laquelle toutes les plantes correspondantes seront réassignées :
+            </p>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-stone-700">Catégorie cible finale :</label>
+              <select
+                value={mergeTargetCategory}
+                onChange={(e) => setMergeTargetCategory(e.target.value)}
+                className="w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500"
+              >
+                {items
+                  .filter(i => selectedCategoryIds.has(i.id))
+                  .map(i => (
+                    <option key={i.id} value={i.value}>{i.value}</option>
+                  ))
+                }
+              </select>
+            </div>
+
+            <div className="p-3 bg-stone-50 rounded-xl border border-stone-200/60 text-[11px] text-stone-500 space-y-1">
+              <p className="font-medium text-stone-700">Conséquences de la fusion :</p>
+              <ul className="list-disc pl-4 space-y-0.5">
+                <li>Toutes les plantes du catalogue associées aux catégories fusionnées seront mises à jour vers « {mergeTargetCategory} ».</li>
+                <li>Les doublons ou variantes sélectionnées seront retirés proprement de la configuration.</li>
+              </ul>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsMergeModalOpen(false)}
+                className="px-4 py-2 text-xs font-medium text-stone-600 hover:bg-stone-100 rounded-xl transition-colors cursor-pointer"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                onClick={handleExecuteMerge}
+                className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs transition-colors cursor-pointer"
+              >
+                Confirmer la fusion
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

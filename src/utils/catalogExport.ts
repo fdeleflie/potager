@@ -7,6 +7,7 @@ export interface ExportPlantItem {
   id: string;
   name: string;
   category: string;
+  categories?: string[];
   sowingPeriod?: string;
   plantingPeriod?: string;
   harvestPeriod?: string;
@@ -25,6 +26,7 @@ export interface ExportPlantItem {
     attributes?: Record<string, any>;
   }>;
   orchardTreeCount?: number;
+  totalCount?: number;
 }
 
 export interface ExportHealthItem {

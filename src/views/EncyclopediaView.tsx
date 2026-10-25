@@ -8,7 +8,7 @@ import {
   AlertTriangle, CheckCircle2, ShieldCheck, Leaf,
   ThumbsUp, ThumbsDown, Calendar, Maximize2, ChevronRight, ChevronLeft,
   List, Wand2, Trees, RefreshCw, Sparkles, Layers, MapPin, MapPinOff,
-  Printer, Download, FileSpreadsheet
+  Printer, Download, FileSpreadsheet, Tag, Sprout, Check, ChevronDown, ArrowRight
 } from 'lucide-react';
 import { ConfirmModal } from '../components/Modals';
 import { DuplicateDetectorModal } from '../components/DuplicateDetectorModal';
@@ -35,7 +35,8 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
   const [activeTab, setActiveTab] = useState<Tab>('vegetables');
   const [plantSubTab, setPlantSubTab] = useState<PlantSubTab>('culture');
   const [searchTerm, setSearchTerm] = useState('');
-  const [filterCategory, setFilterCategory] = useState('');
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+  const [isCategoryDropdownOpen, setIsCategoryDropdownOpen] = useState(false);
   const [selectedVegId, setSelectedVegId] = useState<string | null>(null);
   const [selectedHealthId, setSelectedHealthId] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -77,9 +78,10 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
   const [isCustomCategory, setIsCustomCategory] = useState(false);
   const [customCategoryName, setCustomCategoryName] = useState('');
   const [newVarietyName, setNewVarietyName] = useState('');
+  const [newVarietyQuantity, setNewVarietyQuantity] = useState<number>(1);
   const [varietyError, setVarietyError] = useState<string | null>(null);
   const [editingVarietyId, setEditingVarietyId] = useState<string | null>(null);
-  const [varietyEditForm, setVarietyEditForm] = useState<{name: string, attributes: any}>({name: '', attributes: {}});
+  const [varietyEditForm, setVarietyEditForm] = useState<{name: string, quantity: number, attributes: any}>({name: '', quantity: 1, attributes: {}});
 
   // Confirmation modal state for reliable deletions in iframe
   const [confirmState, setConfirmState] = useState<{
@@ -151,9 +153,12 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
       const treeSample = trees?.find((t: any) => (t.species || '').toLowerCase().trim() === nameLower);
 
       const displayName = enc?.name || conf?.value || treeSample?.species || '';
-      const rawCategory = enc?.category || (treeSample ? 'Arbre fruitier' : 'Légume');
-      const category = getCanonicalCategory(rawCategory, config);
-      const icon = enc?.icon || (category === 'Arbre fruitier' ? (treeSample?.icon || 'Trees') : 'Sprout');
+      const rawCategories: string[] = Array.isArray(enc?.categories) && enc.categories.length > 0
+        ? enc.categories
+        : (enc?.category ? [enc.category] : (treeSample ? ['Arbre fruitier'] : ['Légume']));
+      const canonicalCategories = rawCategories.map((c: string) => getCanonicalCategory(c, config));
+      const primaryCategory = canonicalCategories[0] || 'Légume';
+      const icon = enc?.icon || (primaryCategory === 'Arbre fruitier' ? (treeSample?.icon || 'Trees') : 'Sprout');
       const color = enc?.color || treeSample?.color || '#10b981';
 
       // Use a prefixed ID to avoid collisions between config and encyclopedia tables
@@ -164,7 +169,8 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
         name: displayName,
         configId: conf?.id,
         encyclopediaId: enc?.id,
-        category,
+        category: primaryCategory,
+        categories: canonicalCategories,
         sowingPeriod: enc?.sowingPeriod || '',
         plantingPeriod: enc?.plantingPeriod || '',
         harvestPeriod: enc?.harvestPeriod || '',
@@ -187,19 +193,46 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
       if (c.value && c.value.trim()) rawCategories.push(c.value.trim());
     });
     unifiedPlants.forEach(p => {
-      if (p.category && p.category.trim()) rawCategories.push(p.category.trim());
+      const pCats = p.categories && p.categories.length > 0 ? p.categories : (p.category ? [p.category] : []);
+      pCats.forEach((cat: string) => {
+        if (cat && cat.trim()) rawCategories.push(cat.trim());
+      });
     });
     DEFAULT_PLANT_CATEGORIES.forEach(c => rawCategories.push(c));
     return deduplicateCategories(rawCategories, config);
   }, [config, unifiedPlants]);
 
+  const plantCountsByCategory = useMemo(() => {
+    const counts = new Map<string, number>();
+    unifiedPlants.forEach(p => {
+      const pCats = p.categories && p.categories.length > 0 ? p.categories : (p.category ? [p.category] : []);
+      pCats.forEach((cat: string) => {
+        const canonical = getCanonicalCategory(cat, config);
+        const key = normalizeCategoryKey(canonical);
+        counts.set(key, (counts.get(key) || 0) + 1);
+      });
+    });
+    return counts;
+  }, [unifiedPlants, config]);
+
+  const toggleCategory = (cat: string) => {
+    setSelectedCategories(prev => {
+      if (prev.some(c => areCategoriesEqual(c, cat))) {
+        return prev.filter(c => !areCategoriesEqual(c, cat));
+      } else {
+        return [...prev, cat];
+      }
+    });
+  };
+
   const filteredPlants = useMemo(() => {
     const term = searchTerm.toLowerCase().trim();
     return unifiedPlants.filter(item => {
+      const itemCats = item.categories && item.categories.length > 0 ? item.categories : [item.category];
       let matchesSearch = true;
       if (term) {
         const matchesName = (item.name || '').toLowerCase().includes(term);
-        const matchesCategory = (item.category || '').toLowerCase().includes(term);
+        const matchesCategory = itemCats.some((c: string) => (c || '').toLowerCase().includes(term));
         
         // Search inside varieties of this plant
         const plantVars = config?.filter((c: any) => 
@@ -210,10 +243,16 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
         
         matchesSearch = matchesName || matchesCategory || matchesVariety;
       }
-      const matchesCategory = filterCategory === '' || areCategoriesEqual(item.category, filterCategory);
+
+      const matchesCategory = selectedCategories.length === 0 || 
+        selectedCategories.includes('all') ||
+        itemCats.some((c: string) => 
+          selectedCategories.some((sel: string) => areCategoriesEqual(c, sel))
+        );
+
       return matchesSearch && matchesCategory;
     });
-  }, [unifiedPlants, searchTerm, filterCategory, config]);
+  }, [unifiedPlants, searchTerm, selectedCategories, config]);
 
   const filteredHealth = useMemo(() => healthIssues?.filter((item: any) => 
     (item.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -286,6 +325,173 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
     return trees.filter((t: any) => !t.isDeleted && (t.species || '').toLowerCase().trim() === nameLower);
   }, [trees, selectedVeg]);
 
+  // Seedlings placed on terrain / zones for the selected plant
+  const plantPlacedSeedlings = useMemo(() => {
+    if (!seedlings || !selectedVeg) return [];
+    const nameLower = (selectedVeg.name || '').toLowerCase().trim();
+    return seedlings.filter((s: any) => 
+      !s.isDeleted && !s.isArchived && 
+      (s.vegetable || '').toLowerCase().trim() === nameLower && 
+      ((s.positions && s.positions.length > 0) || s.zoneId)
+    );
+  }, [seedlings, selectedVeg]);
+
+  // Pre-computed variety counts for each plant in the catalog
+  const varietyCountsByPlantId = useMemo(() => {
+    const map = new Map<string, number>();
+    if (!unifiedPlants || !config) return map;
+
+    // Build plantName to IDs lookup
+    const nameToIds = new Map<string, Set<string>>();
+    encyclopedia?.forEach((e: any) => {
+      const n = (e.name || '').trim().toLowerCase();
+      if (n && e.id) {
+        if (!nameToIds.has(n)) nameToIds.set(n, new Set());
+        nameToIds.get(n)!.add(e.id);
+      }
+    });
+
+    config.filter((c: any) => c.type === 'vegetable').forEach((c: any) => {
+      const n = (c.value || '').trim().toLowerCase();
+      if (n && c.id) {
+        if (!nameToIds.has(n)) nameToIds.set(n, new Set());
+        nameToIds.get(n)!.add(c.id);
+      }
+    });
+
+    unifiedPlants.forEach(plant => {
+      const plantName = (plant.name || '').trim().toLowerCase();
+      const ids = new Set<string>();
+      if (plant.configId) ids.add(plant.configId);
+      if (plant.encyclopediaId) ids.add(plant.encyclopediaId);
+      nameToIds.get(plantName)?.forEach(id => ids.add(id));
+
+      const distinctVarieties = new Set<string>();
+
+      config.filter((c: any) => 
+        c.type === 'variety' && ids.has(c.parentId) && !isTechnicalId(c.value)
+      ).forEach((v: any) => {
+        const val = (v.value || '').trim().toLowerCase();
+        if (val) distinctVarieties.add(val);
+      });
+
+      trees?.forEach((t: any) => {
+        if (!t.isDeleted && (t.species || '').trim().toLowerCase() === plantName && t.variety) {
+          const val = t.variety.trim().toLowerCase();
+          if (val && val !== 'inconnu' && val !== 'sans variété' && val !== 'non spécifiée' && !isTechnicalId(val)) {
+            distinctVarieties.add(val);
+          }
+        }
+      });
+
+      seedlings?.forEach((s: any) => {
+        if (!s.isDeleted && (s.vegetable || '').trim().toLowerCase() === plantName && s.variety) {
+          const val = s.variety.trim().toLowerCase();
+          if (val && val !== 'inconnu' && val !== 'sans variété' && val !== 'non spécifiée' && !isTechnicalId(val)) {
+            distinctVarieties.add(val);
+          }
+        }
+      });
+
+      map.set(plant.id, distinctVarieties.size);
+    });
+
+    return map;
+  }, [unifiedPlants, config, encyclopedia, trees, seedlings]);
+
+  // Pre-computed counts of trees / plants placed on plan
+  const planCountsByPlantId = useMemo(() => {
+    const map = new Map<string, number>();
+    if (!unifiedPlants) return map;
+
+    unifiedPlants.forEach(plant => {
+      const plantName = (plant.name || '').trim().toLowerCase();
+      const treeCount = trees?.filter((t: any) => !t.isDeleted && (t.species || '').toLowerCase().trim() === plantName).length || 0;
+      const seedlingPlanCount = seedlings?.filter((s: any) => 
+        !s.isDeleted && !s.isArchived && 
+        (s.vegetable || '').toLowerCase().trim() === plantName && 
+        ((s.positions && s.positions.length > 0) || s.zoneId)
+      ).length || 0;
+
+      const planCount = treeCount > 0 ? treeCount : seedlingPlanCount;
+      map.set(plant.id, planCount);
+    });
+
+    return map;
+  }, [unifiedPlants, trees, seedlings]);
+
+  // Pre-computed total count of plants possessed for each species (sum of variety quantities, with fallback to placed trees/seedlings)
+  const totalPlantCountsByPlantId = useMemo(() => {
+    const map = new Map<string, number>();
+    if (!unifiedPlants || !config) return map;
+
+    // Build plantName to IDs lookup
+    const nameToIds = new Map<string, Set<string>>();
+    encyclopedia?.forEach((e: any) => {
+      const n = (e.name || '').trim().toLowerCase();
+      if (n && e.id) {
+        if (!nameToIds.has(n)) nameToIds.set(n, new Set());
+        nameToIds.get(n)!.add(e.id);
+      }
+    });
+
+    config.filter((c: any) => c.type === 'vegetable').forEach((c: any) => {
+      const n = (c.value || '').trim().toLowerCase();
+      if (n && c.id) {
+        if (!nameToIds.has(n)) nameToIds.set(n, new Set());
+        nameToIds.get(n)!.add(c.id);
+      }
+    });
+
+    unifiedPlants.forEach(plant => {
+      const plantName = (plant.name || '').trim().toLowerCase();
+      const ids = new Set<string>();
+      if (plant.configId) ids.add(plant.configId);
+      if (plant.encyclopediaId) ids.add(plant.encyclopediaId);
+      nameToIds.get(plantName)?.forEach(id => ids.add(id));
+
+      const plantTrees = trees?.filter((t: any) => !t.isDeleted && (t.species || '').trim().toLowerCase() === plantName) || [];
+      const plantSeedlings = seedlings?.filter((s: any) => 
+        !s.isDeleted && !s.isArchived && 
+        (s.vegetable || '').trim().toLowerCase() === plantName && 
+        ((s.positions && s.positions.length > 0) || s.zoneId)
+      ) || [];
+
+      // Find varieties configured for this plant
+      const plantVars = config.filter((c: any) => 
+        c.type === 'variety' && ids.has(c.parentId) && !isTechnicalId(c.value)
+      );
+
+      const totalPlanCount = plantTrees.length > 0 ? plantTrees.length : plantSeedlings.length;
+
+      if (plantVars.length === 0) {
+        map.set(plant.id, totalPlanCount);
+        return;
+      }
+
+      // Sum of explicitly configured variety quantities
+      let sumVarietyQuantities = 0;
+      const countedVarietyKeys = new Set<string>();
+
+      plantVars.forEach((v: any) => {
+        const varKey = (v.value || '').trim().toLowerCase();
+        if (!varKey || countedVarietyKeys.has(varKey)) return;
+        countedVarietyKeys.add(varKey);
+
+        const rawQty = v.quantity !== undefined ? Number(v.quantity) : (v.attributes?.quantity !== undefined ? Number(v.attributes.quantity) : 1);
+        const qty = isNaN(rawQty) || rawQty < 1 ? 1 : rawQty;
+        sumVarietyQuantities += qty;
+      });
+
+      // Total count of plants possessed:
+      // It is the sum of configured variety quantities, but cannot be less than the total plants placed on the plan.
+      const total = Math.max(sumVarietyQuantities, totalPlanCount);
+      map.set(plant.id, total);
+    });
+
+    return map;
+  }, [unifiedPlants, config, encyclopedia, trees, seedlings]);
+
   // Full Export and Print Data mapping
   const exportPlantsData: ExportPlantItem[] = useMemo(() => {
     if (!unifiedPlants || !config) return [];
@@ -306,10 +512,12 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
         .map((v: any) => ({
           id: v.id,
           name: v.value,
+          quantity: Math.max(1, v.quantity !== undefined ? Number(v.quantity) : (v.attributes?.quantity !== undefined ? Number(v.attributes.quantity) : 1)),
           attributes: v.attributes || {}
         }));
 
       const orchardTreeCount = trees?.filter((t: any) => !t.isDeleted && (t.species || '').toLowerCase().trim() === plantName).length || 0;
+      const totalCount = totalPlantCountsByPlantId.get(p.id) || 0;
 
       return {
         id: p.id,
@@ -328,10 +536,11 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
         color: p.color,
         icon: p.icon,
         varieties: vars,
-        orchardTreeCount
+        orchardTreeCount,
+        totalCount
       };
     });
-  }, [unifiedPlants, config, encyclopedia, trees]);
+  }, [unifiedPlants, config, encyclopedia, trees, totalPlantCountsByPlantId]);
 
   const exportFilteredPlantsData = useMemo(() => {
     const filteredIds = new Set(filteredPlants.map(p => p.id));
@@ -360,6 +569,19 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
     if (!plantOrchardTrees.length) return 0;
     const vLower = (varietyName || '').toLowerCase().trim();
     return plantOrchardTrees.filter((t: any) => (t.variety || '').toLowerCase().trim() === vLower).length;
+  };
+
+  const getVarietyPlacedCount = (varietyName: string) => {
+    const vLower = (varietyName || '').toLowerCase().trim();
+    const treeCount = plantOrchardTrees.filter((t: any) => (t.variety || '').toLowerCase().trim() === vLower).length;
+    const nameLower = (selectedVeg?.name || '').toLowerCase().trim();
+    const seedlingCount = seedlings?.filter((s: any) => 
+      !s.isDeleted && !s.isArchived && 
+      (s.vegetable || '').toLowerCase().trim() === nameLower && 
+      (s.variety || '').toLowerCase().trim() === vLower && 
+      ((s.positions && s.positions.length > 0) || s.zoneId)
+    ).length || 0;
+    return treeCount + seedlingCount;
   };
 
   const handlePlaceOnOrchardPlan = (plant: any, varietyName?: string) => {
@@ -528,16 +750,24 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
     setIsCustomCategory(false);
     setCustomCategoryName('');
     if (veg) {
+      const rawCats = (veg.categories && Array.isArray(veg.categories) && veg.categories.length > 0)
+        ? veg.categories
+        : (veg.category ? [veg.category] : ['Légume']);
+      const canonicalCats = rawCats.map((c: string) => getCanonicalCategory(c, config));
       setEditForm({
         ...veg,
-        category: getCanonicalCategory(veg.category, config)
+        category: canonicalCats[0] || 'Légume',
+        categories: canonicalCats
       });
     } else {
-      const canonicalFilter = filterCategory ? getCanonicalCategory(filterCategory, config) : 'Légume';
-      const isFruit = canonicalFilter === 'Arbre fruitier' || canonicalFilter === 'Petits fruits';
+      const initialCats = selectedCategories.length > 0
+        ? selectedCategories.map(c => getCanonicalCategory(c, config))
+        : ['Légume'];
+      const isFruit = initialCats.some(c => c === 'Arbre fruitier' || c === 'Petits fruits');
       setEditForm({
         name: '',
-        category: canonicalFilter,
+        category: initialCats[0] || 'Légume',
+        categories: initialCats,
         sowingPeriod: '',
         plantingPeriod: '',
         harvestPeriod: '',
@@ -553,6 +783,22 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
       });
     }
     setIsEditing(true);
+  };
+
+  const handleAddCustomCategoryToForm = () => {
+    if (!customCategoryName.trim()) return;
+    const canonical = getCanonicalCategory(customCategoryName.trim(), config);
+    const currentCats = editForm.categories || (editForm.category ? [editForm.category] : []);
+    if (!currentCats.some((c: string) => areCategoriesEqual(c, canonical))) {
+      const next = [...currentCats, canonical];
+      setEditForm({
+        ...editForm,
+        categories: next,
+        category: next[0] || canonical
+      });
+    }
+    setIsCustomCategory(false);
+    setCustomCategoryName('');
   };
 
   const handleStartHealthEdit = (item?: HealthIssue) => {
@@ -575,10 +821,16 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
     if (!editForm.name) return;
 
     let encId = editForm.encyclopediaId;
-    const canonicalCategory = getCanonicalCategory(editForm.category || 'Légume', config);
+    const rawCategories: string[] = Array.isArray(editForm.categories) && editForm.categories.length > 0
+      ? editForm.categories
+      : (editForm.category ? [editForm.category] : ['Légume']);
+    const canonicalCategories = rawCategories.map((c: string) => getCanonicalCategory(c, config));
+    const primaryCategory = canonicalCategories[0] || 'Légume';
+
     const encData = {
       name: editForm.name.trim(),
-      category: canonicalCategory,
+      category: primaryCategory,
+      categories: canonicalCategories,
       sowingPeriod: editForm.sowingPeriod || '',
       plantingPeriod: editForm.plantingPeriod || '',
       harvestPeriod: editForm.harvestPeriod || '',
@@ -590,7 +842,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
       badCompanions: editForm.badCompanions || [],
       tips: editForm.tips || '',
       color: editForm.color || '#10b981',
-      icon: editForm.icon || (canonicalCategory === 'Arbre fruitier' ? 'Trees' : 'Sprout'),
+      icon: editForm.icon || (primaryCategory === 'Arbre fruitier' ? 'Trees' : 'Sprout'),
       updatedAt: new Date().toISOString()
     };
 
@@ -601,24 +853,24 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
       await fb.add('encyclopedia', { id: encId, ...encData });
     }
 
-    // Ensure category exists in config (accent- and case-insensitively)
-    if (canonicalCategory) {
+    // Ensure all categories exist in config (accent- and case-insensitively)
+    for (const cat of canonicalCategories) {
       const existsInConfig = config?.some((c: any) => 
-        c.type === 'category' && areCategoriesEqual(c.value, canonicalCategory)
+        c.type === 'category' && areCategoriesEqual(c.value, cat)
       );
       if (!existsInConfig) {
-        const catKey = normalizeCategoryKey(canonicalCategory);
+        const catKey = normalizeCategoryKey(cat);
         const catId = `cat_${catKey.replace(/[^a-z0-9]/g, '_')}`;
         await fb.put('config', {
           id: catId,
           type: 'category',
-          value: canonicalCategory
+          value: cat
         });
       }
     }
 
     // Propagate updated appearance to matching trees in "Mon Verger" if applicable
-    if (editForm.category === 'Arbre fruitier' && trees) {
+    if (primaryCategory === 'Arbre fruitier' && trees) {
       const matchingTrees = trees.filter((t: any) => (t.species || '').toLowerCase().trim() === editForm.name.toLowerCase().trim());
       for (const t of matchingTrees) {
         if (t.color !== editForm.color || t.icon !== editForm.icon) {
@@ -695,13 +947,27 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
 
     // Prefer canonical encyclopedia ID
     const targetParentId = selectedVeg.encyclopediaId || selectedVeg.configId;
+    const initialQty = Math.max(1, Number(newVarietyQuantity) || 1);
     await fb.add('config', {
       id: uuidv4(),
       type: "variety",
       value: trimmed,
-      parentId: targetParentId
+      parentId: targetParentId,
+      quantity: initialQty,
+      attributes: { quantity: initialQty }
     });
     setNewVarietyName("");
+    setNewVarietyQuantity(1);
+  };
+
+  const handleUpdateVarietyQuantity = async (varietyId: string, newQty: number) => {
+    const safeQty = Math.max(1, newQty);
+    const variety = plantVarieties.find((v: any) => v.id === varietyId);
+    const updatedAttrs = { ...(variety?.attributes || {}), quantity: safeQty };
+    await fb.update('config', varietyId, {
+      quantity: safeQty,
+      attributes: updatedAttrs
+    });
   };
 
   const handleDeleteVariety = (varietyOrId: any) => {
@@ -737,7 +1003,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
     // Save new options to config
     for (const attrTypeId of Object.keys(varietyEditForm.attributes)) {
       const value = varietyEditForm.attributes[attrTypeId];
-      if (typeof value === 'string' && value.trim() && !['other'].includes(attrTypeId)) {
+      if (typeof value === 'string' && value.trim() && !['other', 'quantity'].includes(attrTypeId)) {
         const attrType = varietyAttrTypes.find(t => t.id === attrTypeId);
         if (attrType) {
           const parts = value.split(',').map(p => p.trim()).filter(p => p);
@@ -759,7 +1025,12 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
       }
     }
 
-    await fb.update('config', editingVarietyId, { value: varietyEditForm.name, attributes: varietyEditForm.attributes });
+    const safeQty = Math.max(1, Number(varietyEditForm.quantity) || 1);
+    await fb.update('config', editingVarietyId, { 
+      value: varietyEditForm.name, 
+      quantity: safeQty,
+      attributes: { ...varietyEditForm.attributes, quantity: safeQty } 
+    });
     setEditingVarietyId(null);
   };
 
@@ -802,7 +1073,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => { setFilterCategory('Arbre fruitier'); setImportStatus(null); }}
+              onClick={() => { setSelectedCategories(['Arbre fruitier']); setImportStatus(null); }}
               className="text-xs font-medium text-emerald-700 underline hover:text-emerald-900"
             >
               Voir les fruitiers
@@ -939,16 +1210,155 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
             </div>
             
             {activeTab === "vegetables" && (
-              <select
-                value={filterCategory}
-                onChange={(e) => setFilterCategory(e.target.value)}
-                className="w-full px-4 py-2 bg-stone-50 border border-stone-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
-              >
-                <option value="">Toutes les catégories</option>
-                {availableCategories.map(cat => (
-                  <option key={cat} value={cat}>{cat}</option>
-                ))}
-              </select>
+              <div className="space-y-2">
+                {/* Multi-Select Category Dropdown & Actions */}
+                <div className="relative">
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setIsCategoryDropdownOpen(!isCategoryDropdownOpen)}
+                      className={`flex-1 px-3 py-2 bg-stone-50 border rounded-xl text-xs font-medium transition-all flex items-center justify-between shadow-2xs cursor-pointer ${
+                        selectedCategories.length > 0 
+                          ? 'border-emerald-400 bg-emerald-50/70 text-emerald-900 ring-1 ring-emerald-400/30 font-semibold' 
+                          : 'border-stone-200 text-stone-700 hover:bg-stone-100'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        <Tag className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        <span className="truncate">
+                          {selectedCategories.length === 0 
+                            ? 'Toutes les catégories' 
+                            : selectedCategories.length === 1 
+                              ? selectedCategories[0]
+                              : `${selectedCategories.length} catégories sélectionnées`}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {selectedCategories.length > 0 && (
+                          <span className="px-1.5 py-0.2 bg-emerald-200 text-emerald-900 rounded-full text-[10px] font-bold">
+                            {selectedCategories.length}
+                          </span>
+                        )}
+                        <ChevronDown className={`w-3.5 h-3.5 text-stone-400 transition-transform ${isCategoryDropdownOpen ? 'rotate-180' : ''}`} />
+                      </div>
+                    </button>
+                    {selectedCategories.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedCategories([])}
+                        className="p-2 text-stone-400 hover:text-red-500 hover:bg-red-50 rounded-xl border border-stone-200 transition-colors shrink-0 cursor-pointer"
+                        title="Réinitialiser toutes les catégories (afficher tout)"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Multi-Select Dropdown Popover */}
+                  {isCategoryDropdownOpen && (
+                    <div className="absolute top-full left-0 right-0 mt-1 z-30 bg-white border border-stone-200 rounded-2xl shadow-xl p-2.5 space-y-2 animate-in fade-in zoom-in-95 duration-150">
+                      <div className="flex items-center justify-between pb-1.5 border-b border-stone-100 text-[11px]">
+                        <span className="font-semibold text-stone-500 uppercase tracking-wider text-[9px]">Sélection multiple</span>
+                        <div className="flex items-center gap-2 text-xs">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedCategories([...availableCategories])}
+                            className="text-emerald-700 hover:underline font-medium cursor-pointer"
+                          >
+                            Tout cocher
+                          </button>
+                          <span className="text-stone-300">|</span>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedCategories([])}
+                            className="text-stone-500 hover:underline cursor-pointer"
+                          >
+                            Tout décocher
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="max-h-52 overflow-y-auto space-y-0.5 pr-1 custom-scrollbar">
+                        {availableCategories.map(cat => {
+                          const isSelected = selectedCategories.some(c => areCategoriesEqual(c, cat));
+                          const count = plantCountsByCategory.get(normalizeCategoryKey(cat)) || 0;
+                          return (
+                            <label
+                              key={cat}
+                              className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs cursor-pointer transition-colors ${
+                                isSelected ? 'bg-emerald-50 text-emerald-900 font-semibold' : 'hover:bg-stone-50 text-stone-700'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => toggleCategory(cat)}
+                                  className="w-3.5 h-3.5 text-emerald-600 rounded border-stone-300 focus:ring-emerald-500 cursor-pointer"
+                                />
+                                <span className="truncate">{cat}</span>
+                              </div>
+                              <span className="text-[10px] text-stone-400 font-normal shrink-0">
+                                {count}
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+
+                      <div className="pt-1.5 border-t border-stone-100 flex items-center justify-between">
+                        <span className="text-[10px] text-stone-500">
+                          {selectedCategories.length === 0 ? 'Toutes affichées' : `${selectedCategories.length} active(s)`}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setIsCategoryDropdownOpen(false)}
+                          className="px-3 py-1 bg-emerald-600 text-white rounded-lg text-xs font-medium hover:bg-emerald-700 cursor-pointer"
+                        >
+                          Valider
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Quick horizontal category filter chips */}
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 custom-scrollbar text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCategories([])}
+                    className={`px-2 py-0.5 rounded-lg shrink-0 transition-all font-medium cursor-pointer ${
+                      selectedCategories.length === 0
+                        ? 'bg-stone-800 text-white shadow-2xs font-semibold'
+                        : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
+                    }`}
+                  >
+                    Tous ({unifiedPlants.length})
+                  </button>
+                  {availableCategories.map(cat => {
+                    const isSelected = selectedCategories.some(c => areCategoriesEqual(c, cat));
+                    const count = plantCountsByCategory.get(normalizeCategoryKey(cat)) || 0;
+                    return (
+                      <button
+                        key={cat}
+                        type="button"
+                        onClick={() => toggleCategory(cat)}
+                        className={`px-2 py-0.5 rounded-lg shrink-0 transition-all text-xs flex items-center gap-1 cursor-pointer border ${
+                          isSelected
+                            ? 'bg-emerald-600 text-white border-emerald-600 font-semibold shadow-2xs'
+                            : 'bg-stone-50 text-stone-700 border-stone-200/80 hover:bg-stone-100'
+                        }`}
+                        title={isSelected ? `Désélectionner "${cat}"` : `Ajouter "${cat}" à la sélection`}
+                      >
+                        <span>{cat}</span>
+                        <span className={`text-[10px] px-1 rounded-full ${isSelected ? 'bg-emerald-700 text-emerald-100' : 'bg-stone-200 text-stone-600'}`}>
+                          {count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             )}
 
             <button
@@ -997,10 +1407,32 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
               </div>
             )}
 
+            {activeTab === "vegetables" && (
+              <div className="flex items-center justify-between px-2.5 py-1.5 bg-stone-50 border border-stone-200/80 rounded-xl text-[11px] text-stone-600">
+                <span className="font-semibold text-stone-400 uppercase tracking-wider text-[9px]">Légende :</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-stone-700 bg-white px-1.5 py-0.5 rounded-md border border-stone-200/90 shadow-2xs" title="Nombre total de plants possédés (somme des variétés)">
+                    <Sprout className="w-2.5 h-2.5 text-stone-600" />
+                    Total
+                  </span>
+                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded-md border border-amber-200 shadow-2xs" title="Nombre de variétés différentes">
+                    <Tag className="w-2.5 h-2.5 text-amber-600" />
+                    Variétés
+                  </span>
+                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-800 bg-emerald-50 px-1.5 py-0.5 rounded-md border border-emerald-200 shadow-2xs" title="Nombre d'exemplaires placés sur le plan">
+                    <MapPin className="w-2.5 h-2.5 text-emerald-600" />
+                    Sur plan
+                  </span>
+                </div>
+              </div>
+            )}
+
             <div className="space-y-1 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
               {activeTab === "vegetables" ? (
                 filteredPlants.map(item => {
-                  const treeCount = trees?.filter((t: any) => !t.isDeleted && (t.species || '').toLowerCase().trim() === (item.name || '').toLowerCase().trim()).length || 0;
+                  const totalCount = totalPlantCountsByPlantId.get(item.id) || 0;
+                  const varietyCount = varietyCountsByPlantId.get(item.id) || 0;
+                  const planCount = planCountsByPlantId.get(item.id) || 0;
                   return (
                     <button
                       key={item.id}
@@ -1009,12 +1441,31 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                         selectedVegId === item.id ? "bg-emerald-50 text-emerald-700 font-medium" : "text-stone-600 hover:bg-stone-50"
                       }`}
                     >
-                      <div className="flex items-center gap-2 min-w-0">
+                      <div className="flex items-center gap-1.5 min-w-0">
                         <span className="truncate">{item.name}</span>
-                        {treeCount > 0 && (
-                          <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-emerald-700 bg-emerald-100/80 px-1.5 py-0.5 rounded-full border border-emerald-200 shrink-0" title={`${treeCount} arbre(s) au verger`}>
+                        <span 
+                          className="inline-flex items-center gap-0.5 text-[10px] font-bold text-stone-700 bg-stone-100 px-1.5 py-0.5 rounded-full border border-stone-200 shrink-0" 
+                          title={`${totalCount} plant(s) possédé(s) au total`}
+                        >
+                          <Sprout className="w-2.5 h-2.5 text-stone-600" />
+                          {totalCount}
+                        </span>
+                        {varietyCount > 0 && (
+                          <span 
+                            className="inline-flex items-center gap-0.5 text-[10px] font-bold text-amber-800 bg-amber-100/85 px-1.5 py-0.5 rounded-full border border-amber-200/90 shrink-0" 
+                            title={`${varietyCount} variété(s)`}
+                          >
+                            <Tag className="w-2.5 h-2.5 text-amber-600" />
+                            {varietyCount}
+                          </span>
+                        )}
+                        {planCount > 0 && (
+                          <span 
+                            className="inline-flex items-center gap-0.5 text-[10px] font-bold text-emerald-700 bg-emerald-100/80 px-1.5 py-0.5 rounded-full border border-emerald-200 shrink-0" 
+                            title={`${planCount} sur le plan`}
+                          >
                             <MapPin className="w-2.5 h-2.5 text-emerald-600" />
-                            {treeCount}
+                            {planCount}
                           </span>
                         )}
                       </div>
@@ -1068,7 +1519,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                   </button>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-4">
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold text-stone-500 uppercase">Nom de la plante</label>
                     <input
@@ -1076,86 +1527,103 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                       type="text"
                       value={editForm.name}
                       onChange={e => setEditForm({ ...editForm, name: e.target.value })}
+                      placeholder="ex: Kiwai, Tomate, Basilic..."
                       className="w-full px-4 py-2 bg-stone-50 border border-stone-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                     />
                   </div>
-                  <div className="space-y-1.5">
+
+                  {/* Multi-Selection of Categories */}
+                  <div className="space-y-2 p-3 bg-stone-50/80 border border-stone-200/90 rounded-2xl">
                     <div className="flex items-center justify-between">
-                      <label className="text-xs font-bold text-stone-500 uppercase">Catégorie</label>
-                      {!isCustomCategory && (
+                      <label className="text-xs font-bold text-stone-700 uppercase tracking-wider flex items-center gap-1.5">
+                        <Tag className="w-3.5 h-3.5 text-emerald-600" />
+                        Catégories de la plante (Sélection multiple)
+                      </label>
+                      <span className="text-[11px] text-stone-500 font-medium">
+                        {(editForm.categories?.length || 0)} sélectionnée{(editForm.categories?.length || 0) > 1 ? 's' : ''}
+                      </span>
+                    </div>
+
+                    <p className="text-[11px] text-stone-500">
+                      Cliquez pour sélectionner ou désélectionner les catégories applicables à cette espèce (ex: <em>Petits fruits</em> et <em>Grimpant</em>).
+                    </p>
+
+                    <div className="flex flex-wrap gap-1.5 min-h-[40px] items-center">
+                      {availableCategories.map(cat => {
+                        const isSelected = (editForm.categories || []).some((c: string) => areCategoriesEqual(c, cat));
+                        return (
+                          <button
+                            key={cat}
+                            type="button"
+                            onClick={() => {
+                              const current = editForm.categories || (editForm.category ? [editForm.category] : []);
+                              let next: string[];
+                              if (current.some((c: string) => areCategoriesEqual(c, cat))) {
+                                next = current.filter((c: string) => !areCategoriesEqual(c, cat));
+                                if (next.length === 0) next = [cat]; // keep at least one
+                              } else {
+                                next = [...current, cat];
+                              }
+                              setEditForm({
+                                ...editForm,
+                                categories: next,
+                                category: next[0] || cat
+                              });
+                            }}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-all flex items-center gap-1.5 cursor-pointer border ${
+                              isSelected
+                                ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs font-semibold'
+                                : 'bg-white text-stone-700 border-stone-200/90 hover:bg-stone-100 hover:border-stone-300'
+                            }`}
+                          >
+                            {isSelected && <Check className="w-3 h-3 text-white shrink-0" />}
+                            <span>{cat}</span>
+                          </button>
+                        );
+                      })}
+
+                      {isCustomCategory ? (
+                        <div className="flex items-center gap-1 bg-white border border-emerald-400 rounded-xl p-1 shadow-2xs">
+                          <input
+                            type="text"
+                            placeholder="Autre catégorie..."
+                            value={customCategoryName}
+                            onChange={e => setCustomCategoryName(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                handleAddCustomCategoryToForm();
+                              }
+                            }}
+                            className="px-2 py-0.5 text-xs outline-none w-36"
+                            autoFocus
+                          />
+                          <button
+                            type="button"
+                            onClick={handleAddCustomCategoryToForm}
+                            className="px-2 py-0.5 bg-emerald-600 text-white rounded-lg text-xs font-medium hover:bg-emerald-700 cursor-pointer"
+                          >
+                            OK
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setIsCustomCategory(false); setCustomCategoryName(''); }}
+                            className="p-1 text-stone-400 hover:text-stone-600"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ) : (
                         <button
                           type="button"
-                          onClick={() => {
-                            setIsCustomCategory(true);
-                            setCustomCategoryName('');
-                          }}
-                          className="text-[11px] text-emerald-600 hover:text-emerald-700 font-medium transition-colors"
+                          onClick={() => setIsCustomCategory(true)}
+                          className="px-2.5 py-1.5 rounded-xl text-xs font-medium border border-dashed border-stone-300 text-stone-600 hover:text-emerald-700 hover:border-emerald-400 hover:bg-emerald-50/50 transition-all flex items-center gap-1 cursor-pointer"
                         >
-                          + Autre catégorie
+                          <Plus className="w-3 h-3" />
+                          Autre catégorie...
                         </button>
                       )}
                     </div>
-                    {isCustomCategory ? (
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          placeholder="Nom de la catégorie..."
-                          value={customCategoryName}
-                          onChange={e => {
-                            setCustomCategoryName(e.target.value);
-                            setEditForm({ ...editForm, category: e.target.value });
-                          }}
-                          className="flex-1 px-4 py-2 bg-stone-50 border border-stone-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
-                          autoFocus
-                        />
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (customCategoryName.trim()) {
-                              const canonical = getCanonicalCategory(customCategoryName.trim(), config);
-                              setEditForm({ ...editForm, category: canonical });
-                            }
-                            setIsCustomCategory(false);
-                          }}
-                          className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-medium transition-colors"
-                        >
-                          OK
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsCustomCategory(false);
-                            setCustomCategoryName('');
-                          }}
-                          className="p-2 text-stone-400 hover:text-stone-600 transition-colors"
-                          title="Annuler"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      </div>
-                    ) : (
-                      <select
-                        value={getCanonicalCategory(editForm.category, config) || ''}
-                        onChange={e => {
-                          if (e.target.value === '__new__') {
-                            setIsCustomCategory(true);
-                            setCustomCategoryName('');
-                          } else {
-                            setEditForm({ ...editForm, category: getCanonicalCategory(e.target.value, config) });
-                          }
-                        }}
-                        className="w-full px-4 py-2 bg-stone-50 border border-stone-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
-                      >
-                        <option value="">Sélectionner</option>
-                        {availableCategories.map(cat => (
-                          <option key={cat} value={cat}>{cat}</option>
-                        ))}
-                        {editForm.category && !availableCategories.some(c => areCategoriesEqual(c, editForm.category)) && (
-                          <option value={editForm.category}>{editForm.category}</option>
-                        )}
-                        <option value="__new__">+ Ajouter une nouvelle catégorie...</option>
-                      </select>
-                    )}
                   </div>
                 </div>
 
@@ -1561,9 +2029,13 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                 <div className="p-6 bg-emerald-600 text-white">
                   <div className="flex justify-between items-start mb-4">
                     <div>
-                      <span className="text-[10px] font-bold uppercase tracking-widest bg-white/20 px-2 py-0.5 rounded-full mb-2 inline-block">
-                        {selectedVeg.category}
-                      </span>
+                      <div className="flex flex-wrap items-center gap-1.5 mb-2">
+                        {(selectedVeg.categories && selectedVeg.categories.length > 0 ? selectedVeg.categories : [selectedVeg.category]).map((cat: string) => (
+                          <span key={cat} className="text-[10px] font-bold uppercase tracking-widest bg-white/20 px-2.5 py-0.5 rounded-full inline-block backdrop-blur-2xs">
+                            {cat}
+                          </span>
+                        ))}
+                      </div>
                       <h2 className="text-3xl font-serif font-medium">{selectedVeg.name}</h2>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
@@ -1733,6 +2205,44 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                       </h3>
                     </div>
 
+                    {/* Summary Counters Banner */}
+                    {(() => {
+                      const totalCount = totalPlantCountsByPlantId.get(selectedVeg.id) || 0;
+                      const varietyCount = varietyCountsByPlantId.get(selectedVeg.id) || 0;
+                      const planCount = planCountsByPlantId.get(selectedVeg.id) || 0;
+                      return (
+                        <div className="grid grid-cols-3 gap-2.5 p-3 bg-stone-50 border border-stone-200/80 rounded-2xl">
+                          <div className="flex items-center gap-2">
+                            <div className="p-1.5 bg-stone-200/80 text-stone-700 rounded-lg">
+                              <Sprout className="w-3.5 h-3.5" />
+                            </div>
+                            <div>
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-stone-400">Total plants</p>
+                              <p className="text-sm font-bold text-stone-800">{totalCount}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="p-1.5 bg-amber-100 text-amber-700 rounded-lg">
+                              <Tag className="w-3.5 h-3.5" />
+                            </div>
+                            <div>
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-amber-600">Variétés</p>
+                              <p className="text-sm font-bold text-amber-900">{varietyCount}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="p-1.5 bg-emerald-100 text-emerald-700 rounded-lg">
+                              <MapPin className="w-3.5 h-3.5" />
+                            </div>
+                            <div>
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-600">Sur le plan</p>
+                              <p className="text-sm font-bold text-emerald-900">{planCount}</p>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
                     {(!selectedVeg.configId && !selectedVeg.encyclopediaId) ? (
                       <div className="p-4 bg-amber-50 text-amber-800 rounded-xl text-sm flex items-center gap-2">
                         <AlertTriangle className="w-4 h-4" />
@@ -1741,22 +2251,34 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                     ) : (
                       <>
                         <form onSubmit={handleAddVariety} className="space-y-2">
-                          <div className="flex gap-2">
+                          <div className="flex flex-col sm:flex-row gap-2">
                             <input
                               type="text"
-                              placeholder="Ajouter une variété (ex: Marmande)"
+                              placeholder="Ajouter une variété (ex: Issai, Marmande...)"
                               value={newVarietyName}
                               onChange={(e) => { setNewVarietyName(e.target.value); setVarietyError(null); }}
                               className="flex-1 px-4 py-2 bg-stone-50 border border-stone-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                             />
-                            <button
-                              type="submit"
-                              disabled={!newVarietyName.trim()}
-                              className="px-4 py-2 bg-emerald-600 text-white rounded-xl text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 transition-colors flex items-center gap-2"
-                            >
-                              <Plus className="w-4 h-4" />
-                              Ajouter
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-1.5 px-3 py-1.5 bg-stone-50 border border-stone-200 rounded-xl text-sm">
+                                <span className="text-xs text-stone-500 font-medium">Quantité :</span>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  value={newVarietyQuantity}
+                                  onChange={(e) => setNewVarietyQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+                                  className="w-14 bg-white border border-stone-200 rounded-lg px-2 py-1 text-xs text-center font-bold text-stone-800 focus:outline-emerald-500"
+                                />
+                              </div>
+                              <button
+                                type="submit"
+                                disabled={!newVarietyName.trim()}
+                                className="px-4 py-2 bg-emerald-600 text-white rounded-xl text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 transition-colors flex items-center gap-2 shadow-xs cursor-pointer shrink-0"
+                              >
+                                <Plus className="w-4 h-4" />
+                                Ajouter
+                              </button>
+                            </div>
                           </div>
                           {varietyError && (
                             <p className="text-xs text-rose-500 font-medium px-1">{varietyError}</p>
@@ -1813,15 +2335,28 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                               <div key={variety.id} className="bg-stone-50 rounded-xl border border-stone-100 overflow-hidden">
                                 {editingVarietyId === variety.id ? (
                                   <form onSubmit={handleSaveVariety} className="p-4 space-y-4">
-                                    <div>
-                                      <label className="block text-xs font-medium text-stone-500 mb-1">Nom de la variété</label>
-                                      <input
-                                        type="text"
-                                        value={varietyEditForm.name}
-                                        onChange={e => setVarietyEditForm(prev => ({ ...prev, name: e.target.value }))}
-                                        className="w-full px-3 py-2 bg-white border border-stone-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
-                                        required
-                                      />
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                      <div>
+                                        <label className="block text-xs font-medium text-stone-500 mb-1">Nom de la variété</label>
+                                        <input
+                                          type="text"
+                                          value={varietyEditForm.name}
+                                          onChange={e => setVarietyEditForm(prev => ({ ...prev, name: e.target.value }))}
+                                          className="w-full px-3 py-2 bg-white border border-stone-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                                          required
+                                        />
+                                      </div>
+                                      <div>
+                                        <label className="block text-xs font-medium text-stone-500 mb-1">Quantité possédée</label>
+                                        <input
+                                          type="number"
+                                          min="1"
+                                          value={varietyEditForm.quantity}
+                                          onChange={e => setVarietyEditForm(prev => ({ ...prev, quantity: Math.max(1, parseInt(e.target.value) || 1) }))}
+                                          className="w-full px-3 py-2 bg-white border border-stone-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                                          required
+                                        />
+                                      </div>
                                     </div>
                                     
                                     {varietyAttrTypes.map(attrType => {
@@ -1932,22 +2467,74 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                   <div className="flex items-center justify-between p-3 gap-3">
                                     <div className="min-w-0 flex-1">
                                       <div className="flex flex-wrap items-center gap-2">
-                                        <span className="text-sm font-medium text-stone-700 block">{variety.value}</span>
+                                        <span className="text-sm font-semibold text-stone-800 block">{variety.value}</span>
                                         {(() => {
-                                          const varietyTreesCount = getVarietyTreeCount(variety.value);
-                                          if (varietyTreesCount > 0) {
-                                            return (
-                                              <span className="inline-flex items-center gap-1 text-[11px] font-semibold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full border border-emerald-200" title={`${varietyTreesCount} arbre(s) de cette variété sur le plan du verger`}>
-                                                <MapPin className="w-3 h-3 text-emerald-600" />
-                                                {varietyTreesCount} sur le plan
-                                              </span>
-                                            );
-                                          }
+                                          const currentQty = Math.max(1, variety.quantity !== undefined ? Number(variety.quantity) : (variety.attributes?.quantity !== undefined ? Number(variety.attributes.quantity) : 1));
+                                          const placedCount = getVarietyPlacedCount(variety.value);
                                           return (
-                                            <span className="inline-flex items-center gap-1 text-[10px] text-stone-400 bg-stone-100 px-1.5 py-0.5 rounded-full border border-stone-200">
-                                              <MapPinOff className="w-2.5 h-2.5" />
-                                              Non placé
-                                            </span>
+                                            <>
+                                              {/* Quantity Stepper */}
+                                              <div className="flex items-center gap-1 bg-white border border-stone-200 rounded-lg px-2 py-0.5 shadow-2xs">
+                                                <span className="text-[11px] font-medium text-stone-500">Qté :</span>
+                                                <button
+                                                  type="button"
+                                                  onClick={() => handleUpdateVarietyQuantity(variety.id, Math.max(1, currentQty - 1))}
+                                                  disabled={currentQty <= 1}
+                                                  className="w-4 h-4 flex items-center justify-center rounded bg-stone-100 hover:bg-stone-200 text-stone-700 disabled:opacity-30 disabled:hover:bg-stone-100 text-xs font-bold transition-all cursor-pointer"
+                                                  title="Diminuer la quantité possédée"
+                                                >
+                                                  -
+                                                </button>
+                                                <span className="text-xs font-bold text-stone-900 px-1 min-w-[16px] text-center">
+                                                  {currentQty}
+                                                </span>
+                                                <button
+                                                  type="button"
+                                                  onClick={() => handleUpdateVarietyQuantity(variety.id, currentQty + 1)}
+                                                  className="w-4 h-4 flex items-center justify-center rounded bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-bold transition-all cursor-pointer"
+                                                  title="Augmenter la quantité possédée"
+                                                >
+                                                  +
+                                                </button>
+                                              </div>
+
+                                              {/* Plan Placement Status */}
+                                              {placedCount > currentQty ? (
+                                                <div className="flex items-center gap-1.5 flex-wrap">
+                                                  <span 
+                                                    className="inline-flex items-center gap-1 text-[11px] font-semibold bg-amber-100 text-amber-900 px-2 py-0.5 rounded-full border border-amber-300 shadow-2xs" 
+                                                    title={`${placedCount} exemplaire(s) sur le plan pour ${currentQty} déclaré(s) possédé(s).`}
+                                                  >
+                                                    <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
+                                                    {placedCount} / {currentQty} sur le plan (dépassement)
+                                                  </span>
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => handleUpdateVarietyQuantity(variety.id, placedCount)}
+                                                    className="px-2 py-0.5 text-[10px] font-semibold text-amber-800 bg-amber-200/70 hover:bg-amber-300 rounded-md transition-colors cursor-pointer"
+                                                    title={`Ajuster la quantité déclarée de cette variété à ${placedCount}`}
+                                                  >
+                                                    Ajuster à {placedCount}
+                                                  </button>
+                                                </div>
+                                              ) : placedCount > 0 ? (
+                                                <span 
+                                                  className="inline-flex items-center gap-1 text-[11px] font-semibold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full border border-emerald-200" 
+                                                  title={`${placedCount} sur ${currentQty} plant(s) de cette variété placé(s) sur le plan`}
+                                                >
+                                                  <MapPin className="w-3 h-3 text-emerald-600" />
+                                                  {placedCount} / {currentQty} sur le plan
+                                                </span>
+                                              ) : (
+                                                <span 
+                                                  className="inline-flex items-center gap-1 text-[10px] text-stone-400 bg-stone-100 px-1.5 py-0.5 rounded-full border border-stone-200"
+                                                  title={`0 sur ${currentQty} plant(s) placé(s) sur le plan`}
+                                                >
+                                                  <MapPinOff className="w-2.5 h-2.5" />
+                                                  0 / {currentQty} placé
+                                                </span>
+                                              )}
+                                            </>
                                           );
                                         })()}
                                         {duplicateVarietyKeys.has((variety.value || '').trim().toLowerCase()) && (
@@ -1956,9 +2543,10 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                           </span>
                                         )}
                                       </div>
-                                      {variety.attributes && Object.keys(variety.attributes).length > 0 && (
+                                      {variety.attributes && Object.keys(variety.attributes).filter(k => k !== 'quantity').length > 0 && (
                                         <div className="flex flex-wrap gap-1 mt-1">
                                           {Object.entries(variety.attributes).map(([key, val]) => {
+                                            if (key === 'quantity') return null;
                                             const attrType = varietyAttrTypes.find(t => t.id === key);
                                             if (!attrType || !val) return null;
                                             const isColor = attrType.value.toLowerCase().includes('couleur');
@@ -2003,7 +2591,12 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                       <button
                                         onClick={() => {
                                           setEditingVarietyId(variety.id);
-                                          setVarietyEditForm({ name: variety.value, attributes: variety.attributes || {} });
+                                          const vQty = Math.max(1, variety.quantity !== undefined ? Number(variety.quantity) : (variety.attributes?.quantity !== undefined ? Number(variety.attributes.quantity) : 1));
+                                          setVarietyEditForm({ 
+                                            name: variety.value, 
+                                            quantity: vQty,
+                                            attributes: variety.attributes || {} 
+                                          });
                                         }}
                                         className="p-1.5 text-stone-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
                                         title="Modifier la variété"
@@ -2024,6 +2617,173 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                             ))
                           )}
                         </div>
+
+                        {/* Section: Placed Trees on Orchard Plan */}
+                        {plantOrchardTrees.length > 0 && (
+                          <div className="pt-6 border-t border-stone-200/80 space-y-3">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                              <div>
+                                <h4 className="text-sm font-bold text-stone-800 flex items-center gap-2">
+                                  <MapPin className="w-4 h-4 text-emerald-600" />
+                                  Arbres placés sur le plan ({plantOrchardTrees.length})
+                                </h4>
+                                <p className="text-xs text-stone-500 mt-0.5">
+                                  Modifiez ou réassignez directement la variété de chaque arbre placé sur le terrain
+                                </p>
+                              </div>
+                              {setCurrentView && (
+                                <button
+                                  type="button"
+                                  onClick={() => setCurrentView('orchard')}
+                                  className="text-xs text-emerald-600 hover:text-emerald-700 font-medium flex items-center gap-1 self-start sm:self-auto cursor-pointer"
+                                >
+                                  <span>Voir sur le plan du verger</span>
+                                  <ArrowRight className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+
+                            <div className="space-y-2">
+                              {plantOrchardTrees.map((tree: any, idx: number) => {
+                                const terrain = config?.find((c: any) => c.type === 'terrain' && c.id === tree.terrainId);
+                                const currentTreeVariety = (tree.variety || '').trim();
+                                return (
+                                  <div key={tree.id} className="p-3 bg-stone-50 hover:bg-stone-100/70 border border-stone-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors">
+                                    <div className="flex items-center gap-3 min-w-0">
+                                      <div 
+                                        className="w-8 h-8 rounded-lg flex items-center justify-center text-white shrink-0 shadow-2xs" 
+                                        style={{ backgroundColor: tree.color || '#10b981' }}
+                                      >
+                                        <Trees className="w-4 h-4" />
+                                      </div>
+                                      <div className="min-w-0">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          <span className="text-xs font-bold text-stone-800">
+                                            Arbre #{idx + 1}
+                                          </span>
+                                          {terrain && (
+                                            <span className="text-[10px] px-1.5 py-0.5 bg-stone-200/80 text-stone-600 rounded font-medium">
+                                              {terrain.value}
+                                            </span>
+                                          )}
+                                          {tree.datePlanted && (
+                                            <span className="text-[10px] text-stone-400">
+                                              Planté le {tree.datePlanted}
+                                            </span>
+                                          )}
+                                        </div>
+                                        <div className="text-[11px] text-stone-500">
+                                          {tree.positionX !== undefined && tree.positionY !== undefined 
+                                            ? `Position : X=${tree.positionX} cm, Y=${tree.positionY} cm` 
+                                            : 'Non positionné'}
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-2 shrink-0">
+                                      <label className="text-xs text-stone-500 font-medium">Variété :</label>
+                                      <select
+                                        value={currentTreeVariety}
+                                        onChange={async (e) => {
+                                          const newVar = e.target.value;
+                                          await fb.update('trees', tree.id, { variety: newVar });
+                                        }}
+                                        className="px-2.5 py-1.5 bg-white border border-stone-300 rounded-lg text-xs font-semibold text-stone-800 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 cursor-pointer"
+                                      >
+                                        <option value="">(Non spécifiée)</option>
+                                        {plantVarieties.map((pv: any) => (
+                                          <option key={pv.id} value={pv.value}>
+                                            {pv.value}
+                                          </option>
+                                        ))}
+                                        {currentTreeVariety && !plantVarieties.some((pv: any) => pv.value.toLowerCase().trim() === currentTreeVariety.toLowerCase()) && (
+                                          <option value={currentTreeVariety}>{currentTreeVariety}</option>
+                                        )}
+                                      </select>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Section: Placed Seedlings on Garden Plan (if not orchard trees) */}
+                        {plantPlacedSeedlings.length > 0 && plantOrchardTrees.length === 0 && (
+                          <div className="pt-6 border-t border-stone-200/80 space-y-3">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                              <div>
+                                <h4 className="text-sm font-bold text-stone-800 flex items-center gap-2">
+                                  <MapPin className="w-4 h-4 text-emerald-600" />
+                                  Plants placés sur le potager ({plantPlacedSeedlings.length})
+                                </h4>
+                                <p className="text-xs text-stone-500 mt-0.5">
+                                  Modifiez ou réassignez directement la variété de chaque plant placé
+                                </p>
+                              </div>
+                              {setCurrentView && (
+                                <button
+                                  type="button"
+                                  onClick={() => setCurrentView('garden-plan')}
+                                  className="text-xs text-emerald-600 hover:text-emerald-700 font-medium flex items-center gap-1 self-start sm:self-auto cursor-pointer"
+                                >
+                                  <span>Voir sur le plan du potager</span>
+                                  <ArrowRight className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+
+                            <div className="space-y-2">
+                              {plantPlacedSeedlings.map((seedling: any, idx: number) => {
+                                const currentSeedlingVariety = (seedling.variety || '').trim();
+                                return (
+                                  <div key={seedling.id} className="p-3 bg-stone-50 hover:bg-stone-100/70 border border-stone-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors">
+                                    <div className="flex items-center gap-3 min-w-0">
+                                      <div 
+                                        className="w-8 h-8 rounded-lg flex items-center justify-center text-white shrink-0 shadow-2xs" 
+                                        style={{ backgroundColor: seedling.color || '#10b981' }}
+                                      >
+                                        <Sprout className="w-4 h-4" />
+                                      </div>
+                                      <div className="min-w-0">
+                                        <span className="text-xs font-bold text-stone-800">
+                                          Semis / Plant #{idx + 1}
+                                        </span>
+                                        {seedling.datePlanted && (
+                                          <span className="text-[10px] text-stone-400 ml-2">
+                                            Planté le {seedling.datePlanted}
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-2 shrink-0">
+                                      <label className="text-xs text-stone-500 font-medium">Variété :</label>
+                                      <select
+                                        value={currentSeedlingVariety}
+                                        onChange={async (e) => {
+                                          const newVar = e.target.value;
+                                          await fb.update('seedlings', seedling.id, { variety: newVar });
+                                        }}
+                                        className="px-2.5 py-1.5 bg-white border border-stone-300 rounded-lg text-xs font-semibold text-stone-800 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 cursor-pointer"
+                                      >
+                                        <option value="">(Non spécifiée)</option>
+                                        {plantVarieties.map((pv: any) => (
+                                          <option key={pv.id} value={pv.value}>
+                                            {pv.value}
+                                          </option>
+                                        ))}
+                                        {currentSeedlingVariety && !plantVarieties.some((pv: any) => pv.value.toLowerCase().trim() === currentSeedlingVariety.toLowerCase()) && (
+                                          <option value={currentSeedlingVariety}>{currentSeedlingVariety}</option>
+                                        )}
+                                      </select>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
                       </>
                     )}
                   </div>
@@ -2195,7 +2955,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
         selectedPlant={exportSelectedPlantData}
         healthIssues={exportHealthData}
         attributeTypes={varietyAttrTypes}
-        activeFilterCategory={filterCategory}
+        activeFilterCategory={selectedCategories}
         searchTerm={searchTerm}
       />
 
@@ -2206,7 +2966,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
         filteredPlants={exportFilteredPlantsData}
         selectedPlant={printInitialPlant || exportSelectedPlantData}
         healthIssues={exportHealthData}
-        activeFilterCategory={filterCategory}
+        activeFilterCategory={selectedCategories}
         searchTerm={searchTerm}
       />
 
@@ -2282,7 +3042,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
               <button
                 type="button"
                 onClick={() => {
-                  setFilterCategory('Arbre fruitier');
+                  setSelectedCategories(['Arbre fruitier']);
                   setImportReportModal(null);
                 }}
                 className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium rounded-xl shadow-sm transition-colors"

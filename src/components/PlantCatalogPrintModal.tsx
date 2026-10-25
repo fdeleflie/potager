@@ -15,7 +15,7 @@ export interface PlantCatalogPrintModalProps {
   filteredPlants: ExportPlantItem[];
   selectedPlant: ExportPlantItem | null;
   healthIssues: ExportHealthItem[];
-  activeFilterCategory?: string;
+  activeFilterCategory?: string | string[];
   searchTerm?: string;
 }
 
@@ -54,6 +54,21 @@ export function PlantCatalogPrintModal({
     }
     return plants;
   }, [layoutMode, selectedSinglePlantId, selectedPlant, printScope, filteredPlants, plants]);
+
+  const categoryStats = useMemo(() => {
+    const map = new Map<string, { speciesCount: number; varietiesCount: number; orchardCount: number }>();
+    targetPlants.forEach(p => {
+      const cat = p.category || 'Autre';
+      if (!map.has(cat)) {
+        map.set(cat, { speciesCount: 0, varietiesCount: 0, orchardCount: 0 });
+      }
+      const entry = map.get(cat)!;
+      entry.speciesCount += 1;
+      entry.varietiesCount += (p.varieties?.length || 0);
+      entry.orchardCount += (p.orchardTreeCount || 0);
+    });
+    return Array.from(map.entries()).map(([cat, stats]) => ({ category: cat, ...stats }));
+  }, [targetPlants]);
 
   if (!isOpen) return null;
 
@@ -220,7 +235,7 @@ export function PlantCatalogPrintModal({
                     printScope === 'filtered' ? 'bg-stone-800 text-white font-semibold' : 'text-stone-600 hover:bg-stone-100'
                   }`}
                 >
-                  {activeFilterCategory ? `${activeFilterCategory} (${filteredPlants.length})` : `Filtre (${filteredPlants.length})`}
+                  {activeFilterCategory ? `${Array.isArray(activeFilterCategory) ? activeFilterCategory.join(', ') : activeFilterCategory} (${filteredPlants.length})` : `Filtre (${filteredPlants.length})`}
                 </button>
                 {selectedPlant && (
                   <button
@@ -350,6 +365,32 @@ export function PlantCatalogPrintModal({
               </div>
             </div>
 
+            {/* Category Statistics Summary Box */}
+            {layoutMode !== 'single' && layoutMode !== 'health' && categoryStats.length > 0 && (
+              <div className="mb-6 p-4 bg-stone-50 border border-stone-200 rounded-xl page-break-inside-avoid">
+                <h4 className="text-xs font-bold text-stone-700 uppercase tracking-wider mb-2.5 flex items-center gap-2">
+                  <Layers className="w-4 h-4 text-emerald-600" />
+                  Récapitulatif par catégorie (Quantité d'espèces & variétés)
+                </h4>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
+                  {categoryStats.map(stat => (
+                    <div key={stat.category} className="p-2.5 bg-white border border-stone-200 rounded-lg text-xs space-y-1 shadow-2xs">
+                      <div className="font-bold text-stone-900 truncate">{stat.category}</div>
+                      <div className="flex items-center justify-between text-[11px] text-stone-600">
+                        <span>Espèces : <strong className="text-stone-900">{stat.speciesCount}</strong></span>
+                        <span>Variétés : <strong className="text-amber-800">{stat.varietiesCount}</strong></span>
+                      </div>
+                      {stat.orchardCount > 0 && (
+                        <div className="text-[10px] text-emerald-700 font-semibold pt-0.5 border-t border-stone-100">
+                          📍 {stat.orchardCount} au verger / plan
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Layout 1: Dense Synthesis Table */}
             {layoutMode === 'table' && (
               <div className="overflow-x-auto">
@@ -383,6 +424,9 @@ export function PlantCatalogPrintModal({
                               {renderPlantIcon(plant, "w-3 h-3 text-white")}
                             </span>
                             <span>{plant.name}</span>
+                            <span className="text-[9px] bg-stone-100 text-stone-800 px-1.5 py-0.2 rounded font-bold border border-stone-200">
+                              Total : {plant.totalCount !== undefined ? plant.totalCount : 0}
+                            </span>
                             {(plant.orchardTreeCount || 0) > 0 && (
                               <span className="text-[9px] bg-emerald-100 text-emerald-800 px-1 py-0.2 rounded font-bold">
                                 {plant.orchardTreeCount} au verger
@@ -474,7 +518,12 @@ export function PlantCatalogPrintModal({
                           {renderPlantIcon(plant, "w-4 h-4 text-white")}
                         </span>
                         <div>
-                          <h3 className="text-sm font-bold text-stone-900 m-0 leading-tight">{plant.name}</h3>
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-sm font-bold text-stone-900 m-0 leading-tight">{plant.name}</h3>
+                            <span className="text-[10px] bg-stone-100 text-stone-800 px-1.5 py-0.5 rounded font-bold border border-stone-200">
+                              Total : {plant.totalCount !== undefined ? plant.totalCount : 0}
+                            </span>
+                          </div>
                           <span className="text-[10px] text-stone-500 uppercase tracking-wider">{plant.category}</span>
                         </div>
                       </div>

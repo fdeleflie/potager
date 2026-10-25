@@ -314,7 +314,10 @@ export function SeedlingsList({ setCurrentView, initialFilter = 'active' }: { se
     
     // Category filtering
     const encEntry = encyclopedia?.find(e => (e.name || '').toLowerCase().trim() === (s.vegetable || '').toLowerCase().trim());
-    const matchesCategory = filterCategory === 'all' || (encEntry && areCategoriesEqual(encEntry.category, filterCategory));
+    const matchesCategory = filterCategory === 'all' || (encEntry && (
+      areCategoriesEqual(encEntry.category, filterCategory) ||
+      (Array.isArray(encEntry.categories) && encEntry.categories.some((c: string) => areCategoriesEqual(c, filterCategory)))
+    ));
 
     const matchesArchived = filterArchived === 'all' || 
                             (filterArchived === 'active' && !s.isArchived) || 

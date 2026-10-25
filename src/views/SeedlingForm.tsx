@@ -2,11 +2,12 @@ import { useFirebaseData, fb } from '../hooks/useFirebaseData';
 import React, { useState, useEffect, useRef } from 'react';
 import { db, Seedling } from '../db';
 import { v4 as uuidv4 } from 'uuid';
-import { ArrowLeft, Camera, Save, CheckCircle } from 'lucide-react';
+import { ArrowLeft, Camera, Save, CheckCircle, BookOpen, CalendarClock } from 'lucide-react';
 import { stringToColor, getDistinctColor } from '../utils/colors';
 import { compressImage } from '../utils/image';
 import { PLANT_CATALOG } from '../catalog';
 import { useSeason } from '../contexts/SeasonContext';
+import { MONTH_NAMES, PERIOD_SHORT_LABELS } from '../components/PerpetualTaskModal';
 
 export function SeedlingForm({ setCurrentView, seedlingId, onBack }: { setCurrentView: (v: string) => void, seedlingId?: string, onBack?: () => void }) {
   const { seasons, currentSeasonId } = useSeason();
@@ -30,6 +31,30 @@ export function SeedlingForm({ setCurrentView, seedlingId, onBack }: { setCurren
   const [quantityLostTransplanted, setQuantityLostTransplanted] = useState<number | ''>('');
   const [error, setError] = useState<string | null>(null);
   const [saveSummary, setSaveSummary] = useState<{ mainId: string; message: string; details: string[] } | null>(null);
+
+  // Journal & Perpetual Planning sync options
+  const [addToJournal, setAddToJournal] = useState(!seedlingId);
+  const [addToPerpetual, setAddToPerpetual] = useState(false);
+  const [perpetualCategory, setPerpetualCategory] = useState<'sowing' | 'planting' | 'multiplication' | 'pruning' | 'other'>('sowing');
+  const [perpetualMonth, setPerpetualMonth] = useState<number>(() => {
+    const d = new Date();
+    return d.getMonth() + 1;
+  });
+  const [perpetualPeriod, setPerpetualPeriod] = useState<'debut' | 'mi' | 'fin' | 'mois_entier'>('mois_entier');
+
+  // Update perpetual defaults whenever dateSown changes
+  useEffect(() => {
+    if (dateSown) {
+      const d = new Date(dateSown);
+      if (!isNaN(d.getTime())) {
+        const m = d.getMonth() + 1;
+        setPerpetualMonth(m);
+        const day = d.getDate();
+        const p = day <= 10 ? 'debut' : day <= 20 ? 'mi' : 'fin';
+        setPerpetualPeriod(p);
+      }
+    }
+  }, [dateSown]);
 
   const defaultsApplied = useRef(false);
 
@@ -364,6 +389,69 @@ export function SeedlingForm({ setCurrentView, seedlingId, onBack }: { setCurren
       quantityLostTransplanted: lostTransplanted > 0 ? lostTransplanted : undefined,
     };
 
+    let journalCreated = false;
+    let perpetualCreated = false;
+
+    // 1. Publication dans le Journal de bord si demandée
+    if (addToJournal) {
+      const vegVarietyTitle = variety.trim() ? `${vegetable.trim()} (${variety.trim()})` : vegetable.trim();
+      const actionText = action.trim();
+      const commentText = comments.trim();
+      const journalTitle = `Semis : ${vegVarietyTitle}`;
+      const journalDesc = `Semis de ${vegVarietyTitle} (${origin || 'Semis'})${finalQuantity ? ` - ${finalQuantity} plant(s)` : ''}${location ? ` - Emplacement : ${location}` : ''}`;
+      const journalContent = actionText 
+        ? `${actionText}${commentText ? ` — ${commentText}` : ''}` 
+        : (commentText || `Démarrage de la culture de ${vegVarietyTitle} (${origin || 'Semis'}).`);
+
+      await fb.add('journal', {
+        id: uuidv4(),
+        title: journalTitle,
+        description: journalDesc,
+        commentaire: commentText,
+        statut: 'Fait',
+        tags: ['🌱 Semis'],
+        date: dateSown,
+        content: journalContent,
+        photos: photo ? [photo] : [],
+        isDeleted: false,
+        seasonId: baseSeedling.seasonId,
+        successStatus: 'none',
+      });
+      journalCreated = true;
+
+      // Ajouter aussi une note interne sur la fiche du semis (sans doublon de publication dans le journal)
+      if (!mainSeedling.notes) mainSeedling.notes = [];
+      mainSeedling.notes.push({
+        id: uuidv4(),
+        date: dateSown,
+        text: journalContent,
+        photos: photo ? [photo] : undefined,
+        publishToJournal: false,
+        isSystemLog: false,
+        successStatus: 'none'
+      });
+    }
+
+    // 2. Enregistrement dans le Calendrier Perpétuel si demandé
+    if (addToPerpetual) {
+      const vegVarietyTitle = variety.trim() ? `${vegetable.trim()} (${variety.trim()})` : vegetable.trim();
+      await fb.add('perpetualTasks', {
+        id: uuidv4(),
+        title: `Semis de ${vegVarietyTitle}`,
+        plant: vegetable.trim(),
+        category: perpetualCategory || 'sowing',
+        month: Number(perpetualMonth),
+        period: perpetualPeriod || 'mois_entier',
+        description: comments.trim() || action.trim() || `Période de semis recommandée pour ${vegVarietyTitle} (${origin || 'Semis'}).`,
+        photos: photo ? [photo] : [],
+        sourceNoteDate: dateSown,
+        sourceNoteId: mainSeedling.id,
+        isDeleted: false,
+        createdAt: new Date().toISOString()
+      });
+      perpetualCreated = true;
+    }
+
     if (seedlingId) {
       await fb.put('seedlings', mainSeedling);
     } else {
@@ -376,6 +464,13 @@ export function SeedlingForm({ setCurrentView, seedlingId, onBack }: { setCurren
     
     const details: string[] = [];
     
+    if (journalCreated) {
+      details.push(`Action enregistrée dans le Journal de bord au ${dateSown}.`);
+    }
+    if (perpetualCreated) {
+      details.push(`Geste ajouté au Planning perpétuel (${MONTH_NAMES[perpetualMonth - 1]} - ${PERIOD_SHORT_LABELS[perpetualPeriod] || perpetualPeriod}).`);
+    }
+
     if (isTotalLoss) {
       details.push(`La totalité du lot a été perdue et la fiche a été archivée comme échec.`);
     } else {
@@ -390,44 +485,62 @@ export function SeedlingForm({ setCurrentView, seedlingId, onBack }: { setCurren
     if (details.length > 0) {
       setSaveSummary({
         mainId: mainSeedling.id,
-        message: 'Modifications enregistrées avec succès.',
+        message: 'Semis et actions enregistrés avec succès.',
         details
       });
     } else {
-      // Si pas de séparation complexe, on redirige vers la fiche détaillée pour confirmer l'action visuellement
+      // Si pas de séparation ni d'action annexe, on redirige vers la fiche détaillée
       setCurrentView(`seedling-detail-${mainSeedling.id}`);
     }
   };
 
   if (saveSummary) {
     return (
-      <div className="max-w-md mx-auto mt-12 bg-white p-6 rounded-2xl shadow-sm border border-emerald-100 text-center space-y-6">
-        <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto">
+      <div className="max-w-md mx-auto mt-12 bg-white p-6 rounded-2xl shadow-sm border border-emerald-100 text-center space-y-5">
+        <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto shadow-2xs">
           <CheckCircle className="w-8 h-8" />
         </div>
         <div className="space-y-2">
           <h2 className="text-xl font-serif font-medium text-stone-900">{saveSummary.message}</h2>
-          <div className="text-sm text-stone-600 bg-stone-50 p-4 rounded-xl text-left space-y-2">
+          <div className="text-xs text-stone-600 bg-stone-50 p-4 rounded-xl text-left space-y-2 border border-stone-200/60">
             {saveSummary.details.map((detail, i) => (
               <p key={i} className="flex items-start gap-2">
-                <span className="text-emerald-500 mt-0.5">•</span>
+                <span className="text-emerald-500 font-bold mt-0.5">•</span>
                 <span>{detail}</span>
               </p>
             ))}
           </div>
         </div>
-        <div className="flex flex-col gap-2 pt-2">
+        <div className="flex flex-col gap-2 pt-1">
           <button
             onClick={() => setCurrentView(`seedling-detail-${saveSummary.mainId}`)}
-            className="w-full py-2.5 bg-emerald-600 text-white rounded-xl font-medium hover:bg-emerald-700 transition-colors"
+            className="w-full py-2 bg-emerald-600 text-white rounded-xl text-xs font-semibold hover:bg-emerald-700 transition-colors cursor-pointer"
           >
-            Voir la fiche mise à jour
+            Voir la fiche du semis
           </button>
+          {addToJournal && (
+            <button
+              onClick={() => setCurrentView('journal')}
+              className="w-full py-2 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-semibold hover:bg-emerald-100 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              <span>Consulter dans le Journal de bord</span>
+            </button>
+          )}
+          {addToPerpetual && (
+            <button
+              onClick={() => setCurrentView('calendar')}
+              className="w-full py-2 bg-blue-50 text-blue-800 border border-blue-200 rounded-xl text-xs font-semibold hover:bg-blue-100 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <CalendarClock className="w-3.5 h-3.5" />
+              <span>Consulter dans le Planning perpétuel</span>
+            </button>
+          )}
           <button
             onClick={() => onBack ? onBack() : setCurrentView('seedlings')}
-            className="w-full py-2.5 bg-stone-100 text-stone-700 rounded-xl font-medium hover:bg-stone-200 transition-colors"
+            className="w-full py-2 bg-stone-100 text-stone-700 rounded-xl text-xs font-medium hover:bg-stone-200 transition-colors cursor-pointer"
           >
-            Retour à la liste
+            Retour à la liste des semis
           </button>
         </div>
       </div>
@@ -715,6 +828,121 @@ export function SeedlingForm({ setCurrentView, seedlingId, onBack }: { setCurren
               </button>
             )}
           </div>
+        </div>
+
+        {/* Options automatiques : Journal de bord & Planning perpétuel */}
+        <div className="pt-3 border-t border-stone-200/70 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-semibold text-stone-700 uppercase tracking-wider">
+              Actions automatiques & Synchronisation
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {/* Option 1: Journal de bord */}
+            <div className={`p-2.5 rounded-lg border transition-all ${
+              addToJournal 
+                ? 'bg-emerald-50/80 border-emerald-300 text-emerald-950' 
+                : 'bg-stone-50/70 border-stone-200 text-stone-600'
+            }`}>
+              <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                <input 
+                  type="checkbox"
+                  checked={addToJournal}
+                  onChange={e => setAddToJournal(e.target.checked)}
+                  className="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500 h-4 w-4 shrink-0 cursor-pointer"
+                />
+                <div className="space-y-0.5 flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5 font-medium text-xs text-stone-900">
+                    <BookOpen className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    <span>Ajouter une action au journal de bord</span>
+                  </div>
+                  <p className="text-[11px] text-stone-500 leading-tight">
+                    Crée une note datée avec description, commentaire et statut « Fait ».
+                  </p>
+                </div>
+              </label>
+            </div>
+
+            {/* Option 2: Planning perpétuel */}
+            <div className={`p-2.5 rounded-lg border transition-all ${
+              addToPerpetual 
+                ? 'bg-blue-50/80 border-blue-300 text-blue-950' 
+                : 'bg-stone-50/70 border-stone-200 text-stone-600'
+            }`}>
+              <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                <input 
+                  type="checkbox"
+                  checked={addToPerpetual}
+                  onChange={e => setAddToPerpetual(e.target.checked)}
+                  className="mt-0.5 rounded text-blue-600 focus:ring-blue-500 h-4 w-4 shrink-0 cursor-pointer"
+                />
+                <div className="space-y-0.5 flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5 font-medium text-xs text-stone-900">
+                    <CalendarClock className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                    <span>Ajouter au planning perpétuel</span>
+                  </div>
+                  <p className="text-[11px] text-stone-500 leading-tight">
+                    Mémorise ce geste chaque année comme repère pour vos futurs semis.
+                  </p>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          {/* Configuration détaillée du planning perpétuel si activé */}
+          {addToPerpetual && (
+            <div className="p-3 bg-blue-50/60 rounded-lg border border-blue-200 space-y-2 animate-fade-in text-xs">
+              <div className="flex items-center justify-between text-[11px] font-semibold text-blue-900">
+                <span>Paramètres pour le calendrier perpétuel</span>
+                <span className="text-blue-600 text-[10px]">Auto-rempli depuis la date de semis</span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div>
+                  <label className="block text-[10px] text-stone-600 mb-0.5 font-medium">Catégorie de geste</label>
+                  <select 
+                    value={perpetualCategory}
+                    onChange={e => setPerpetualCategory(e.target.value as any)}
+                    className="w-full px-2 py-1 text-xs rounded border border-blue-200 bg-white focus:ring-2 focus:ring-blue-400 outline-none"
+                  >
+                    <option value="sowing">🌱 Semis</option>
+                    <option value="planting">🪴 Plantation & Repiquage</option>
+                    <option value="multiplication">🌿 Bouturage & Multiplication</option>
+                    <option value="pruning">✂️ Taille & Pincement</option>
+                    <option value="other">📌 Autre geste</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] text-stone-600 mb-0.5 font-medium">Mois de démarrage</label>
+                  <select 
+                    value={perpetualMonth}
+                    onChange={e => setPerpetualMonth(Number(e.target.value))}
+                    className="w-full px-2 py-1 text-xs rounded border border-blue-200 bg-white focus:ring-2 focus:ring-blue-400 outline-none"
+                  >
+                    {MONTH_NAMES.map((name, i) => (
+                      <option key={i + 1} value={i + 1}>{name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] text-stone-600 mb-0.5 font-medium">Période du mois</label>
+                  <select 
+                    value={perpetualPeriod}
+                    onChange={e => setPerpetualPeriod(e.target.value as any)}
+                    className="w-full px-2 py-1 text-xs rounded border border-blue-200 bg-white focus:ring-2 focus:ring-blue-400 outline-none"
+                  >
+                    <option value="debut">Début (1-10)</option>
+                    <option value="mi">Mi-mois (11-20)</option>
+                    <option value="fin">Fin (21-31)</option>
+                    <option value="mois_entier">Tout le mois</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="pt-3 border-t border-stone-100 flex justify-end gap-2">

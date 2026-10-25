@@ -28,8 +28,8 @@ export function DeletePlantModal({
   encyclopedia,
   onDeleted,
 }: DeletePlantModalProps) {
-  const [deleteMode, setDeleteMode] = useState<'reassign' | 'cascade' | 'catalog_only'>('reassign');
-  const [targetPlantName, setTargetPlantName] = useState<string>('Prunier');
+  const [deleteMode, setDeleteMode] = useState<'reassign' | 'cascade' | 'catalog_only'>('cascade');
+  const [targetPlantName, setTargetPlantName] = useState<string>('');
   const [isProcessing, setIsProcessing] = useState(false);
 
   // Identify matching trees and seedlings
@@ -59,27 +59,25 @@ export function DeletePlantModal({
       .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   }, [allPlants, plantNameLower]);
 
-  // Auto-pick intelligent target (e.g. if plant is Mirabellier, Quetschier, Reine-Claude -> suggest Prunier)
+  const hasDependencies = matchingTrees.length > 0 || matchingSeedlings.length > 0;
+
+  // Auto-pick intelligent target and default delete mode to deletion (cascade or catalog_only)
   React.useEffect(() => {
     if (!isOpen || !plantNameLower) return;
     
+    setDeleteMode(hasDependencies ? 'cascade' : 'catalog_only');
+
     if (['mirabellier', 'mirabelier', 'quetschier', 'reine-claude', 'reine claude'].includes(plantNameLower)) {
       const prunier = reassignmentCandidates.find(p => p.name.toLowerCase().includes('prunier'));
       if (prunier) {
         setTargetPlantName(prunier.name);
-        setDeleteMode('reassign');
-        return;
       }
-    }
-    
-    if (reassignmentCandidates.length > 0 && !reassignmentCandidates.some(c => c.name === targetPlantName)) {
+    } else if (reassignmentCandidates.length > 0) {
       setTargetPlantName(reassignmentCandidates[0].name);
     }
-  }, [isOpen, plantNameLower, reassignmentCandidates]);
+  }, [isOpen, plantNameLower, reassignmentCandidates, hasDependencies]);
 
   if (!isOpen || !plant) return null;
-
-  const hasDependencies = matchingTrees.length > 0 || matchingSeedlings.length > 0;
 
   const handleConfirm = async () => {
     setIsProcessing(true);

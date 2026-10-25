@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AlertCircle, ExternalLink, X, ChevronDown, ChevronUp, ShieldCheck, RefreshCw, CheckCircle, Zap } from 'lucide-react';
-import { getFirebaseQuotaStats, syncPriorityCollections, QuotaStats } from '../hooks/useFirebaseData';
+import { getFirebaseQuotaStats, syncPriorityCollections, testFirebaseConnection, QuotaStats } from '../hooks/useFirebaseData';
 
 export function QuotaBanner() {
   const [showBanner, setShowBanner] = useState(() => {
@@ -10,6 +10,7 @@ export function QuotaBanner() {
   const [isExpanded, setIsExpanded] = useState(false);
   const [stats, setStats] = useState<QuotaStats>(getFirebaseQuotaStats);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
 
   useEffect(() => {
@@ -62,6 +63,21 @@ export function QuotaBanner() {
     }
   };
 
+  const handleTestConnection = async () => {
+    setIsTesting(true);
+    setSyncFeedback(null);
+    try {
+      const res = await testFirebaseConnection();
+      setSyncFeedback(res.message);
+      setStats(getFirebaseQuotaStats());
+    } catch (e: any) {
+      setSyncFeedback(e.message || 'Erreur de test');
+    } finally {
+      setIsTesting(false);
+      setTimeout(() => setSyncFeedback(null), 6000);
+    }
+  };
+
   // Compact 1-line collapsed view by default
   if (!isExpanded) {
     return (
@@ -78,7 +94,9 @@ export function QuotaBanner() {
           )}
           <span className="font-semibold truncate text-[11px] sm:text-xs">
             {stats.isQuotaExceeded 
-              ? 'Mode Cache Local Actif (Quota Spark journalier atteint)' 
+              ? (stats.readsToday < stats.maxDailyReads 
+                  ? `Mode Cache Local Actif (Alerte quota serveur Firebase • ${stats.readsToday.toLocaleString('fr-FR')} lues ici)`
+                  : 'Mode Cache Local Actif (Quota Spark journalier atteint)')
               : 'Protection Quota Active : Journal & Perpétuel prioritaires'}
           </span>
         </div>
@@ -123,7 +141,7 @@ export function QuotaBanner() {
             <div className="flex items-center gap-2 flex-wrap">
               <span className="font-semibold text-sm">
                 {stats.isQuotaExceeded 
-                  ? 'Quota journalier Firestore (Spark) atteint' 
+                  ? 'Mode Cache Local Actif' 
                   : 'Marge Quota Active : Journal & Calendrier Perpétuel prioritaires'}
               </span>
               <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full ${
@@ -132,14 +150,14 @@ export function QuotaBanner() {
                   : 'bg-emerald-200/80 text-emerald-900'
               }`}>
                 <ShieldCheck className="w-3 h-3" />
-                {stats.isQuotaExceeded ? 'Mode Cache Local Actif' : 'Protection Prioritaire Active'}
+                {stats.isQuotaExceeded ? 'Cache Local Sécurisé' : 'Protection Prioritaire Active'}
               </span>
             </div>
 
             {/* Quota Progress Bar */}
             <div className="w-full max-w-md pt-0.5">
               <div className="flex justify-between items-center text-[11px] text-stone-600 mb-1">
-                <span>Lectures estimées : <strong className="text-stone-800">{stats.readsToday.toLocaleString('fr-FR')}</strong> / {stats.maxDailyReads.toLocaleString('fr-FR')}</span>
+                <span>Lectures estimées sur cet appareil : <strong className="text-stone-800">{stats.readsToday.toLocaleString('fr-FR')}</strong> / {stats.maxDailyReads.toLocaleString('fr-FR')}</span>
                 <span>{stats.readPercent}%</span>
               </div>
               <div className="w-full bg-stone-200/80 h-1.5 rounded-full overflow-hidden">
@@ -152,16 +170,34 @@ export function QuotaBanner() {
               </div>
             </div>
 
-            <p className="text-xs text-stone-700 leading-relaxed max-w-3xl">
+            <div className="text-xs text-stone-700 leading-relaxed max-w-3xl space-y-1.5">
               {stats.isQuotaExceeded ? (
-                <>Vos données restent <strong>100% consultables</strong> grâce au cache de votre appareil. Le quota gratuit de 50&nbsp;000 lectures se réinitialise chaque matin (9h-10h).</>
+                <>
+                  <p>Vos données restent <strong>100% consultables et modifiables</strong> grâce au cache sécurisé de votre navigateur. Le quota gratuit Spark (50&nbsp;000 lectures) est réinitialisé chaque jour par Google (vers 9h-10h).</p>
+                  {stats.readsToday < stats.maxDailyReads && (
+                    <p className="text-[11px] text-amber-950 bg-amber-100/70 p-2.5 rounded-lg border border-amber-200/90 leading-snug">
+                      💡 <strong>Comprendre les {stats.readsToday.toLocaleString('fr-FR')} lectures :</strong> Ce compteur mesure uniquement les requêtes effectuées depuis ce navigateur. Cependant, la limite de 50&nbsp;000 lectures de Firebase s'applique <strong>à tout votre projet Google</strong> (cumul de votre téléphone, PC, ou connexions précédentes). Dès que le serveur Google signale la limite, l'application bascule automatiquement en cache local pour éviter tout blocage.
+                    </p>
+                  )}
+                </>
               ) : (
-                <>Pour garantir que votre <strong>Journal</strong> et votre <strong>Calendrier perpétuel</strong> restent accessibles et synchronisés sur votre téléphone et PC, les 15&nbsp;000 lectures restantes leur sont strictement réservées.</>
+                <p>Pour garantir que votre <strong>Journal</strong> et votre <strong>Calendrier perpétuel</strong> restent accessibles et synchronisés sur votre téléphone et PC, les 15&nbsp;000 lectures restantes leur sont strictement réservées.</p>
               )}
-            </p>
+            </div>
 
             <div className="pt-2 flex items-center gap-3 flex-wrap text-xs">
               <button
+                type="button"
+                onClick={handleTestConnection}
+                disabled={isTesting}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-stone-300 text-stone-800 font-medium rounded-lg shadow-2xs hover:bg-stone-50 active:scale-98 transition-all disabled:opacity-50 cursor-pointer"
+              >
+                <CheckCircle className={`w-3.5 h-3.5 ${isTesting ? 'animate-spin text-amber-600' : 'text-emerald-600'}`} />
+                <span>{isTesting ? 'Vérification...' : 'Tester connexion Firestore'}</span>
+              </button>
+
+              <button
+                type="button"
                 onClick={handlePrioritySync}
                 disabled={isSyncing}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-stone-300 text-stone-800 font-medium rounded-lg shadow-2xs hover:bg-stone-50 active:scale-98 transition-all disabled:opacity-50 cursor-pointer"
@@ -171,9 +207,9 @@ export function QuotaBanner() {
               </button>
 
               {syncFeedback && (
-                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 bg-emerald-100/70 px-2 py-1 rounded-md">
-                  <CheckCircle className="w-3.5 h-3.5" />
-                  {syncFeedback}
+                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-800 bg-emerald-100/80 px-2.5 py-1 rounded-md border border-emerald-200">
+                  <CheckCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <span>{syncFeedback}</span>
                 </span>
               )}
 
