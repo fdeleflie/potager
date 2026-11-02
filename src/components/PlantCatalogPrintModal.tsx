@@ -2,11 +2,19 @@ import React, { useState, useMemo } from 'react';
 import { 
   X, Printer, LayoutGrid, Table, FileText, Stethoscope, 
   Sun, Droplets, Move, ThumbsUp, ThumbsDown, Info, 
-  Filter, Check, Sparkles, MapPin, Leaf, Layers
+  Filter, Check, Sparkles, MapPin, Leaf, Layers, Calendar, Clock
 } from 'lucide-react';
 import { ExportPlantItem, ExportHealthItem } from '../utils/catalogExport';
 import { printElement } from '../utils/print';
 import { ICON_MAP, isEmoji } from '../constants';
+import { 
+  HarvestStorageScheduleItem, 
+  MONTH_ABBR_FR, 
+  MONTH_NAMES_FR, 
+  resolveVarietyHarvestAndStorage, 
+  sortScheduleByPeriod, 
+  sortScheduleByVariety 
+} from '../utils/harvestStorageData';
 
 export interface PlantCatalogPrintModalProps {
   isOpen: boolean;
@@ -17,9 +25,11 @@ export interface PlantCatalogPrintModalProps {
   healthIssues: ExportHealthItem[];
   activeFilterCategory?: string | string[];
   searchTerm?: string;
+  allHarvestStorageItems?: HarvestStorageScheduleItem[];
+  filteredHarvestStorageItems?: HarvestStorageScheduleItem[];
 }
 
-type PrintLayoutMode = 'table' | 'cards' | 'single' | 'health';
+type PrintLayoutMode = 'table' | 'cards' | 'single' | 'health' | 'planning';
 type PrintScope = 'all' | 'filtered' | 'selected';
 
 export function PlantCatalogPrintModal({
@@ -30,9 +40,12 @@ export function PlantCatalogPrintModal({
   selectedPlant,
   healthIssues,
   activeFilterCategory,
-  searchTerm
+  searchTerm,
+  allHarvestStorageItems,
+  filteredHarvestStorageItems
 }: PlantCatalogPrintModalProps) {
   const [layoutMode, setLayoutMode] = useState<PrintLayoutMode>('table');
+  const [planningSortMode, setPlanningSortMode] = useState<'period' | 'variety'>('period');
   const [printScope, setPrintScope] = useState<PrintScope>(selectedPlant ? 'selected' : 'all');
   const [selectedSinglePlantId, setSelectedSinglePlantId] = useState<string>(selectedPlant?.id || plants[0]?.id || '');
   const [orientation, setOrientation] = useState<'landscape' | 'portrait'>('landscape');
@@ -70,6 +83,66 @@ export function PlantCatalogPrintModal({
     return Array.from(map.entries()).map(([cat, stats]) => ({ category: cat, ...stats }));
   }, [targetPlants]);
 
+  const planningScheduleItems = useMemo(() => {
+    let rawItems: HarvestStorageScheduleItem[] = [];
+
+    if (printScope === 'filtered' && filteredHarvestStorageItems && filteredHarvestStorageItems.length > 0) {
+      rawItems = filteredHarvestStorageItems;
+    } else if (printScope === 'all' && allHarvestStorageItems && allHarvestStorageItems.length > 0) {
+      rawItems = allHarvestStorageItems;
+    } else {
+      targetPlants.forEach(plant => {
+        if (plant.varieties && plant.varieties.length > 0) {
+          plant.varieties.forEach(v => {
+            const { harvestMonths, storageMonths } = resolveVarietyHarvestAndStorage(
+              plant.name,
+              v.name,
+              v.attributes,
+              plant.harvestPeriod
+            );
+            rawItems.push({
+              id: `${plant.id}___${v.id || v.name}`,
+              species: plant.name,
+              variety: v.name,
+              displayName: `${plant.name} - ${v.name}`,
+              category: plant.category,
+              icon: plant.icon,
+              color: plant.color,
+              harvestMonths,
+              storageMonths,
+              parentId: plant.id,
+              totalQuantity: plant.totalCount,
+              orchardCount: plant.orchardTreeCount
+            });
+          });
+        } else {
+          const { harvestMonths, storageMonths } = resolveVarietyHarvestAndStorage(
+            plant.name,
+            'Standard',
+            undefined,
+            plant.harvestPeriod
+          );
+          rawItems.push({
+            id: `${plant.id}___standard`,
+            species: plant.name,
+            variety: 'Standard',
+            displayName: `${plant.name} - Standard`,
+            category: plant.category,
+            icon: plant.icon,
+            color: plant.color,
+            harvestMonths,
+            storageMonths,
+            parentId: plant.id,
+            totalQuantity: plant.totalCount,
+            orchardCount: plant.orchardTreeCount
+          });
+        }
+      });
+    }
+
+    return planningSortMode === 'period' ? sortScheduleByPeriod(rawItems) : sortScheduleByVariety(rawItems);
+  }, [printScope, filteredHarvestStorageItems, allHarvestStorageItems, targetPlants, planningSortMode]);
+
   if (!isOpen) return null;
 
   const totalVarietiesCount = targetPlants.reduce((acc, p) => acc + (p.varieties?.length || 0), 0);
@@ -80,6 +153,8 @@ export function PlantCatalogPrintModal({
       title = `Fiche Culture - ${targetPlants[0].name}`;
     } else if (layoutMode === 'health') {
       title = 'Fiches Santé & Ravageurs du Potager';
+    } else if (layoutMode === 'planning') {
+      title = `Calendrier MÀJ - ${planningSortMode === 'period' ? 'Classé par Période' : 'Classé par Variétés'}`;
     } else if (activeFilterCategory && printScope === 'filtered') {
       title = `Catalogue des Plantes - ${activeFilterCategory}`;
     }
@@ -198,9 +273,20 @@ export function PlantCatalogPrintModal({
                 <Stethoscope className="w-3.5 h-3.5" />
                 <span>Santé & Ravageurs</span>
               </button>
+
+              <button
+                type="button"
+                onClick={() => { setLayoutMode('planning'); setOrientation('landscape'); }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 cursor-pointer ${
+                  layoutMode === 'planning' ? 'bg-red-600 text-white font-semibold shadow-xs' : 'text-stone-600 hover:bg-stone-100'
+                }`}
+              >
+                <Calendar className="w-3.5 h-3.5" />
+                <span>Planning Récolte & Stockage</span>
+              </button>
             </div>
 
-            {/* Scope / Plant Selector */}
+            {/* Scope / Plant / Sort Selector */}
             {layoutMode === 'single' ? (
               <div className="flex items-center gap-2">
                 <label className="text-xs text-stone-500 font-medium">Plante :</label>
@@ -216,40 +302,69 @@ export function PlantCatalogPrintModal({
                   ))}
                 </select>
               </div>
-            ) : layoutMode !== 'health' ? (
-              <div className="flex items-center gap-1.5 bg-white p-1 rounded-xl border border-stone-200 text-xs">
-                <button
-                  type="button"
-                  onClick={() => setPrintScope('all')}
-                  className={`px-2.5 py-1 rounded-md transition-all ${
-                    printScope === 'all' ? 'bg-stone-800 text-white font-semibold' : 'text-stone-600 hover:bg-stone-100'
-                  }`}
-                >
-                  Tout ({plants.length})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPrintScope('filtered')}
-                  disabled={filteredPlants.length === plants.length && !activeFilterCategory && !searchTerm}
-                  className={`px-2.5 py-1 rounded-md transition-all disabled:opacity-40 ${
-                    printScope === 'filtered' ? 'bg-stone-800 text-white font-semibold' : 'text-stone-600 hover:bg-stone-100'
-                  }`}
-                >
-                  {activeFilterCategory ? `${Array.isArray(activeFilterCategory) ? activeFilterCategory.join(', ') : activeFilterCategory} (${filteredPlants.length})` : `Filtre (${filteredPlants.length})`}
-                </button>
-                {selectedPlant && (
-                  <button
-                    type="button"
-                    onClick={() => setPrintScope('selected')}
-                    className={`px-2.5 py-1 rounded-md transition-all ${
-                      printScope === 'selected' ? 'bg-stone-800 text-white font-semibold' : 'text-stone-600 hover:bg-stone-100'
-                    }`}
-                  >
-                    Sélection : {selectedPlant.name}
-                  </button>
+            ) : (
+              <div className="flex items-center gap-2 flex-wrap">
+                {layoutMode === 'planning' && (
+                  <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-stone-200 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setPlanningSortMode('period')}
+                      className={`px-2.5 py-1 rounded-md transition-all flex items-center gap-1 cursor-pointer ${
+                        planningSortMode === 'period' ? 'bg-stone-800 text-white font-semibold' : 'text-stone-600 hover:bg-stone-100'
+                      }`}
+                    >
+                      <Clock className="w-3 h-3 text-red-400" />
+                      <span>Classé par Période</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPlanningSortMode('variety')}
+                      className={`px-2.5 py-1 rounded-md transition-all flex items-center gap-1 cursor-pointer ${
+                        planningSortMode === 'variety' ? 'bg-stone-800 text-white font-semibold' : 'text-stone-600 hover:bg-stone-100'
+                      }`}
+                    >
+                      <Layers className="w-3 h-3 text-sky-400" />
+                      <span>Classé par Variétés</span>
+                    </button>
+                  </div>
+                )}
+
+                {layoutMode !== 'health' && (
+                  <div className="flex items-center gap-1.5 bg-white p-1 rounded-xl border border-stone-200 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setPrintScope('all')}
+                      className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                        printScope === 'all' ? 'bg-stone-800 text-white font-semibold' : 'text-stone-600 hover:bg-stone-100'
+                      }`}
+                    >
+                      Tout ({layoutMode === 'planning' ? (allHarvestStorageItems?.length || plants.length) : plants.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPrintScope('filtered')}
+                      disabled={filteredPlants.length === plants.length && !activeFilterCategory && !searchTerm}
+                      className={`px-2.5 py-1 rounded-md transition-all disabled:opacity-40 cursor-pointer ${
+                        printScope === 'filtered' ? 'bg-stone-800 text-white font-semibold' : 'text-stone-600 hover:bg-stone-100'
+                      }`}
+                    >
+                      {activeFilterCategory ? `${Array.isArray(activeFilterCategory) ? activeFilterCategory.join(', ') : activeFilterCategory} (${layoutMode === 'planning' ? (filteredHarvestStorageItems?.length || filteredPlants.length) : filteredPlants.length})` : `Filtre (${layoutMode === 'planning' ? (filteredHarvestStorageItems?.length || filteredPlants.length) : filteredPlants.length})`}
+                    </button>
+                    {selectedPlant && layoutMode !== 'planning' && (
+                      <button
+                        type="button"
+                        onClick={() => setPrintScope('selected')}
+                        className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                          printScope === 'selected' ? 'bg-stone-800 text-white font-semibold' : 'text-stone-600 hover:bg-stone-100'
+                        }`}
+                      >
+                        Sélection : {selectedPlant.name}
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
-            ) : null}
+            )}
           </div>
 
           {/* Quick Options Bar */}
@@ -347,11 +462,14 @@ export function PlantCatalogPrintModal({
                       ? `Fiche Culture — ${targetPlants[0].name}`
                       : layoutMode === 'health'
                       ? 'Répertoire Santé & Ravageurs du Jardin'
+                      : layoutMode === 'planning'
+                      ? `Calendrier MÀJ (avec 4 nouveaux pommiers) - ${planningSortMode === 'period' ? 'Classé par Période' : 'Classé par Variétés'}`
                       : 'Catalogue & Encyclopédie des Plantes'}
                   </h1>
                   <p className="text-xs text-stone-500 mt-0.5">
                     Mon Jardin & Verger • Édition du {new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}
-                    {layoutMode !== 'health' && ` • ${targetPlants.length} espèce(s) • ${totalVarietiesCount} variété(s)`}
+                    {layoutMode !== 'health' && layoutMode !== 'planning' && ` • ${targetPlants.length} espèce(s) • ${totalVarietiesCount} variété(s)`}
+                    {layoutMode === 'planning' && ` • ${planningScheduleItems.length} variété(s) répertoriée(s)`}
                   </p>
                 </div>
               </div>
@@ -366,7 +484,7 @@ export function PlantCatalogPrintModal({
             </div>
 
             {/* Category Statistics Summary Box */}
-            {layoutMode !== 'single' && layoutMode !== 'health' && categoryStats.length > 0 && (
+            {layoutMode !== 'single' && layoutMode !== 'health' && layoutMode !== 'planning' && categoryStats.length > 0 && (
               <div className="mb-6 p-4 bg-stone-50 border border-stone-200 rounded-xl page-break-inside-avoid">
                 <h4 className="text-xs font-bold text-stone-700 uppercase tracking-wider mb-2.5 flex items-center gap-2">
                   <Layers className="w-4 h-4 text-emerald-600" />
@@ -817,6 +935,102 @@ export function PlantCatalogPrintModal({
                     )}
                   </div>
                 ))}
+              </div>
+            )}
+
+            {/* Layout 5: Planning Récolte & Conservation Gantt Chart */}
+            {layoutMode === 'planning' && (
+              <div className="space-y-4">
+                {/* Internal Document Legend */}
+                <div className="flex items-center justify-end gap-5 bg-stone-50 p-2.5 rounded-lg border border-stone-200 text-xs">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-5 h-3 bg-[#ef4444] rounded-[2px] inline-block shadow-2xs" />
+                    <span className="font-semibold text-stone-700">Période de Récolte</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-5 h-3 bg-[#a5f3fc] border border-[#67e8f9] rounded-[2px] inline-block shadow-2xs" />
+                    <span className="font-semibold text-stone-700">Période de Conservation / Stockage</span>
+                  </div>
+                </div>
+
+                {/* Timeline Gantt Table */}
+                <div className="w-full border border-stone-300 rounded-lg overflow-hidden bg-white text-xs">
+                  {/* Column Headers */}
+                  <div className="grid grid-cols-[220px_repeat(12,1fr)] bg-stone-50 border-b border-stone-300 font-semibold text-stone-700 text-center">
+                    <div className="p-2.5 text-left pl-3 border-r border-stone-300 text-stone-500 font-medium">
+                      Espèce & Variété
+                    </div>
+                    {MONTH_ABBR_FR.map((m, idx) => (
+                      <div 
+                        key={m} 
+                        className={`py-2 px-1 border-r border-stone-200 last:border-r-0 ${
+                          [6, 7, 8, 9].includes(idx) ? 'bg-amber-50/40 text-stone-900' : ''
+                        }`}
+                      >
+                        {m}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Rows */}
+                  <div className="divide-y divide-stone-200">
+                    {planningScheduleItems.length === 0 ? (
+                      <div className="p-8 text-center text-stone-400">
+                        Aucune variété trouvée pour ce périmètre.
+                      </div>
+                    ) : (
+                      planningScheduleItems.map((item) => {
+                        return (
+                          <div 
+                            key={item.id}
+                            className="grid grid-cols-[220px_repeat(12,1fr)] hover:bg-stone-50/70 transition-colors page-break-inside-avoid"
+                          >
+                            {/* Left: Espèce - Variété */}
+                            <div className="p-2 pl-3 border-r border-stone-300 flex items-center justify-between gap-1.5 overflow-hidden">
+                              <span 
+                                className="font-medium text-stone-800 truncate"
+                                title={item.displayName}
+                              >
+                                {item.displayName}
+                              </span>
+                            </div>
+
+                            {/* 12 Months */}
+                            {MONTH_ABBR_FR.map((_, idx) => {
+                              const monthNum = idx + 1;
+                              const isHarvest = item.harvestMonths?.includes(monthNum);
+                              const isStorage = item.storageMonths?.includes(monthNum);
+
+                              return (
+                                <div 
+                                  key={monthNum}
+                                  className="py-1 px-0.5 border-r border-dashed border-stone-200 last:border-r-0 flex items-center justify-center min-h-[26px]"
+                                >
+                                  {isHarvest && isStorage ? (
+                                    <div className="w-full flex flex-col gap-0.5 px-0.5">
+                                      <div className="h-2 bg-[#ef4444] rounded-[2px]" />
+                                      <div className="h-2 bg-[#a5f3fc] border border-[#67e8f9] rounded-[2px]" />
+                                    </div>
+                                  ) : isHarvest ? (
+                                    <div 
+                                      className="w-full h-4.5 mx-0.5 bg-[#ef4444] rounded-[2px] shadow-2xs"
+                                      title="Récolte"
+                                    />
+                                  ) : isStorage ? (
+                                    <div 
+                                      className="w-full h-4.5 mx-0.5 bg-[#a5f3fc] border border-[#67e8f9] rounded-[2px] shadow-2xs"
+                                      title="Conservation / Stockage"
+                                    />
+                                  ) : null}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
               </div>
             )}
 

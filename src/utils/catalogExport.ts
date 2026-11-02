@@ -23,6 +23,7 @@ export interface ExportPlantItem {
   varieties?: Array<{
     id?: string;
     name: string;
+    quantity?: number;
     attributes?: Record<string, any>;
   }>;
   orchardTreeCount?: number;

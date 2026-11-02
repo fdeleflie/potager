@@ -10,6 +10,8 @@ import {
 } from 'lucide-react';
 import { ConfirmModal } from '../components/Modals';
 import { HarvestCalendarPrintModal } from '../components/HarvestCalendarPrintModal';
+import { HarvestStoragePlanningModal } from '../components/HarvestStoragePlanningModal';
+import { HarvestStorageScheduleItem, resolveVarietyHarvestAndStorage } from '../utils/harvestStorageData';
 import { normalizeCategoryKey, getCanonicalCategory } from '../utils/categories';
 import { 
   normalizeSpeciesName, 
@@ -110,6 +112,7 @@ export function HarvestCalendar() {
   const [filterStatus, setFilterStatus] = useState<'all' | 'planted' | 'planned'>('all');
   const [selectedSpeciesFilter, setSelectedSpeciesFilter] = useState<string>('all');
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
+  const [isHarvestStorageModalOpen, setIsHarvestStorageModalOpen] = useState(false);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTarget, setEditingTarget] = useState<{
@@ -537,6 +540,39 @@ export function HarvestCalendar() {
     });
   }, [activeTrees, searchTerm, selectedSpeciesFilter, filterStatus, resolveSpecies]);
 
+  // Map variety groups to harvest and storage items for the Gantt planning
+  const allHarvestStorageItems: HarvestStorageScheduleItem[] = useMemo(() => {
+    return varietyGroups.map(vg => {
+      const cfg = vg.varietyConfigId ? config?.find(c => c.id === vg.varietyConfigId) : undefined;
+      const { harvestMonths, storageMonths } = resolveVarietyHarvestAndStorage(
+        vg.species,
+        vg.variety,
+        cfg?.attributes,
+        undefined,
+        vg.harvestMonths
+      );
+      return {
+        id: vg.key,
+        species: vg.species,
+        variety: vg.variety,
+        displayName: vg.displayName,
+        category: 'Arbre fruitier',
+        icon: vg.icon,
+        color: vg.color,
+        harvestMonths,
+        storageMonths,
+        varietyConfigId: vg.varietyConfigId,
+        totalQuantity: vg.totalTrees,
+        orchardCount: vg.plantedCount
+      };
+    });
+  }, [varietyGroups, config]);
+
+  const filteredHarvestStorageItems: HarvestStorageScheduleItem[] = useMemo(() => {
+    const keys = new Set(filteredVarieties.map(v => v.key));
+    return allHarvestStorageItems.filter(item => keys.has(item.id));
+  }, [allHarvestStorageItems, filteredVarieties]);
+
   // Direct toggle of a single 15-day Quinzaine on a Variety (or Tree)
   const handleToggleQuinzaineOnVariety = async (varietyGroup: any, quinzaineValue: number) => {
     const currentMonths = varietyGroup.harvestMonths || [];
@@ -820,10 +856,20 @@ export function HarvestCalendar() {
             </button>
           </div>
 
+          {/* Planning Récolte & Conservation Gantt */}
+          <button
+            onClick={() => setIsHarvestStorageModalOpen(true)}
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-red-50 hover:bg-red-100 text-red-900 border border-red-200/90 rounded-xl transition shadow-2xs text-sm font-semibold hover:border-red-400 cursor-pointer"
+            title="Planning annuel de récolte et conservation du verger (Gantt)"
+          >
+            <CalendarIcon className="w-4 h-4 text-red-600" />
+            <span>Planning Récolte & Stockage</span>
+          </button>
+
           {/* Module d'impression */}
           <button
             onClick={() => setIsPrintModalOpen(true)}
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-white hover:bg-stone-50 text-stone-700 border border-stone-200/90 rounded-xl transition shadow-2xs text-sm font-medium hover:border-emerald-500/40 hover:text-emerald-700"
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-white hover:bg-stone-50 text-stone-700 border border-stone-200/90 rounded-xl transition shadow-2xs text-sm font-medium hover:border-emerald-500/40 hover:text-emerald-700 cursor-pointer"
             title="Ouvrir le module d'impression du calendrier des récoltes"
           >
             <Printer className="w-4 h-4 text-emerald-600" />
@@ -1442,6 +1488,16 @@ export function HarvestCalendar() {
         filteredTrees={filteredTrees}
         activeSpeciesFilter={selectedSpeciesFilter}
         activeStatusFilter={filterStatus}
+        searchTerm={searchTerm}
+      />
+
+      {/* Planning Récolte & Conservation Gantt Modal */}
+      <HarvestStoragePlanningModal
+        isOpen={isHarvestStorageModalOpen}
+        onClose={() => setIsHarvestStorageModalOpen(false)}
+        allItems={allHarvestStorageItems}
+        filteredItems={filteredHarvestStorageItems}
+        activeFilterCategory={selectedSpeciesFilter !== 'all' ? selectedSpeciesFilter : undefined}
         searchTerm={searchTerm}
       />
     </div>

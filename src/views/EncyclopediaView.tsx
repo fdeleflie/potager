@@ -8,14 +8,24 @@ import {
   AlertTriangle, CheckCircle2, ShieldCheck, Leaf,
   ThumbsUp, ThumbsDown, Calendar, Maximize2, ChevronRight, ChevronLeft,
   List, Wand2, Trees, RefreshCw, Sparkles, Layers, MapPin, MapPinOff,
-  Printer, Download, FileSpreadsheet, Tag, Sprout, Check, ChevronDown, ArrowRight
+  Printer, Download, FileSpreadsheet, Tag, Sprout, Check, ChevronDown, ArrowRight,
+  Clock, Globe, RotateCcw
 } from 'lucide-react';
 import { ConfirmModal } from '../components/Modals';
 import { DuplicateDetectorModal } from '../components/DuplicateDetectorModal';
 import { DeletePlantModal } from '../components/DeletePlantModal';
 import { PlantCatalogExportModal } from '../components/PlantCatalogExportModal';
 import { PlantCatalogPrintModal } from '../components/PlantCatalogPrintModal';
+import { HarvestStoragePlanningModal } from '../components/HarvestStoragePlanningModal';
 import { ExportPlantItem, ExportHealthItem } from '../utils/catalogExport';
+import { 
+  HarvestStorageScheduleItem, 
+  resolveVarietyHarvestAndStorage, 
+  getReferenceHarvestAndStorage,
+  formatMonthRangeSummary, 
+  MONTH_ABBR_FR,
+  MONTH_NAMES_FR
+} from '../utils/harvestStorageData';
 import { detectSimilarVarieties } from '../utils/fuzzyMatching';
 import { GARDEN_EMOJI_CATEGORIES, ICON_LIST, GARDEN_EMOJIS, ICON_MAP, isEmoji } from '../constants';
 import { 
@@ -59,9 +69,10 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
   const [plantToDelete, setPlantToDelete] = useState<any | null>(null);
   const [isDeletePlantModalOpen, setIsDeletePlantModalOpen] = useState(false);
 
-  // Plant Catalog Export & Print modal states
+  // Plant Catalog Export, Print & Harvest Planning modal states
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
+  const [isHarvestPlanningOpen, setIsHarvestPlanningOpen] = useState(false);
   const [printInitialPlant, setPrintInitialPlant] = useState<ExportPlantItem | null>(null);
   
   // Data
@@ -79,9 +90,42 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
   const [customCategoryName, setCustomCategoryName] = useState('');
   const [newVarietyName, setNewVarietyName] = useState('');
   const [newVarietyQuantity, setNewVarietyQuantity] = useState<number>(1);
+  const [newVarietyIsTemporary, setNewVarietyIsTemporary] = useState(false);
   const [varietyError, setVarietyError] = useState<string | null>(null);
   const [editingVarietyId, setEditingVarietyId] = useState<string | null>(null);
-  const [varietyEditForm, setVarietyEditForm] = useState<{name: string, quantity: number, attributes: any}>({name: '', quantity: 1, attributes: {}});
+  const [varietyEditForm, setVarietyEditForm] = useState<{
+    name: string;
+    quantity: number;
+    isTemporary?: boolean;
+    harvestMonths?: number[];
+    storageMonths?: number[];
+    harvestSource?: 'manual' | 'reference';
+    isManualHarvest?: boolean;
+    attributes: any;
+  }>({
+    name: '',
+    quantity: 1,
+    isTemporary: false,
+    harvestMonths: [],
+    storageMonths: [],
+    harvestSource: 'reference',
+    isManualHarvest: false,
+    attributes: {}
+  });
+
+  // Quick Edit Harvest & Storage Periods state for any variety card
+  const [editingPeriodsVariety, setEditingPeriodsVariety] = useState<{
+    varietyId: string;
+    varietyName: string;
+    plantName: string;
+    harvestMonths: number[];
+    storageMonths: number[];
+    defaultHarvestMonths: number[];
+    defaultStorageMonths: number[];
+    isManual: boolean;
+    source: string;
+  } | null>(null);
+  const [isSavingPeriods, setIsSavingPeriods] = useState(false);
 
   // Confirmation modal state for reliable deletions in iframe
   const [confirmState, setConfirmState] = useState<{
@@ -547,6 +591,77 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
     return exportPlantsData.filter(p => filteredIds.has(p.id));
   }, [exportPlantsData, filteredPlants]);
 
+  // Precomputed Harvest and Storage Schedule items for global catalog and current selection
+  const allHarvestStorageItems: HarvestStorageScheduleItem[] = useMemo(() => {
+    const items: HarvestStorageScheduleItem[] = [];
+    exportPlantsData.forEach(p => {
+      if (p.varieties && p.varieties.length > 0) {
+        p.varieties.forEach(v => {
+          const resolved = resolveVarietyHarvestAndStorage(
+            p.name,
+            v.name,
+            v.attributes,
+            p.harvestPeriod
+          );
+          items.push({
+            id: `${p.id}___${v.id || v.name}`,
+            species: p.name,
+            variety: v.name,
+            displayName: `${p.name} - ${v.name}`,
+            category: p.category,
+            icon: p.icon,
+            color: p.color,
+            harvestMonths: resolved.harvestMonths,
+            storageMonths: resolved.storageMonths,
+            harvestSource: resolved.source,
+            isManualHarvest: resolved.isManual,
+            defaultHarvestMonths: resolved.defaultHarvestMonths,
+            defaultStorageMonths: resolved.defaultStorageMonths,
+            varietyConfigId: v.id,
+            parentId: p.id,
+            totalQuantity: v.quantity,
+            orchardCount: p.orchardTreeCount,
+            isTemporary: Boolean(v.attributes?.isTemporary || v.attributes?.status === 'temporary'),
+            status: (v.attributes?.isTemporary || v.attributes?.status === 'temporary') ? 'temporary' : 'confirmed'
+          });
+        });
+      } else {
+        const resolved = resolveVarietyHarvestAndStorage(
+          p.name,
+          'Standard',
+          undefined,
+          p.harvestPeriod
+        );
+        items.push({
+          id: `${p.id}___standard`,
+          species: p.name,
+          variety: 'Standard',
+          displayName: `${p.name} - Standard`,
+          category: p.category,
+          icon: p.icon,
+          color: p.color,
+          harvestMonths: resolved.harvestMonths,
+          storageMonths: resolved.storageMonths,
+          harvestSource: resolved.source,
+          isManualHarvest: resolved.isManual,
+          defaultHarvestMonths: resolved.defaultHarvestMonths,
+          defaultStorageMonths: resolved.defaultStorageMonths,
+          parentId: p.id,
+          totalQuantity: p.totalCount || 1,
+          orchardCount: p.orchardTreeCount,
+          isTemporary: false,
+          status: 'confirmed'
+        });
+      }
+    });
+    return items;
+  }, [exportPlantsData]);
+
+  const filteredHarvestStorageItems: HarvestStorageScheduleItem[] = useMemo(() => {
+    const filteredIds = new Set(exportFilteredPlantsData.map(p => p.id));
+    return allHarvestStorageItems.filter(item => item.parentId && filteredIds.has(item.parentId));
+  }, [allHarvestStorageItems, exportFilteredPlantsData]);
+
   const exportSelectedPlantData = useMemo(() => {
     if (!selectedVegId) return null;
     return exportPlantsData.find(p => p.id === selectedVegId) || null;
@@ -948,16 +1063,47 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
     // Prefer canonical encyclopedia ID
     const targetParentId = selectedVeg.encyclopediaId || selectedVeg.configId;
     const initialQty = Math.max(1, Number(newVarietyQuantity) || 1);
+
+    // Automatically resolve default harvest & storage periods for this species + variety
+    const { harvestMonths: defaultH, storageMonths: defaultS } = resolveVarietyHarvestAndStorage(
+      selectedVeg.name,
+      trimmed,
+      undefined,
+      selectedVeg.harvestPeriod
+    );
+
     await fb.add('config', {
       id: uuidv4(),
       type: "variety",
       value: trimmed,
       parentId: targetParentId,
       quantity: initialQty,
-      attributes: { quantity: initialQty }
+      attributes: { 
+        quantity: initialQty,
+        isTemporary: newVarietyIsTemporary,
+        status: newVarietyIsTemporary ? 'temporary' : 'confirmed',
+        harvestMonths: defaultH,
+        storageMonths: defaultS
+      }
     });
     setNewVarietyName("");
     setNewVarietyQuantity(1);
+    setNewVarietyIsTemporary(false);
+  };
+
+  const handleIntegrateVarietyToCatalog = async (varietyId: string) => {
+    const variety = plantVarieties.find((v: any) => v.id === varietyId);
+    if (!variety) return;
+    const updatedAttrs = {
+      ...(variety.attributes || {}),
+      isTemporary: false,
+      status: 'confirmed'
+    };
+    await fb.update('config', varietyId, {
+      attributes: updatedAttrs
+    });
+    setSuccessToast(`Variété « ${variety.value} » intégrée au catalogue officiel avec succès !`);
+    setTimeout(() => setSuccessToast(null), 4000);
   };
 
   const handleUpdateVarietyQuantity = async (varietyId: string, newQty: number) => {
@@ -1026,12 +1172,127 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
     }
 
     const safeQty = Math.max(1, Number(varietyEditForm.quantity) || 1);
+    const isManual = varietyEditForm.harvestSource === 'manual' || varietyEditForm.isManualHarvest === true;
     await fb.update('config', editingVarietyId, { 
       value: varietyEditForm.name, 
       quantity: safeQty,
-      attributes: { ...varietyEditForm.attributes, quantity: safeQty } 
+      attributes: { 
+        ...varietyEditForm.attributes, 
+        quantity: safeQty,
+        isTemporary: Boolean(varietyEditForm.isTemporary),
+        status: varietyEditForm.isTemporary ? 'temporary' : 'confirmed',
+        harvestMonths: varietyEditForm.harvestMonths || [],
+        storageMonths: varietyEditForm.storageMonths || [],
+        harvestSource: isManual ? 'manual' : 'reference',
+        isManualHarvest: isManual
+      } 
     });
     setEditingVarietyId(null);
+  };
+
+  const handleToggleEditMonth = (month: number, type: 'harvest' | 'storage') => {
+    setVarietyEditForm(prev => {
+      const current = type === 'harvest' ? (prev.harvestMonths || []) : (prev.storageMonths || []);
+      const next = current.includes(month) ? current.filter(m => m !== month) : [...current, month].sort((a, b) => a - b);
+      return {
+        ...prev,
+        [type === 'harvest' ? 'harvestMonths' : 'storageMonths']: next,
+        harvestSource: 'manual',
+        isManualHarvest: true
+      };
+    });
+  };
+
+  const handleResetEditFormToDefault = () => {
+    if (!selectedVeg) return;
+    const ref = getReferenceHarvestAndStorage(selectedVeg.name, varietyEditForm.name, selectedVeg.harvestPeriod);
+    setVarietyEditForm(prev => ({
+      ...prev,
+      harvestMonths: [...ref.harvestMonths],
+      storageMonths: [...ref.storageMonths],
+      harvestSource: 'reference',
+      isManualHarvest: false
+    }));
+  };
+
+  const handleResetVarietyToDefaultPeriods = async (varietyId: string, plantName: string, varietyName: string) => {
+    const variety = plantVarieties.find((v: any) => v.id === varietyId);
+    if (!variety) return;
+    const ref = getReferenceHarvestAndStorage(plantName, varietyName, selectedVeg?.harvestPeriod);
+    await fb.update('config', varietyId, {
+      attributes: {
+        ...(variety.attributes || {}),
+        harvestMonths: [...ref.harvestMonths],
+        storageMonths: [...ref.storageMonths],
+        harvestSource: 'reference',
+        isManualHarvest: false
+      }
+    });
+    setSuccessToast(`Périodes réinitialisées aux valeurs de référence internet pour « ${variety.value} ».`);
+    setTimeout(() => setSuccessToast(null), 4000);
+  };
+
+  const handleOpenQuickEditPeriods = (variety: any, resolved: any) => {
+    setEditingPeriodsVariety({
+      varietyId: variety.id,
+      varietyName: variety.value,
+      plantName: selectedVeg?.name || '',
+      harvestMonths: [...resolved.harvestMonths],
+      storageMonths: [...resolved.storageMonths],
+      defaultHarvestMonths: [...resolved.defaultHarvestMonths],
+      defaultStorageMonths: [...resolved.defaultStorageMonths],
+      isManual: Boolean(resolved.isManual),
+      source: resolved.source
+    });
+  };
+
+  const handleToggleQuickMonth = (month: number, type: 'harvest' | 'storage') => {
+    if (!editingPeriodsVariety) return;
+    const current = type === 'harvest' ? editingPeriodsVariety.harvestMonths : editingPeriodsVariety.storageMonths;
+    const next = current.includes(month) ? current.filter(m => m !== month) : [...current, month].sort((a, b) => a - b);
+    setEditingPeriodsVariety({
+      ...editingPeriodsVariety,
+      [type === 'harvest' ? 'harvestMonths' : 'storageMonths']: next,
+      isManual: true,
+      source: 'manual'
+    });
+  };
+
+  const handleSaveQuickEditPeriods = async () => {
+    if (!editingPeriodsVariety) return;
+    setIsSavingPeriods(true);
+    try {
+      const variety = plantVarieties.find((v: any) => v.id === editingPeriodsVariety.varietyId);
+      const isManual = editingPeriodsVariety.isManual;
+      await fb.update('config', editingPeriodsVariety.varietyId, {
+        attributes: {
+          ...(variety?.attributes || {}),
+          harvestMonths: editingPeriodsVariety.harvestMonths,
+          storageMonths: editingPeriodsVariety.storageMonths,
+          harvestSource: isManual ? 'manual' : 'reference',
+          isManualHarvest: isManual
+        }
+      });
+      setSuccessToast(`Périodes enregistrées pour « ${editingPeriodsVariety.varietyName} » !`);
+      setTimeout(() => setSuccessToast(null), 3000);
+      setEditingPeriodsVariety(null);
+    } catch (err) {
+      console.error('Erreur sauvegarde périodes:', err);
+      alert('Impossible d’enregistrer les périodes.');
+    } finally {
+      setIsSavingPeriods(false);
+    }
+  };
+
+  const handleResetQuickEditToDefault = () => {
+    if (!editingPeriodsVariety) return;
+    setEditingPeriodsVariety({
+      ...editingPeriodsVariety,
+      harvestMonths: [...editingPeriodsVariety.defaultHarvestMonths],
+      storageMonths: [...editingPeriodsVariety.defaultStorageMonths],
+      isManual: false,
+      source: 'reference'
+    });
   };
 
   if (error) {
@@ -1097,6 +1358,19 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={() => setIsHarvestPlanningOpen(true)}
+            className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-900 border border-red-200/90 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 shadow-xs cursor-pointer"
+            title="Planning annuel de récolte et conservation du catalogue (vue par période ou variété)"
+          >
+            <Calendar className="w-3.5 h-3.5 text-red-600" />
+            <span>Planning Récolte & Stockage</span>
+            <span className="px-1.5 py-0.2 bg-red-200/80 text-red-900 rounded-full text-[10px] font-bold">
+              {allHarvestStorageItems.length}
+            </span>
+          </button>
+
           <button
             type="button"
             onClick={() => {
@@ -2280,6 +2554,22 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                               </button>
                             </div>
                           </div>
+                          
+                          <div className="flex items-center gap-2 pt-0.5">
+                            <label className="flex items-center gap-1.5 cursor-pointer text-xs text-stone-600 select-none">
+                              <input
+                                type="checkbox"
+                                checked={newVarietyIsTemporary}
+                                onChange={(e) => setNewVarietyIsTemporary(e.target.checked)}
+                                className="rounded border-stone-300 text-amber-600 focus:ring-amber-500 w-3.5 h-3.5 cursor-pointer"
+                              />
+                              <span className="flex items-center gap-1 font-medium">
+                                <Clock className="w-3.5 h-3.5 text-amber-600" />
+                                <span>Ajout temporaire / En projet (sauvegarder à l'essai avant intégration définitive au catalogue)</span>
+                              </span>
+                            </label>
+                          </div>
+
                           {varietyError && (
                             <p className="text-xs text-rose-500 font-medium px-1">{varietyError}</p>
                           )}
@@ -2447,6 +2737,111 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                       );
                                     })}
                                     
+                                    {/* Harvest & Storage Period Customization in Variety Edit Form */}
+                                    <div className="pt-3 border-t border-stone-200 space-y-3">
+                                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                        <div className="flex items-center gap-2">
+                                          <Calendar className="w-4 h-4 text-emerald-600" />
+                                          <span className="text-xs font-bold text-stone-800 uppercase tracking-wider">
+                                            Périodes de Récolte & Conservation
+                                          </span>
+                                        </div>
+                                        
+                                        <div className="flex items-center gap-2">
+                                          {varietyEditForm.isManualHarvest ? (
+                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-900 border border-amber-300">
+                                              <Edit2 className="w-2.5 h-2.5" />
+                                              Modifié manuellement
+                                            </span>
+                                          ) : (
+                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                              <Globe className="w-2.5 h-2.5" />
+                                              Réf. Internet / Botanique
+                                            </span>
+                                          )}
+                                          <button
+                                            type="button"
+                                            onClick={handleResetEditFormToDefault}
+                                            className="text-[11px] text-stone-500 hover:text-stone-800 flex items-center gap-1 hover:underline cursor-pointer"
+                                            title="Rétablir les mois calculés depuis la base de référence internet"
+                                          >
+                                            <RotateCcw className="w-3 h-3" />
+                                            Rétablir réf.
+                                          </button>
+                                        </div>
+                                      </div>
+
+                                      {/* Récolte */}
+                                      <div>
+                                        <div className="flex items-center justify-between mb-1.5">
+                                          <label className="text-xs font-semibold text-stone-700 flex items-center gap-1.5">
+                                            <span className="w-2.5 h-2.5 rounded-[2px] bg-red-500 inline-block shadow-2xs" />
+                                            Mois de Récolte (Cueillette) :
+                                          </label>
+                                          <span className="text-xs font-bold text-red-700">
+                                            {(varietyEditForm.harvestMonths && varietyEditForm.harvestMonths.length > 0)
+                                              ? formatMonthRangeSummary(varietyEditForm.harvestMonths)
+                                              : 'Aucun mois sélectionné'}
+                                          </span>
+                                        </div>
+                                        <div className="grid grid-cols-6 sm:grid-cols-12 gap-1 text-xs">
+                                          {MONTH_ABBR_FR.map((m, idx) => {
+                                            const mNum = idx + 1;
+                                            const isSelected = varietyEditForm.harvestMonths?.includes(mNum);
+                                            return (
+                                              <button
+                                                key={mNum}
+                                                type="button"
+                                                onClick={() => handleToggleEditMonth(mNum, 'harvest')}
+                                                className={`py-1.5 px-1 rounded border text-center font-medium transition-colors cursor-pointer ${
+                                                  isSelected
+                                                    ? 'bg-red-500 text-white border-red-600 font-bold shadow-2xs'
+                                                    : 'bg-white text-stone-600 border-stone-200 hover:bg-stone-100'
+                                                }`}
+                                              >
+                                                {m}
+                                              </button>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+
+                                      {/* Conservation / Stockage */}
+                                      <div>
+                                        <div className="flex items-center justify-between mb-1.5">
+                                          <label className="text-xs font-semibold text-stone-700 flex items-center gap-1.5">
+                                            <span className="w-2.5 h-2.5 rounded-[2px] bg-[#a5f3fc] border border-[#67e8f9] inline-block shadow-2xs" />
+                                            Mois de Conservation / Stockage :
+                                          </label>
+                                          <span className="text-xs font-bold text-sky-800">
+                                            {(varietyEditForm.storageMonths && varietyEditForm.storageMonths.length > 0)
+                                              ? formatMonthRangeSummary(varietyEditForm.storageMonths)
+                                              : 'Aucun (consommation fraîche)'}
+                                          </span>
+                                        </div>
+                                        <div className="grid grid-cols-6 sm:grid-cols-12 gap-1 text-xs">
+                                          {MONTH_ABBR_FR.map((m, idx) => {
+                                            const mNum = idx + 1;
+                                            const isSelected = varietyEditForm.storageMonths?.includes(mNum);
+                                            return (
+                                              <button
+                                                key={mNum}
+                                                type="button"
+                                                onClick={() => handleToggleEditMonth(mNum, 'storage')}
+                                                className={`py-1.5 px-1 rounded border text-center font-medium transition-colors cursor-pointer ${
+                                                  isSelected
+                                                    ? 'bg-sky-400 text-white border-sky-500 font-bold shadow-2xs'
+                                                    : 'bg-white text-stone-600 border-stone-200 hover:bg-stone-100'
+                                                }`}
+                                              >
+                                                {m}
+                                              </button>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+                                    </div>
+
                                     <div className="flex justify-end gap-2 pt-2">
                                       <button
                                         type="button"
@@ -2542,11 +2937,115 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                             Doublon
                                           </span>
                                         )}
+                                        {Boolean(variety.attributes?.isTemporary || variety.attributes?.status === 'temporary') && (
+                                          <div className="flex items-center gap-1.5">
+                                            <span className="inline-flex items-center gap-1 text-[11px] font-semibold bg-amber-50 text-amber-900 px-2 py-0.5 rounded-full border border-amber-300 shadow-2xs">
+                                              <Clock className="w-3 h-3 text-amber-600" />
+                                              En projet (temporaire)
+                                            </span>
+                                            <button
+                                              type="button"
+                                              onClick={() => handleIntegrateVarietyToCatalog(variety.id)}
+                                              className="px-2 py-0.5 text-[10px] font-semibold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 rounded-md transition-colors cursor-pointer"
+                                              title="Intégrer cette variété candidate au catalogue officiel"
+                                            >
+                                              ✨ Valider au catalogue
+                                            </button>
+                                          </div>
+                                        )}
                                       </div>
-                                      {variety.attributes && Object.keys(variety.attributes).filter(k => k !== 'quantity').length > 0 && (
-                                        <div className="flex flex-wrap gap-1 mt-1">
+
+                                      {/* Harvest & Storage Period Badges with Manual vs Internet Differentiation & Quick Edit */}
+                                      {(() => {
+                                        const resolved = resolveVarietyHarvestAndStorage(
+                                          selectedVeg.name,
+                                          variety.value,
+                                          variety.attributes,
+                                          selectedVeg.harvestPeriod
+                                        );
+                                        const { harvestMonths, storageMonths, source, isManual, defaultHarvestMonths } = resolved;
+                                        return (
+                                          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 mt-2 text-xs">
+                                            {/* Harvest Period Badge */}
+                                            <button
+                                              type="button"
+                                              onClick={() => handleOpenQuickEditPeriods(variety, resolved)}
+                                              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-red-50 hover:bg-red-100/80 border border-red-200 hover:border-red-400 text-stone-700 transition-colors cursor-pointer group/hbadge"
+                                              title="Cliquer pour modifier la période de récolte"
+                                            >
+                                              <span className="w-2.5 h-2.5 rounded-[2px] bg-red-500 inline-block shadow-2xs" />
+                                              <span className="text-[11px] font-medium text-stone-600">Récolte :</span>
+                                              <strong className="text-[11px] text-stone-900 font-semibold">
+                                                {harvestMonths.length > 0 ? formatMonthRangeSummary(harvestMonths) : 'Non définie'}
+                                              </strong>
+                                              <Edit2 className="w-2.5 h-2.5 text-stone-400 group-hover/hbadge:text-red-600 transition-colors ml-0.5" />
+                                            </button>
+
+                                            {/* Storage Period Badge */}
+                                            <button
+                                              type="button"
+                                              onClick={() => handleOpenQuickEditPeriods(variety, resolved)}
+                                              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-sky-50 hover:bg-sky-100/80 border border-sky-200 hover:border-sky-400 text-stone-700 transition-colors cursor-pointer group/sbadge"
+                                              title="Cliquer pour modifier la période de conservation"
+                                            >
+                                              <span className="w-2.5 h-2.5 rounded-[2px] bg-[#a5f3fc] border border-[#67e8f9] inline-block shadow-2xs" />
+                                              <span className="text-[11px] font-medium text-stone-600">Stockage :</span>
+                                              <strong className="text-[11px] text-stone-900 font-semibold">
+                                                {storageMonths.length > 0 ? formatMonthRangeSummary(storageMonths) : 'Aucun'}
+                                              </strong>
+                                              <Edit2 className="w-2.5 h-2.5 text-stone-400 group-hover/sbadge:text-sky-600 transition-colors ml-0.5" />
+                                            </button>
+
+                                            {/* Source Indicator: Manual Modification vs Internet Reference */}
+                                            {isManual ? (
+                                              <span 
+                                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 border border-amber-300 text-amber-900 text-[10px] font-semibold"
+                                                title="Cette période a été personnalisée manuellement et prime sur les données par défaut."
+                                              >
+                                                <Edit2 className="w-2.5 h-2.5 text-amber-600" />
+                                                Modifié manuellement
+                                              </span>
+                                            ) : (
+                                              <span 
+                                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-800 text-[10px] font-medium"
+                                                title="Période standard issue des données botaniques de référence / internet"
+                                              >
+                                                <Globe className="w-2.5 h-2.5 text-emerald-600" />
+                                                Réf. Internet / Botanique
+                                              </span>
+                                            )}
+
+                                            {/* Action: Modifier périodes button */}
+                                            <button
+                                              type="button"
+                                              onClick={() => handleOpenQuickEditPeriods(variety, resolved)}
+                                              className="px-2 py-0.5 text-[11px] font-medium text-stone-600 hover:text-emerald-700 hover:bg-emerald-50 border border-stone-200 hover:border-emerald-300 rounded-md transition-colors flex items-center gap-1 cursor-pointer"
+                                              title="Modifier directement les mois de récolte et conservation"
+                                            >
+                                              <Calendar className="w-3 h-3 text-stone-500" />
+                                              <span>Modifier périodes</span>
+                                            </button>
+
+                                            {/* If manual, show button to restore reference */}
+                                            {isManual && (
+                                              <button
+                                                type="button"
+                                                onClick={() => handleResetVarietyToDefaultPeriods(variety.id, selectedVeg.name, variety.value)}
+                                                className="px-2 py-0.5 text-[11px] font-medium text-stone-500 hover:text-stone-800 hover:bg-stone-100 border border-stone-200 rounded-md transition-colors flex items-center gap-1 cursor-pointer"
+                                                title={`Rétablir la période de référence internet (${defaultHarvestMonths.length > 0 ? formatMonthRangeSummary(defaultHarvestMonths) : 'non définie'})`}
+                                              >
+                                                <RotateCcw className="w-3 h-3 text-stone-400" />
+                                                <span>Rétablir réf.</span>
+                                              </button>
+                                            )}
+                                          </div>
+                                        );
+                                      })()}
+
+                                      {variety.attributes && Object.keys(variety.attributes).filter(k => !['quantity', 'isTemporary', 'status', 'harvestMonths', 'storageMonths'].includes(k)).length > 0 && (
+                                        <div className="flex flex-wrap gap-1 mt-1.5">
                                           {Object.entries(variety.attributes).map(([key, val]) => {
-                                            if (key === 'quantity') return null;
+                                            if (['quantity', 'isTemporary', 'status', 'harvestMonths', 'storageMonths'].includes(key)) return null;
                                             const attrType = varietyAttrTypes.find(t => t.id === key);
                                             if (!attrType || !val) return null;
                                             const isColor = attrType.value.toLowerCase().includes('couleur');
@@ -2592,13 +3091,24 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                         onClick={() => {
                                           setEditingVarietyId(variety.id);
                                           const vQty = Math.max(1, variety.quantity !== undefined ? Number(variety.quantity) : (variety.attributes?.quantity !== undefined ? Number(variety.attributes.quantity) : 1));
+                                          const { harvestMonths, storageMonths, source, isManual } = resolveVarietyHarvestAndStorage(
+                                            selectedVeg.name,
+                                            variety.value,
+                                            variety.attributes,
+                                            selectedVeg.harvestPeriod
+                                          );
                                           setVarietyEditForm({ 
                                             name: variety.value, 
                                             quantity: vQty,
+                                            isTemporary: Boolean(variety.attributes?.isTemporary || variety.attributes?.status === 'temporary'),
+                                            harvestMonths: [...harvestMonths],
+                                            storageMonths: [...storageMonths],
+                                            harvestSource: isManual ? 'manual' : 'reference',
+                                            isManualHarvest: isManual,
                                             attributes: variety.attributes || {} 
                                           });
                                         }}
-                                        className="p-1.5 text-stone-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                                        className="p-1.5 text-stone-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
                                         title="Modifier la variété"
                                       >
                                         <Edit2 className="w-4 h-4" />
@@ -2968,6 +3478,17 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
         healthIssues={exportHealthData}
         activeFilterCategory={selectedCategories}
         searchTerm={searchTerm}
+        allHarvestStorageItems={allHarvestStorageItems}
+        filteredHarvestStorageItems={filteredHarvestStorageItems}
+      />
+
+      <HarvestStoragePlanningModal
+        isOpen={isHarvestPlanningOpen}
+        onClose={() => setIsHarvestPlanningOpen(false)}
+        allItems={allHarvestStorageItems}
+        filteredItems={filteredHarvestStorageItems}
+        activeFilterCategory={selectedCategories}
+        searchTerm={searchTerm}
       />
 
       {importReportModal && (
@@ -3055,6 +3576,159 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                 className="px-4 py-2 bg-white hover:bg-stone-100 text-stone-700 border border-stone-200 text-xs font-medium rounded-xl transition-colors"
               >
                 Fermer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Quick Edit Harvest & Storage Periods Modal */}
+      {editingPeriodsVariety && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-3 sm:p-4 bg-black/50 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl shadow-2xl border border-stone-200 w-full max-w-lg p-5 sm:p-6 space-y-4 animate-in zoom-in-95 duration-150">
+            {/* Header */}
+            <div className="flex items-start justify-between border-b border-stone-100 pb-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 bg-red-100 text-red-600 rounded-lg">
+                    <Calendar className="w-4 h-4" />
+                  </div>
+                  <h3 className="font-serif font-bold text-stone-900 text-base">
+                    Périodes de Récolte & Conservation
+                  </h3>
+                </div>
+                <p className="text-xs text-stone-500 mt-1 font-medium">
+                  {editingPeriodsVariety.plantName} — <strong className="text-stone-800">{editingPeriodsVariety.varietyName}</strong>
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingPeriodsVariety(null)}
+                className="p-1 text-stone-400 hover:text-stone-600 rounded-lg hover:bg-stone-100 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Source indicator & Reset to Reference Button */}
+            <div className="flex items-center justify-between p-2.5 bg-stone-50 rounded-xl border border-stone-200/80 text-xs">
+              <div className="flex items-center gap-2">
+                <span className="font-medium text-stone-500">Origine des dates :</span>
+                {editingPeriodsVariety.isManual ? (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-100 text-amber-900 border border-amber-300">
+                    <Edit2 className="w-3 h-3 text-amber-600" />
+                    Modifié manuellement
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-50 text-emerald-800 border border-emerald-200">
+                    <Globe className="w-3 h-3 text-emerald-600" />
+                    Réf. Internet / Botanique
+                  </span>
+                )}
+              </div>
+              
+              <button
+                type="button"
+                onClick={handleResetQuickEditToDefault}
+                className="text-stone-600 hover:text-stone-900 font-medium flex items-center gap-1 hover:underline cursor-pointer"
+                title="Rétablir les mois calculés depuis la base de référence internet"
+              >
+                <RotateCcw className="w-3 h-3 text-stone-400" />
+                <span>Rétablir réf.</span>
+              </button>
+            </div>
+
+            {/* Harvest Months (1..12) */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-stone-800 flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded-[2px] bg-red-500 inline-block shadow-2xs" />
+                  Mois de Récolte (Cueillette) :
+                </label>
+                <span className="text-xs font-bold text-red-600">
+                  {editingPeriodsVariety.harvestMonths.length > 0 
+                    ? formatMonthRangeSummary(editingPeriodsVariety.harvestMonths)
+                    : 'Aucun mois sélectionné'}
+                </span>
+              </div>
+              <div className="grid grid-cols-6 sm:grid-cols-12 gap-1 text-xs">
+                {MONTH_ABBR_FR.map((m, idx) => {
+                  const mNum = idx + 1;
+                  const isSelected = editingPeriodsVariety.harvestMonths.includes(mNum);
+                  return (
+                    <button
+                      key={mNum}
+                      type="button"
+                      onClick={() => handleToggleQuickMonth(mNum, 'harvest')}
+                      className={`py-2 px-1 rounded-lg border text-center font-medium transition-all cursor-pointer ${
+                        isSelected 
+                          ? 'bg-red-500 text-white border-red-600 font-bold shadow-xs scale-102' 
+                          : 'bg-stone-50 text-stone-600 border-stone-200 hover:bg-stone-100'
+                      }`}
+                    >
+                      {m}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Storage Months (1..12) */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-stone-800 flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded-[2px] bg-[#a5f3fc] border border-[#67e8f9] inline-block shadow-2xs" />
+                  Mois de Conservation / Stockage :
+                </label>
+                <span className="text-xs font-bold text-sky-800">
+                  {editingPeriodsVariety.storageMonths.length > 0 
+                    ? formatMonthRangeSummary(editingPeriodsVariety.storageMonths)
+                    : 'Aucun (consommation directe)'}
+                </span>
+              </div>
+              <div className="grid grid-cols-6 sm:grid-cols-12 gap-1 text-xs">
+                {MONTH_ABBR_FR.map((m, idx) => {
+                  const mNum = idx + 1;
+                  const isSelected = editingPeriodsVariety.storageMonths.includes(mNum);
+                  return (
+                    <button
+                      key={mNum}
+                      type="button"
+                      onClick={() => handleToggleQuickMonth(mNum, 'storage')}
+                      className={`py-2 px-1 rounded-lg border text-center font-medium transition-all cursor-pointer ${
+                        isSelected 
+                          ? 'bg-sky-400 text-white border-sky-500 font-bold shadow-xs scale-102' 
+                          : 'bg-stone-50 text-stone-600 border-stone-200 hover:bg-stone-100'
+                      }`}
+                    >
+                      {m}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Hint */}
+            <p className="text-[11px] text-stone-500 italic bg-amber-50/60 p-2 rounded-lg border border-amber-200/60">
+              💡 Toute modification manuelle est sauvegardée de façon permanente et sera répercutée sur les plannings et impressions.
+            </p>
+
+            {/* Action Buttons */}
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-stone-100 text-xs">
+              <button
+                type="button"
+                onClick={() => setEditingPeriodsVariety(null)}
+                className="px-3.5 py-2 text-stone-600 hover:bg-stone-100 rounded-xl font-medium transition-colors cursor-pointer"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                disabled={isSavingPeriods}
+                onClick={handleSaveQuickEditPeriods}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-semibold shadow-xs disabled:opacity-50 transition-all cursor-pointer flex items-center gap-1.5"
+              >
+                {isSavingPeriods ? 'Enregistrement...' : 'Enregistrer les périodes'}
               </button>
             </div>
           </div>
