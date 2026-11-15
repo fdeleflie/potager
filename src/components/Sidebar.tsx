@@ -52,6 +52,7 @@ export function Sidebar({ currentView, setCurrentView }: SidebarProps) {
   };
 
   const navItems = [
+    { id: 'journal', label: 'Journal de bord', icon: Book },
     { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
     { id: 'seedlings', label: 'Mes Semis', icon: Sprout },
     { id: 'tasks', label: 'Tâches', icon: CheckSquare },
@@ -61,7 +62,6 @@ export function Sidebar({ currentView, setCurrentView }: SidebarProps) {
     { id: 'plan', label: 'Plan du potager', icon: Map },
     { id: 'orchard', label: 'Mon Verger', icon: Trees },
     { id: 'encyclopedia', label: 'Catalogue des Plantes', icon: BookOpen },
-    { id: 'journal', label: 'Journal de bord', icon: Book },
     { id: 'config', label: 'Configuration', icon: Settings },
     { id: 'backup', label: 'Sauvegarde', icon: Save },
     { id: 'trash', label: 'Corbeille', icon: Trash2 },

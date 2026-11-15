@@ -1,12 +1,13 @@
 import { useFirebaseData, fb } from '../hooks/useFirebaseData';
 import React, { useState } from 'react';
-import { db, Note, Seedling, HarvestEvent } from '../db';
+import { db, Note, NoteUpdate, Seedling, HarvestEvent } from '../db';
 import { v4 as uuidv4 } from 'uuid';
-import { ArrowLeft, Edit, Archive, Trash2, Plus, Camera, CheckCircle2, XCircle, Printer, Split, ShoppingBag, BookOpen } from 'lucide-react';
+import { ArrowLeft, Edit, Archive, Trash2, Plus, Camera, CheckCircle2, XCircle, Printer, Split, ShoppingBag, BookOpen, History } from 'lucide-react';
 import { ConfirmModal, PromptModal, SellModal, HarvestModal } from '../components/Modals';
+import { NoteFollowUpModal } from '../components/NoteFollowUpModal';
 import { getSeedlingDisplayPhoto, compressImage } from '../utils/image';
 import { printElement } from '../utils/print';
-import { shouldPublishNoteToJournal, isSystemLogNote } from '../utils/notes';
+import { shouldPublishNoteToJournal, isSystemLogNote, getSortedUpdates, getNoteLatestDate, formatDateShortFR, parseSafeDate } from '../utils/notes';
 
 export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurrentView: (v: string) => void, seedlingId: string, onBack?: () => void }) {
   const { data: rawSeedlings, error: seedlingsError } = useFirebaseData<any>('seedlings');
@@ -25,6 +26,7 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
   const [showNoteForm, setShowNoteForm] = useState(false);
   const [showVarietyModal, setShowVarietyModal] = useState(false);
   const [filterDate, setFilterDate] = useState<'all' | 'year' | 'month' | 'day'>('all');
+  const [followUpNoteId, setFollowUpNoteId] = useState<string | null>(null);
 
   const [confirmState, setConfirmState] = useState<{
     isOpen: boolean;
@@ -187,6 +189,14 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
       }
       return n;
     });
+    await fb.update('seedlings', seedlingId, { notes: updatedNotes });
+  };
+
+  const handleSaveNoteUpdates = async (noteId: string, nextUpdates: NoteUpdate[]) => {
+    if (!seedling || !seedling.notes) return;
+    const updatedNotes = seedling.notes.map((n: Note) =>
+      n.id === noteId ? { ...n, updates: nextUpdates } : n
+    );
     await fb.update('seedlings', seedlingId, { notes: updatedNotes });
   };
 
@@ -1299,27 +1309,53 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
             {seedling.notes.length === 0 ? (
               <p className="text-stone-500 text-sm italic text-center py-6">Aucune note pour le moment.</p>
             ) : (
-              [...seedling.notes].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+              [...seedling.notes].sort((a, b) => {
+                const ta = parseSafeDate(getNoteLatestDate(a.date, a.updates))?.getTime() ?? 0;
+                const tb = parseSafeDate(getNoteLatestDate(b.date, b.updates))?.getTime() ?? 0;
+                return tb - ta;
+              })
               .filter(note => {
                 if (filterDate === 'all') return true;
-                const d = new Date(note.date);
+                const candidateDates = [note.date, ...getSortedUpdates(note.updates).map(u => u.date)];
                 const now = new Date();
-                if (filterDate === 'year') return d.getFullYear() === now.getFullYear();
-                if (filterDate === 'month') return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
-                if (filterDate === 'day') return d.toDateString() === now.toDateString();
-                return true;
+                return candidateDates.some(dtStr => {
+                  const d = parseSafeDate(dtStr);
+                  if (!d) return false;
+                  if (filterDate === 'year') return d.getFullYear() === now.getFullYear();
+                  if (filterDate === 'month') return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+                  if (filterDate === 'day') return d.toDateString() === now.toDateString();
+                  return false;
+                });
               })
-              .map((note) => (
+              .map((note) => {
+                const sortedUpdates = getSortedUpdates(note.updates);
+                const latestDate = getNoteLatestDate(note.date, sortedUpdates);
+                const hasUpdates = sortedUpdates.length > 0;
+                const isSysLog = isSystemLogNote(note);
+
+                return (
                 <div key={note.id} className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active">
                   <div className="flex items-center justify-center w-8 h-8 rounded-full border border-white bg-stone-200 text-stone-500 shadow shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2 z-10">
-                    <div className="w-2.5 h-2.5 bg-emerald-500 rounded-full"></div>
+                    <div className={`w-2.5 h-2.5 rounded-full ${hasUpdates ? 'bg-amber-500' : 'bg-emerald-500'}`}></div>
                   </div>
                   <div className="w-[calc(100%-3rem)] md:w-[calc(50%-2rem)] bg-white p-4 rounded-xl shadow-sm border border-stone-200/60">
                     <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <time className="text-xs font-medium text-emerald-600">
-                          {new Date(note.date).toLocaleDateString()} à {new Date(note.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                        </time>
+                        {hasUpdates ? (
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 inline-flex items-center gap-1">
+                              <History className="w-3 h-3 text-amber-600" />
+                              MÀJ : {formatDateShortFR(latestDate)} ({sortedUpdates.length})
+                            </span>
+                            <time className="text-[11px] font-medium text-stone-500">
+                              Orig. : {new Date(note.date).toLocaleDateString('fr-FR')}
+                            </time>
+                          </div>
+                        ) : (
+                          <time className="text-xs font-medium text-emerald-600">
+                            {new Date(note.date).toLocaleDateString('fr-FR')} à {new Date(note.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                          </time>
+                        )}
 
                         {/* Status badge & toggle */}
                         <button
@@ -1355,26 +1391,53 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
                         </button>
                       </div>
 
-                      <button 
-                        onClick={() => {
-                          setConfirmState({
-                            isOpen: true,
-                            title: 'Supprimer la note',
-                            message: 'Voulez-vous vraiment supprimer cette note ?',
-                            isDanger: true,
-                            onConfirm: async () => {
-                              await fb.update('seedlings', seedlingId, {
-                                notes: seedling.notes.filter(n => n.id !== note.id)
-                              });
-                            }
-                          });
-                        }}
-                        className="text-stone-400 hover:text-red-500 transition-colors print:hidden"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      <div className="flex items-center gap-1 print:hidden">
+                        {!isSysLog && (
+                          <button
+                            type="button"
+                            onClick={() => setFollowUpNoteId(note.id)}
+                            className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100 transition-colors inline-flex items-center gap-1"
+                            title="Ajouter ou consulter le suivi daté de cette note"
+                          >
+                            <History className="w-3 h-3" />
+                            <span>+ Suivi</span>
+                          </button>
+                        )}
+                        <button 
+                          onClick={() => {
+                            setConfirmState({
+                              isOpen: true,
+                              title: 'Supprimer la note',
+                              message: 'Voulez-vous vraiment supprimer cette note ?',
+                              isDanger: true,
+                              onConfirm: async () => {
+                                await fb.update('seedlings', seedlingId, {
+                                  notes: seedling.notes.filter(n => n.id !== note.id)
+                                });
+                              }
+                            });
+                          }}
+                          className="text-stone-400 hover:text-red-500 transition-colors p-0.5"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
                     {note.text && <p className="text-stone-700 text-xs whitespace-pre-wrap mb-2">{note.text}</p>}
+
+                    {hasUpdates && (
+                      <div className="mt-2 pt-2 border-t border-amber-100 space-y-1.5 border-l-2 border-amber-300 pl-2.5 ml-0.5 mb-2">
+                        {sortedUpdates.map(u => (
+                          <div key={u.id} className="text-xs text-stone-700 bg-amber-50/60 rounded-lg px-2 py-1.5 border border-amber-100">
+                            <span className="inline-block font-bold text-amber-900 bg-amber-100/80 px-1.5 py-0.5 rounded text-[10px] mr-1.5">
+                              {formatDateShortFR(u.date) || u.date}
+                            </span>
+                            <span className="whitespace-pre-wrap">{u.text}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
                     {note.photos && note.photos.length > 0 && (
                       <div className="grid grid-cols-2 gap-1.5">
                         {note.photos.map((photo, index) => (
@@ -1384,7 +1447,8 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
                     )}
                   </div>
                 </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>
@@ -1404,6 +1468,32 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
         onClose={() => setHarvestModalState(prev => ({ ...prev, isOpen: false }))}
         onSubmit={harvestModalState.onSubmit}
       />
+
+      {(() => {
+        const activeFollowUpNote = followUpNoteId
+          ? (seedling.notes || []).find((n: Note) => n.id === followUpNoteId)
+          : null;
+        if (!activeFollowUpNote) return null;
+        return (
+          <NoteFollowUpModal
+            isOpen={true}
+            onClose={() => setFollowUpNoteId(null)}
+            sourceLabel={`${seedling.vegetable}${seedling.variety ? ` (${seedling.variety})` : ''}`}
+            originDate={activeFollowUpNote.date}
+            originText={activeFollowUpNote.text || ''}
+            updates={activeFollowUpNote.updates || []}
+            onSaveUpdates={(nextUpdates) => handleSaveNoteUpdates(activeFollowUpNote.id, nextUpdates)}
+            successStatus={activeFollowUpNote.successStatus || 'none'}
+            onChangeSuccessStatus={async (next) => {
+              if (!seedling || !seedling.notes) return;
+              const updatedNotes = seedling.notes.map((n: Note) =>
+                n.id === activeFollowUpNote.id ? { ...n, successStatus: next } : n
+              );
+              await fb.update('seedlings', seedlingId, { notes: updatedNotes });
+            }}
+          />
+        );
+      })()}
     </div>
   );
 }

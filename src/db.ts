@@ -7,6 +7,12 @@ export interface Season {
   endDate?: string;
 }
 
+export interface NoteUpdate {
+  id: string;
+  date: string; // YYYY-MM-DD (or ISO)
+  text: string;
+}
+
 export interface Note {
   id: string;
   date: string;
@@ -15,6 +21,7 @@ export interface Note {
   publishToJournal?: boolean;
   successStatus?: 'none' | 'success' | 'failure';
   isSystemLog?: boolean;
+  updates?: NoteUpdate[];
 }
 
 export interface HarvestEvent {
@@ -101,6 +108,7 @@ export interface JournalEntry {
   date: string;
   content: string;
   photos?: string[]; // base64
+  updates?: NoteUpdate[];
   isDeleted: boolean;
   seasonId?: string;
   successStatus?: 'none' | 'success' | 'failure';

@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { v4 as uuidv4 } from 'uuid';
 import { CombinedEntry } from '../views/Journal';
-import { X, Save, Camera, CheckCircle2, XCircle, Trash2, Calendar, Tag, Thermometer, Droplets, CloudRain, Sparkles } from 'lucide-react';
+import { NoteUpdate } from '../db';
+import { formatDateShortFR, getSortedUpdates, toDateKey } from '../utils/notes';
+import { X, Save, Camera, CheckCircle2, XCircle, Trash2, Calendar, Tag, Thermometer, Droplets, CloudRain, Sparkles, History, Plus, Edit2, Check } from 'lucide-react';
 import { compressImage } from '../utils/image';
 import { fb, useFirebaseData } from '../hooks/useFirebaseData';
 import { getEffectiveWeatherIndicators, matchBestWeatherIndicator, isWeatherOptionActive, WeatherIndicatorItem } from '../utils/weatherIndicators';
@@ -13,9 +16,11 @@ interface Props {
   entry: CombinedEntry | null;
   onDelete?: (id: string, type: string) => void;
   availableTags?: string[];
+  rawSeedlings?: any[];
+  rawTrees?: any[];
 }
 
-export function JournalEditModal({ isOpen, onClose, entry, onDelete, availableTags = [] }: Props) {
+export function JournalEditModal({ isOpen, onClose, entry, onDelete, availableTags = [], rawSeedlings = [], rawTrees = [] }: Props) {
   const [title, setTitle] = useState('');
   const [tags, setTags] = useState<string[]>([]);
   const [content, setContent] = useState('');
@@ -28,6 +33,12 @@ export function JournalEditModal({ isOpen, onClose, entry, onDelete, availableTa
   const [temperatureMin, setTemperatureMin] = useState('');
   const [temperatureMax, setTemperatureMax] = useState('');
   const [rainfall, setRainfall] = useState('');
+  const [updates, setUpdates] = useState<NoteUpdate[]>([]);
+  const [newUpdateDate, setNewUpdateDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [newUpdateText, setNewUpdateText] = useState('');
+  const [editingUpdateId, setEditingUpdateId] = useState<string | null>(null);
+  const [editUpdateDate, setEditUpdateDate] = useState('');
+  const [editUpdateText, setEditUpdateText] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
 
@@ -81,7 +92,7 @@ export function JournalEditModal({ isOpen, onClose, entry, onDelete, availableTa
       setTitle(entry.title || '');
       setTags(entry.tags || []);
       setContent(entry.content || '');
-      setDate(entry.date || new Date().toISOString().split('T')[0]);
+      setDate(toDateKey(entry.date) || entry.date || new Date().toISOString().split('T')[0]);
       setStatut(entry.statut || (entry.success === true ? 'Réussite' : entry.success === false ? 'Échec' : 'Fait'));
       setPhotos(entry.photos || []);
       setSuccessStatus(
@@ -93,6 +104,10 @@ export function JournalEditModal({ isOpen, onClose, entry, onDelete, availableTa
       setTemperatureMin(entry.temperatureMin !== undefined ? entry.temperatureMin.toString() : '');
       setTemperatureMax(entry.temperatureMax !== undefined ? entry.temperatureMax.toString() : '');
       setRainfall(entry.rainfall !== undefined ? entry.rainfall.toString() : '');
+      setUpdates(getSortedUpdates(entry.updates));
+      setNewUpdateDate(new Date().toISOString().split('T')[0]);
+      setNewUpdateText('');
+      setEditingUpdateId(null);
     }
   }, [entry, isOpen]);
 
@@ -135,6 +150,18 @@ export function JournalEditModal({ isOpen, onClose, entry, onDelete, availableTa
     setPhotos(prev => prev.filter((_, idx) => idx !== index));
   };
 
+  const handleAddUpdateDraft = () => {
+    if (!newUpdateText.trim() || !newUpdateDate) return;
+    const item: NoteUpdate = {
+      id: uuidv4(),
+      date: newUpdateDate,
+      text: newUpdateText.trim()
+    };
+    setUpdates(prev => getSortedUpdates([...prev, item]));
+    setNewUpdateText('');
+    setNewUpdateDate(new Date().toISOString().split('T')[0]);
+  };
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!content.trim() || !entry) return;
@@ -144,23 +171,70 @@ export function JournalEditModal({ isOpen, onClose, entry, onDelete, availableTa
       const isSuccess = successStatus === 'success' || statut.toLowerCase().includes('réussi') || statut.toLowerCase().includes('succès');
       const isFailure = successStatus === 'failure' || statut.toLowerCase().includes('échec') || statut.toLowerCase().includes('raté');
 
-      await fb.update('journal', entry.id, {
-        title: title.trim() || undefined,
-        description: title.trim() || undefined,
-        statut: statut.trim() || (isSuccess ? 'Réussite' : isFailure ? 'Échec' : 'Fait'),
-        commentaire: content.trim(),
-        tags: tags.length > 0 ? tags : [],
-        content: content.trim(),
-        date,
-        photos,
-        successStatus: isSuccess ? 'success' : isFailure ? 'failure' : successStatus,
-        success: isSuccess ? true : isFailure ? false : undefined,
-        weatherCondition: weatherCondition || undefined,
-        temperature: temperature.trim() !== '' ? parseFloat(temperature) : undefined,
-        temperatureMin: temperatureMin.trim() !== '' ? parseFloat(temperatureMin) : undefined,
-        temperatureMax: temperatureMax.trim() !== '' ? parseFloat(temperatureMax) : undefined,
-        rainfall: rainfall.trim() !== '' ? parseFloat(rainfall) : undefined
-      });
+      let finalUpdates = [...updates];
+      if (newUpdateText.trim() && newUpdateDate) {
+        finalUpdates.push({
+          id: uuidv4(),
+          date: newUpdateDate,
+          text: newUpdateText.trim()
+        });
+      }
+      finalUpdates = getSortedUpdates(finalUpdates);
+
+      if (entry.type === 'journal') {
+        await fb.update('journal', entry.id, {
+          title: title.trim() || undefined,
+          description: title.trim() || undefined,
+          statut: statut.trim() || (isSuccess ? 'Réussite' : isFailure ? 'Échec' : 'Fait'),
+          commentaire: content.trim(),
+          tags: tags.length > 0 ? tags : [],
+          content: content.trim(),
+          date,
+          photos,
+          updates: finalUpdates,
+          successStatus: isSuccess ? 'success' : isFailure ? 'failure' : successStatus,
+          success: isSuccess ? true : isFailure ? false : undefined,
+          weatherCondition: weatherCondition || undefined,
+          temperature: temperature.trim() !== '' ? parseFloat(temperature) : undefined,
+          temperatureMin: temperatureMin.trim() !== '' ? parseFloat(temperatureMin) : undefined,
+          temperatureMax: temperatureMax.trim() !== '' ? parseFloat(temperatureMax) : undefined,
+          rainfall: rainfall.trim() !== '' ? parseFloat(rainfall) : undefined
+        });
+      } else if (entry.type === 'seedling' && entry.sourceId && entry.noteId) {
+        const seedling = rawSeedlings.find((s: any) => s.id === entry.sourceId);
+        if (seedling) {
+          const updatedNotes = (seedling.notes || []).map((n: any) =>
+            n.id === entry.noteId
+              ? {
+                  ...n,
+                  date,
+                  text: content.trim(),
+                  photos,
+                  updates: finalUpdates,
+                  successStatus: isSuccess ? 'success' : isFailure ? 'failure' : 'none'
+                }
+              : n
+          );
+          await fb.update('seedlings', entry.sourceId, { notes: updatedNotes });
+        }
+      } else if (entry.type === 'tree' && entry.sourceId && entry.noteId) {
+        const tree = rawTrees.find((t: any) => t.id === entry.sourceId);
+        if (tree) {
+          const updatedNotes = (tree.notes || []).map((n: any) =>
+            n.id === entry.noteId
+              ? {
+                  ...n,
+                  date,
+                  text: content.trim(),
+                  photos,
+                  updates: finalUpdates,
+                  successStatus: isSuccess ? 'success' : isFailure ? 'failure' : 'none'
+                }
+              : n
+          );
+          await fb.update('trees', entry.sourceId, { notes: updatedNotes });
+        }
+      }
       onClose();
     } catch (err) {
       console.error('Failed to update journal entry:', err);
@@ -195,18 +269,24 @@ export function JournalEditModal({ isOpen, onClose, entry, onDelete, availableTa
         </div>
 
         <form onSubmit={handleSave} className="p-5 space-y-4 overflow-y-auto flex-1">
-          <div>
-            <label className="block text-xs font-semibold text-stone-700 mb-1">
-              Titre de l'observation (optionnel)
-            </label>
-            <input
-              type="text"
-              value={title}
-              onChange={e => setTitle(e.target.value)}
-              placeholder="Ex: Première récolte de courgettes, Taille des tomates..."
-              className="w-full px-3 py-2 text-sm rounded-xl border border-stone-200 bg-white text-stone-800 placeholder:text-stone-400 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none"
-            />
-          </div>
+          {entry.type === 'journal' ? (
+            <div>
+              <label className="block text-xs font-semibold text-stone-700 mb-1">
+                Titre de l'observation (optionnel)
+              </label>
+              <input
+                type="text"
+                value={title}
+                onChange={e => setTitle(e.target.value)}
+                placeholder="Ex: Première récolte de courgettes, Taille des tomates..."
+                className="w-full px-3 py-2 text-sm rounded-xl border border-stone-200 bg-white text-stone-800 placeholder:text-stone-400 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none"
+              />
+            </div>
+          ) : (
+            <div className="px-3 py-2 rounded-xl bg-emerald-50/70 border border-emerald-200 text-xs font-semibold text-emerald-900">
+              {entry.type === 'seedling' ? 'Note de semis / plant' : 'Note d\'arbre'} : {entry.sourceName}
+            </div>
+          )}
 
           <div>
             <label className="block text-xs font-semibold text-stone-700 mb-1">
@@ -224,47 +304,91 @@ export function JournalEditModal({ isOpen, onClose, entry, onDelete, availableTa
           <div>
             <label className="block text-xs font-semibold text-stone-700 mb-1 flex items-center justify-between">
               <span>Statut de l'observation</span>
-              <span className="text-[11px] font-normal text-stone-400">Intégration outil : {statut || 'Fait'}</span>
+              {entry.type === 'journal' && (
+                <span className="text-[11px] font-normal text-stone-400">Intégration outil : {statut || 'Fait'}</span>
+              )}
             </label>
-            <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 mb-2">
-              {[
-                { label: 'Fait', color: 'bg-emerald-50 text-emerald-800 border-emerald-300' },
-                { label: 'En cours', color: 'bg-amber-50 text-amber-800 border-amber-300' },
-                { label: 'À faire', color: 'bg-blue-50 text-blue-800 border-blue-300' },
-                { label: 'Réussite', color: 'bg-emerald-600 text-white border-emerald-600' },
-                { label: 'Échec', color: 'bg-red-600 text-white border-red-600' },
-                { label: 'Neutre', color: 'bg-stone-100 text-stone-700 border-stone-300' }
-              ].map(item => (
+            {entry.type === 'journal' ? (
+              <>
+                <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 mb-2">
+                  {[
+                    { label: 'Fait', color: 'bg-emerald-50 text-emerald-800 border-emerald-300' },
+                    { label: 'En cours', color: 'bg-amber-50 text-amber-800 border-amber-300' },
+                    { label: 'À faire', color: 'bg-blue-50 text-blue-800 border-blue-300' },
+                    { label: 'Réussite', color: 'bg-emerald-600 text-white border-emerald-600' },
+                    { label: 'Échec', color: 'bg-red-600 text-white border-red-600' },
+                    { label: 'Neutre', color: 'bg-stone-100 text-stone-700 border-stone-300' }
+                  ].map(item => (
+                    <button
+                      key={item.label}
+                      type="button"
+                      onClick={() => {
+                        setStatut(item.label);
+                        if (item.label === 'Réussite') setSuccessStatus('success');
+                        else if (item.label === 'Échec') setSuccessStatus('failure');
+                        else setSuccessStatus('none');
+                      }}
+                      className={`py-1.5 px-2 rounded-xl border text-xs font-semibold transition-all cursor-pointer text-center ${
+                        statut === item.label
+                          ? 'ring-2 ring-emerald-500 shadow-2xs font-bold scale-102 ' + item.color
+                          : 'bg-white border-stone-200 text-stone-600 hover:bg-stone-50'
+                      }`}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+                <input
+                  type="text"
+                  value={statut}
+                  onChange={e => setStatut(e.target.value)}
+                  placeholder="Ou saisissez un statut personnalisé (ex: Validé, Récolté...)"
+                  className="w-full px-3 py-1.5 text-xs rounded-xl border border-stone-200 bg-white text-stone-800 placeholder:text-stone-400 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none"
+                />
+              </>
+            ) : (
+              <div className="grid grid-cols-3 gap-2">
                 <button
-                  key={item.label}
                   type="button"
-                  onClick={() => {
-                    setStatut(item.label);
-                    if (item.label === 'Réussite') setSuccessStatus('success');
-                    else if (item.label === 'Échec') setSuccessStatus('failure');
-                    else setSuccessStatus('none');
-                  }}
-                  className={`py-1.5 px-2 rounded-xl border text-xs font-semibold transition-all cursor-pointer text-center ${
-                    statut === item.label
-                      ? 'ring-2 ring-emerald-500 shadow-2xs font-bold scale-102 ' + item.color
+                  onClick={() => { setSuccessStatus('none'); setStatut('Neutre'); }}
+                  className={`py-2 px-3 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${
+                    successStatus === 'none'
+                      ? 'bg-stone-100 text-stone-900 border-stone-400 ring-2 ring-emerald-500'
                       : 'bg-white border-stone-200 text-stone-600 hover:bg-stone-50'
                   }`}
                 >
-                  {item.label}
+                  ⚪ Sans statut
                 </button>
-              ))}
-            </div>
-            <input
-              type="text"
-              value={statut}
-              onChange={e => setStatut(e.target.value)}
-              placeholder="Ou saisissez un statut personnalisé (ex: Validé, Récolté...)"
-              className="w-full px-3 py-1.5 text-xs rounded-xl border border-stone-200 bg-white text-stone-800 placeholder:text-stone-400 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none"
-            />
+                <button
+                  type="button"
+                  onClick={() => { setSuccessStatus('success'); setStatut('Réussite'); }}
+                  className={`py-2 px-3 rounded-xl border text-xs font-semibold transition-all cursor-pointer inline-flex items-center justify-center gap-1 ${
+                    successStatus === 'success'
+                      ? 'bg-emerald-600 text-white border-emerald-600 ring-2 ring-emerald-500'
+                      : 'bg-white border-stone-200 text-stone-600 hover:bg-emerald-50'
+                  }`}
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Réussite
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setSuccessStatus('failure'); setStatut('Échec'); }}
+                  className={`py-2 px-3 rounded-xl border text-xs font-semibold transition-all cursor-pointer inline-flex items-center justify-center gap-1 ${
+                    successStatus === 'failure'
+                      ? 'bg-red-600 text-white border-red-600 ring-2 ring-red-400'
+                      : 'bg-white border-stone-200 text-stone-600 hover:bg-red-50'
+                  }`}
+                >
+                  <XCircle className="w-3.5 h-3.5" />
+                  Échec
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Quick Activity Tags */}
-          {availableTags && availableTags.length > 0 && (
+          {entry.type === 'journal' && availableTags && availableTags.length > 0 && (
             <div>
               <label className="block text-xs font-semibold text-stone-700 mb-1 flex items-center gap-1.5">
                 <Tag className="w-3.5 h-3.5 text-emerald-600" />
@@ -294,6 +418,7 @@ export function JournalEditModal({ isOpen, onClose, entry, onDelete, availableTa
           )}
 
           {/* Quick Weather Indicators & Temperature */}
+          {entry.type === 'journal' && (
           <div className="p-3 bg-stone-50/80 rounded-xl border border-stone-200/80 space-y-2.5">
             <div className="flex items-center justify-between flex-wrap gap-2">
               <label className="text-xs font-semibold text-stone-700 flex items-center gap-1.5">
@@ -414,6 +539,7 @@ export function JournalEditModal({ isOpen, onClose, entry, onDelete, availableTa
               </div>
             </div>
           </div>
+          )}
 
           <div className="space-y-1.5">
             <label className="block text-xs font-semibold text-stone-700">
@@ -431,6 +557,123 @@ export function JournalEditModal({ isOpen, onClose, entry, onDelete, availableTa
               placeholder="Décrivez vos observations, la météo, un geste accompli (ou dictez oralement au micro)..."
               className="w-full px-3 py-2 text-sm rounded-xl border border-stone-200 bg-white text-stone-800 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none resize-y"
             />
+          </div>
+
+          {/* Dated Follow-up Updates Section */}
+          <div className="p-3 bg-amber-50/40 rounded-xl border border-amber-200/80 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-amber-950 flex items-center gap-1.5">
+                <History className="w-3.5 h-3.5 text-amber-600" />
+                <span>Mises à jour de suivi datées ({updates.length})</span>
+              </label>
+              <span className="text-[10px] text-stone-500">Conserve la date d'origine</span>
+            </div>
+
+            {updates.length > 0 && (
+              <div className="space-y-1.5 border-l-2 border-amber-300 ml-1.5 pl-2.5">
+                {updates.map(u => (
+                  <div key={u.id} className="bg-white p-2 rounded-lg border border-stone-200/80 text-xs space-y-1">
+                    {editingUpdateId === u.id ? (
+                      <div className="space-y-1.5">
+                        <input
+                          type="date"
+                          value={editUpdateDate}
+                          onChange={e => setEditUpdateDate(e.target.value)}
+                          className="px-2 py-0.5 text-xs rounded border border-stone-200 outline-none"
+                        />
+                        <textarea
+                          rows={2}
+                          value={editUpdateText}
+                          onChange={e => setEditUpdateText(e.target.value)}
+                          className="w-full px-2 py-1 text-xs rounded border border-stone-200 outline-none resize-y"
+                        />
+                        <div className="flex justify-end gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setEditingUpdateId(null)}
+                            className="px-2 py-0.5 text-[11px] text-stone-600 hover:bg-stone-100 rounded"
+                          >
+                            Annuler
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!editUpdateText.trim() || !editUpdateDate) return;
+                              setUpdates(prev => getSortedUpdates(prev.map(x => x.id === u.id ? { ...x, date: editUpdateDate, text: editUpdateText.trim() } : x)));
+                              setEditingUpdateId(null);
+                            }}
+                            className="px-2 py-0.5 text-[11px] font-semibold bg-emerald-600 text-white rounded inline-flex items-center gap-1"
+                          >
+                            <Check className="w-3 h-3" /> Valider
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="space-y-0.5">
+                          <span className="inline-block text-[10px] font-bold text-amber-900 bg-amber-50 border border-amber-200 px-1.5 py-0.2 rounded">
+                            {formatDateShortFR(u.date) || u.date}
+                          </span>
+                          <p className="text-xs text-stone-700 whitespace-pre-wrap">{u.text}</p>
+                        </div>
+                        <div className="flex items-center gap-0.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingUpdateId(u.id);
+                              setEditUpdateDate(toDateKey(u.date) || new Date().toISOString().split('T')[0]);
+                              setEditUpdateText(u.text);
+                            }}
+                            className="p-1 text-stone-400 hover:text-emerald-600 rounded"
+                            title="Modifier"
+                          >
+                            <Edit2 className="w-3 h-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setUpdates(prev => prev.filter(x => x.id !== u.id))}
+                            className="p-1 text-stone-400 hover:text-red-600 rounded"
+                            title="Supprimer"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="bg-white p-2.5 rounded-lg border border-amber-200/70 space-y-2">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <span className="text-[11px] font-semibold text-stone-700">Nouvelle mise à jour :</span>
+                <input
+                  type="date"
+                  value={newUpdateDate}
+                  onChange={e => setNewUpdateDate(e.target.value)}
+                  className="px-2 py-0.5 text-xs font-medium rounded-md border border-stone-200 outline-none focus:ring-1 focus:ring-emerald-500"
+                />
+              </div>
+              <textarea
+                rows={2}
+                value={newUpdateText}
+                onChange={e => setNewUpdateText(e.target.value)}
+                placeholder="Ex: Reprise confirmée, apparition des bourgeons..."
+                className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-stone-200 outline-none focus:ring-1 focus:ring-emerald-500 resize-y"
+              />
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  disabled={!newUpdateText.trim() || !newUpdateDate}
+                  onClick={handleAddUpdateDraft}
+                  className="px-2.5 py-1 bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 rounded-lg text-[11px] font-semibold inline-flex items-center gap-1 disabled:opacity-40 transition-colors cursor-pointer"
+                >
+                  <Plus className="w-3 h-3" />
+                  <span>Ajouter au suivi</span>
+                </button>
+              </div>
+            </div>
           </div>
 
           <div>

@@ -7,6 +7,7 @@ import {
 import { CombinedEntry, JOURNAL_MONTHS, JOURNAL_QUARTERS } from '../views/Journal';
 import { printElement } from '../utils/print';
 import { Season } from '../db';
+import { getSortedUpdates, getNoteLatestDate, formatDateShortFR, parseSafeDate, toDateKey } from '../utils/notes';
 
 export type JournalPrintLayout = 'chronicle' | 'table' | 'experience_review' | 'by_plant' | 'calendar';
 export type JournalPrintScope = 'filtered' | 'all' | 'season' | 'success_only' | 'failure_only';
@@ -75,10 +76,13 @@ export function JournalPrintModal({
     const currentY = new Date().getFullYear().toString();
     yearSet.add(currentY);
     (entries || []).forEach(e => {
-      const d = new Date(e.date);
-      if (!isNaN(d.getTime())) {
-        yearSet.add(d.getFullYear().toString());
-      }
+      const candidateDates = [e.date, ...(e.updates || []).map(u => u.date)];
+      candidateDates.forEach(dtStr => {
+        const d = parseSafeDate(dtStr);
+        if (d) {
+          yearSet.add(d.getFullYear().toString());
+        }
+      });
     });
     return Array.from(yearSet).sort((a, b) => b.localeCompare(a));
   }, [entries]);
@@ -123,34 +127,43 @@ export function JournalPrintModal({
     if (printScope !== 'filtered') {
       if (printYear !== 'all') {
         list = list.filter(e => {
-          const d = new Date(e.date);
-          return !isNaN(d.getTime()) && d.getFullYear().toString() === printYear;
+          const candidates = [e.date, ...getSortedUpdates(e.updates).map(u => u.date)];
+          return candidates.some(dtStr => {
+            const d = parseSafeDate(dtStr);
+            return d !== null && d.getFullYear().toString() === printYear;
+          });
         });
       }
 
       if (printQuarter !== 'all') {
         list = list.filter(e => {
-          const d = new Date(e.date);
-          if (isNaN(d.getTime())) return false;
-          const m = d.getMonth() + 1;
-          const q = m <= 3 ? 'Q1' : m <= 6 ? 'Q2' : m <= 9 ? 'Q3' : 'Q4';
-          return q === printQuarter;
+          const candidates = [e.date, ...getSortedUpdates(e.updates).map(u => u.date)];
+          return candidates.some(dtStr => {
+            const d = parseSafeDate(dtStr);
+            if (!d) return false;
+            const m = d.getMonth() + 1;
+            const q = m <= 3 ? 'Q1' : m <= 6 ? 'Q2' : m <= 9 ? 'Q3' : 'Q4';
+            return q === printQuarter;
+          });
         });
       }
 
       if (printMonth !== 'all') {
         list = list.filter(e => {
-          const d = new Date(e.date);
-          if (isNaN(d.getTime())) return false;
-          const m = d.getMonth() + 1;
-          return m.toString() === printMonth;
+          const candidates = [e.date, ...getSortedUpdates(e.updates).map(u => u.date)];
+          return candidates.some(dtStr => {
+            const d = parseSafeDate(dtStr);
+            if (!d) return false;
+            const m = d.getMonth() + 1;
+            return m.toString() === printMonth;
+          });
         });
       }
     }
 
     return list.sort((a, b) => {
-      const dateA = new Date(a.date).getTime();
-      const dateB = new Date(b.date).getTime();
+      const dateA = parseSafeDate(a.latestDate || getNoteLatestDate(a.date, a.updates))?.getTime() ?? 0;
+      const dateB = parseSafeDate(b.latestDate || getNoteLatestDate(b.date, b.updates))?.getTime() ?? 0;
       return sortOrder === 'desc' ? dateB - dateA : dateA - dateB;
     });
   }, [printScope, filteredEntries, entries, selectedSeasonId, sortOrder, printYear, printQuarter, printMonth]);
@@ -627,7 +640,10 @@ export function JournalPrintModal({
                   </div>
                 ) : (
                   targetEntries.map((entry, index) => {
-                    const entryDate = new Date(entry.date);
+                    const sortedUpdates = getSortedUpdates(entry.updates);
+                    const latestDate = entry.latestDate || getNoteLatestDate(entry.date, sortedUpdates);
+                    const hasUpdates = sortedUpdates.length > 0;
+                    const entryDate = parseSafeDate(entry.date) || new Date(entry.date);
                     const formattedDate = entryDate.toLocaleDateString('fr-FR', {
                       weekday: 'long',
                       day: 'numeric',
@@ -647,6 +663,11 @@ export function JournalPrintModal({
                             <span className="font-serif font-bold text-stone-900 text-sm capitalize">
                               {formattedDate}
                             </span>
+                            {hasUpdates && (
+                              <span className="text-[10px] font-bold text-amber-900 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">
+                                MÀJ : {formatDateShortFR(latestDate)} ({sortedUpdates.length})
+                              </span>
+                            )}
                             {seasonName && (
                               <span className="text-[10px] text-stone-500 bg-stone-100 px-2 py-0.5 rounded font-medium">
                                 {seasonName}
@@ -699,6 +720,20 @@ export function JournalPrintModal({
                           {entry.content}
                         </p>
 
+                        {/* Dated follow-up updates */}
+                        {hasUpdates && (
+                          <div className="pt-1.5 border-l-2 border-amber-300 pl-2.5 space-y-1">
+                            {sortedUpdates.map(u => (
+                              <div key={u.id} className="text-[11px] text-stone-800 bg-amber-50/50 border border-amber-100 rounded-md px-2 py-1">
+                                <span className="font-bold text-amber-900 mr-1.5">
+                                  [Suivi {formatDateShortFR(u.date) || u.date}]
+                                </span>
+                                <span className="whitespace-pre-wrap">{u.text}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
                         {/* Failure reason if any */}
                         {entry.failureReason && (
                           <div className="text-[11px] text-rose-900 bg-rose-50 border border-rose-200 rounded-lg p-2 flex items-start gap-1.5">
@@ -748,26 +783,38 @@ export function JournalPrintModal({
                     </tr>
                   </thead>
                   <tbody>
-                    {targetEntries.map((entry, idx) => (
+                    {targetEntries.map((entry, idx) => {
+                      const sortedUpdates = getSortedUpdates(entry.updates);
+                      const latestDate = entry.latestDate || getNoteLatestDate(entry.date, sortedUpdates);
+                      const hasUpdates = sortedUpdates.length > 0;
+                      const latestDateObj = parseSafeDate(latestDate) || new Date(entry.date);
+                      return (
                       <tr
                         key={entry.id || idx}
                         className={`border-b border-stone-200 page-break-inside-avoid ${idx % 2 === 1 ? 'bg-stone-50/50' : 'bg-white'}`}
                       >
-                        <td className="py-2 px-2.5 border-r border-stone-200 font-medium text-stone-900 whitespace-nowrap">
-                          {new Date(entry.date).toLocaleDateString('fr-FR', {
-                            day: 'numeric',
-                            month: 'short',
-                            year: 'numeric'
-                          })}
+                        <td className="py-2 px-2.5 border-r border-stone-200 font-medium text-stone-900 whitespace-nowrap align-top">
+                          <div>
+                            {latestDateObj.toLocaleDateString('fr-FR', {
+                              day: 'numeric',
+                              month: 'short',
+                              year: 'numeric'
+                            })}
+                          </div>
+                          {hasUpdates && (
+                            <div className="text-[9px] text-amber-800 font-normal mt-0.5">
+                              Orig. : {formatDateShortFR(entry.date)}
+                            </div>
+                          )}
                         </td>
-                        <td className="py-2 px-2.5 border-r border-stone-200">
+                        <td className="py-2 px-2.5 border-r border-stone-200 align-top">
                           {entry.sourceName ? (
                             <span className="font-semibold text-emerald-900">{entry.sourceName}</span>
                           ) : (
                             <span className="text-stone-500 italic">Note générale</span>
                           )}
                         </td>
-                        <td className="py-2 px-2.5 border-r border-stone-200">
+                        <td className="py-2 px-2.5 border-r border-stone-200 align-top">
                           {entry.success === true ? (
                             <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-800">
                               Réussite
@@ -780,7 +827,7 @@ export function JournalPrintModal({
                             <span className="text-stone-400 text-[10px]">Neutre</span>
                           )}
                         </td>
-                        <td className="py-2 px-3 border-r border-stone-200 text-stone-800 whitespace-pre-wrap">
+                        <td className="py-2 px-3 border-r border-stone-200 text-stone-800 whitespace-pre-wrap align-top">
                           {entry.title && (
                             <div className="font-bold text-stone-900 text-xs mb-0.5">{entry.title}</div>
                           )}
@@ -794,6 +841,16 @@ export function JournalPrintModal({
                             </div>
                           )}
                           <div>{entry.content}</div>
+                          {hasUpdates && (
+                            <div className="mt-1.5 pt-1 border-t border-amber-100 space-y-1">
+                              {sortedUpdates.map(u => (
+                                <div key={u.id} className="text-[10px] text-stone-700">
+                                  <span className="font-bold text-amber-900">[Suivi {formatDateShortFR(u.date) || u.date}]</span>{' '}
+                                  <span>{u.text}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                           {entry.failureReason && (
                             <div className="mt-1 text-[10px] text-rose-700 font-medium">
                               Cause : {entry.failureReason}
@@ -812,7 +869,8 @@ export function JournalPrintModal({
                           </td>
                         )}
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -835,7 +893,9 @@ export function JournalPrintModal({
                     <p className="text-xs text-stone-400 italic py-2">Aucune note de réussite enregistrée.</p>
                   ) : (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {experienceSuccesses.map((e, idx) => (
+                      {experienceSuccesses.map((e, idx) => {
+                        const updates = getSortedUpdates(e.updates);
+                        return (
                         <div
                           key={e.id || idx}
                           className="page-break-inside-avoid p-3 rounded-xl border border-emerald-200 bg-emerald-50/40 text-xs space-y-1.5"
@@ -843,12 +903,22 @@ export function JournalPrintModal({
                           <div className="flex items-center justify-between font-bold text-emerald-900">
                             <span>{e.sourceName || 'Observation'}</span>
                             <span className="text-[10px] font-normal text-stone-500">
-                              {new Date(e.date).toLocaleDateString('fr-FR')}
+                              {formatDateShortFR(e.date)}
                             </span>
                           </div>
                           <p className="text-stone-700 whitespace-pre-wrap">{e.content}</p>
+                          {updates.length > 0 && (
+                            <div className="pt-1 border-t border-emerald-200/60 space-y-0.5">
+                              {updates.map(u => (
+                                <div key={u.id} className="text-[10px] text-stone-700">
+                                  <span className="font-bold text-amber-900">[Suivi {formatDateShortFR(u.date)}]</span> {u.text}
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -867,7 +937,9 @@ export function JournalPrintModal({
                     <p className="text-xs text-stone-400 italic py-2">Aucun échec enregistré.</p>
                   ) : (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {experienceFailures.map((e, idx) => (
+                      {experienceFailures.map((e, idx) => {
+                        const updates = getSortedUpdates(e.updates);
+                        return (
                         <div
                           key={e.id || idx}
                           className="page-break-inside-avoid p-3 rounded-xl border border-rose-200 bg-rose-50/40 text-xs space-y-1.5"
@@ -875,17 +947,27 @@ export function JournalPrintModal({
                           <div className="flex items-center justify-between font-bold text-rose-900">
                             <span>{e.sourceName || 'Observation'}</span>
                             <span className="text-[10px] font-normal text-stone-500">
-                              {new Date(e.date).toLocaleDateString('fr-FR')}
+                              {formatDateShortFR(e.date)}
                             </span>
                           </div>
                           <p className="text-stone-700 whitespace-pre-wrap">{e.content}</p>
+                          {updates.length > 0 && (
+                            <div className="pt-1 border-t border-rose-200/60 space-y-0.5">
+                              {updates.map(u => (
+                                <div key={u.id} className="text-[10px] text-stone-700">
+                                  <span className="font-bold text-amber-900">[Suivi {formatDateShortFR(u.date)}]</span> {u.text}
+                                </div>
+                              ))}
+                            </div>
+                          )}
                           {e.failureReason && (
                             <div className="text-[11px] text-rose-800 bg-rose-100/70 p-1.5 rounded font-medium">
                               Cause : {e.failureReason}
                             </div>
                           )}
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -901,7 +983,9 @@ export function JournalPrintModal({
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {experienceObservations.map((e, idx) => (
+                      {experienceObservations.map((e, idx) => {
+                        const updates = getSortedUpdates(e.updates);
+                        return (
                         <div
                           key={e.id || idx}
                           className="page-break-inside-avoid p-3 rounded-xl border border-stone-200 bg-stone-50 text-xs space-y-1"
@@ -909,12 +993,22 @@ export function JournalPrintModal({
                           <div className="flex items-center justify-between font-semibold text-stone-800">
                             <span>{e.sourceName || 'Note générale'}</span>
                             <span className="text-[10px] text-stone-500 font-normal">
-                              {new Date(e.date).toLocaleDateString('fr-FR')}
+                              {formatDateShortFR(e.date)}
                             </span>
                           </div>
                           <p className="text-stone-600 whitespace-pre-wrap">{e.content}</p>
+                          {updates.length > 0 && (
+                            <div className="pt-1 border-t border-stone-200/80 space-y-0.5">
+                              {updates.map(u => (
+                                <div key={u.id} className="text-[10px] text-stone-700">
+                                  <span className="font-bold text-amber-900">[Suivi {formatDateShortFR(u.date)}]</span> {u.text}
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -950,11 +1044,19 @@ export function JournalPrintModal({
                     </div>
 
                     <div className="space-y-3 pt-2">
-                      {plantEntries.map((pe, pIdx) => (
+                      {plantEntries.map((pe, pIdx) => {
+                        const updates = getSortedUpdates(pe.updates);
+                        const latest = pe.latestDate || getNoteLatestDate(pe.date, updates);
+                        return (
                         <div key={pe.id || pIdx} className="text-xs border-b border-stone-100 last:border-0 pb-2.5 last:pb-0 space-y-1">
                           <div className="flex items-center justify-between text-stone-500 text-[10px]">
                             <span className="font-semibold text-stone-700">
-                              {new Date(pe.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}
+                              {(parseSafeDate(pe.date) || new Date(pe.date)).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}
+                              {updates.length > 0 && (
+                                <span className="ml-1.5 text-amber-800 font-bold">
+                                  (MÀJ : {formatDateShortFR(latest)})
+                                </span>
+                              )}
                             </span>
                             {pe.success === true && (
                               <span className="text-emerald-700 font-semibold bg-emerald-50 px-2 py-0.5 rounded">
@@ -968,13 +1070,23 @@ export function JournalPrintModal({
                             )}
                           </div>
                           <p className="text-stone-800 whitespace-pre-wrap">{pe.content}</p>
+                          {updates.length > 0 && (
+                            <div className="pl-2 border-l-2 border-amber-300 space-y-0.5">
+                              {updates.map(u => (
+                                <div key={u.id} className="text-[10px] text-stone-700">
+                                  <span className="font-bold text-amber-900">[Suivi {formatDateShortFR(u.date)}]</span> {u.text}
+                                </div>
+                              ))}
+                            </div>
+                          )}
                           {pe.failureReason && (
                             <div className="text-[10px] text-rose-800 bg-rose-50 p-1.5 rounded">
                               Cause d'échec : {pe.failureReason}
                             </div>
                           )}
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 ))}
@@ -984,11 +1096,13 @@ export function JournalPrintModal({
             {/* Layout 4: Calendar Grid */}
             {layoutMode === 'calendar' && (
               <div className="space-y-8">
-                {Array.from(new Set(targetEntries.map(e => {
-                  const d = new Date(e.date);
-                  return !isNaN(d.getTime()) ? `${d.getFullYear()}-${d.getMonth()}` : null;
-                }).filter(Boolean))).sort().map(monthKey => {
-                  if (!monthKey) return null;
+                {Array.from(new Set(targetEntries.flatMap(e => {
+                  const dates = [e.date, ...getSortedUpdates(e.updates).map(u => u.date)];
+                  return dates.map(dtStr => {
+                    const d = parseSafeDate(dtStr);
+                    return d ? `${d.getFullYear()}-${String(d.getMonth()).padStart(2, '0')}` : null;
+                  });
+                }).filter(Boolean) as string[])).sort().map(monthKey => {
                   const [yearStr, monthStr] = monthKey.split('-');
                   const year = parseInt(yearStr, 10);
                   const month = parseInt(monthStr, 10);
@@ -1020,9 +1134,16 @@ export function JournalPrintModal({
                           <div key={`blank-${blank}`} className="bg-white min-h-[80px]" />
                         ))}
                         {days.map(day => {
-                          const dayEntries = targetEntries.filter(e => {
-                            const d = new Date(e.date);
-                            return d.getFullYear() === year && d.getMonth() === month && d.getDate() === day;
+                          const cellKey = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                          const dayEntries = targetEntries.filter(e => toDateKey(e.date) === cellKey);
+                          const followUpItems: { entry: CombinedEntry; updateText: string }[] = [];
+                          targetEntries.forEach(e => {
+                            if (toDateKey(e.date) === cellKey) return;
+                            getSortedUpdates(e.updates).forEach(u => {
+                              if (toDateKey(u.date) === cellKey) {
+                                followUpItems.push({ entry: e, updateText: u.text });
+                              }
+                            });
                           });
                           
                           return (
@@ -1031,10 +1152,16 @@ export function JournalPrintModal({
                               {dayEntries.map((entry, eIdx) => (
                                 <div key={entry.id ? `${entry.id}-${eIdx}` : eIdx} className="text-[8px] leading-tight p-0.5 bg-stone-50 border border-stone-100 rounded text-stone-700 truncate">
                                   <span className="font-bold">
-                                    {entry.type === 'seedling' ? entry.sourceName : 'Note'}
+                                    {entry.type === 'seedling' ? entry.sourceName : (entry.title || entry.sourceName || 'Note')}
                                   </span>
                                   {' '}
                                   {entry.success === true ? '✅' : entry.success === false ? '❌' : ''}
+                                </div>
+                              ))}
+                              {followUpItems.map((item, fIdx) => (
+                                <div key={`suivi-${item.entry.id}-${fIdx}`} className="text-[8px] leading-tight p-0.5 bg-amber-50 border border-amber-200 rounded text-amber-900 truncate">
+                                  <span className="font-bold">[Suivi]</span>{' '}
+                                  {item.entry.sourceName || item.entry.title || item.updateText}
                                 </div>
                               ))}
                             </div>

@@ -19,6 +19,7 @@ import { CombinedEntry } from '../views/Journal';
 import { fb } from '../hooks/useFirebaseData';
 import { v4 as uuidv4 } from 'uuid';
 import { Season } from '../db';
+import { getSortedUpdates, formatDateShortFR } from '../utils/notes';
 
 interface Props {
   isOpen: boolean;
@@ -90,11 +91,18 @@ export function JournalIntegrationModal({
         }
       }
 
-      // 3. Commentaire (detailed observations / notes)
+      // 3. Commentaire (detailed observations / notes + dated follow-ups)
       let commVal = (e.commentaire || e.content || '').trim();
       // If description was derived from first line and identical to comment, keep comment intact
       if (!commVal) {
         commVal = descVal;
+      }
+      const sortedUpdates = getSortedUpdates(e.updates);
+      if (sortedUpdates.length > 0) {
+        const followUpLines = sortedUpdates
+          .map(u => `[Suivi ${formatDateShortFR(u.date) || u.date}] ${u.text}`)
+          .join('\n');
+        commVal = commVal ? `${commVal}\n${followUpLines}` : followUpLines;
       }
 
       // 4. Statut (Status text)

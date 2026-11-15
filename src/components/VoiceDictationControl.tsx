@@ -20,6 +20,9 @@ interface Props {
   onChange: (newValue: string) => void;
   className?: string;
   compact?: boolean;
+  prominent?: boolean;
+  startSignal?: number;
+  stopSignal?: number;
 }
 
 // Normalize word for phonetic and spelling comparison (strip accents, punctuation, lowercase)
@@ -137,7 +140,10 @@ export function VoiceDictationControl({
   value,
   onChange,
   className = '',
-  compact = false
+  compact = false,
+  prominent = false,
+  startSignal = 0,
+  stopSignal = 0
 }: Props) {
   const [isSupported, setIsSupported] = useState<boolean>(true);
   const [isListening, setIsListening] = useState<boolean>(false);
@@ -341,6 +347,18 @@ export function VoiceDictationControl({
     }
   };
 
+  useEffect(() => {
+    if (stopSignal > 0 && isListeningRef.current) {
+      stopListening();
+    }
+  }, [stopSignal]);
+
+  useEffect(() => {
+    if (startSignal > 0 && !isListeningRef.current && isSupported) {
+      startListening();
+    }
+  }, [startSignal, isSupported]);
+
   const handleToggleListening = () => {
     if (isListening) {
       stopListening();
@@ -390,10 +408,14 @@ export function VoiceDictationControl({
             type="button"
             onClick={handleToggleListening}
             disabled={isRequestingPermission}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-semibold transition-all shadow-2xs cursor-pointer select-none disabled:opacity-50 ${
+            className={`flex items-center gap-1.5 rounded-xl font-semibold transition-all shadow-2xs cursor-pointer select-none disabled:opacity-50 ${
+              prominent ? 'px-3.5 py-2 text-xs sm:text-sm' : 'px-2.5 py-1 text-xs'
+            } ${
               isListening
                 ? 'bg-rose-600 hover:bg-rose-700 text-white animate-pulse ring-2 ring-rose-400 ring-offset-1'
-                : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 hover:border-emerald-300'
+                : prominent
+                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs'
+                  : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 hover:border-emerald-300'
             }`}
             title={isListening ? 'Arrêter la dictée vocale' : 'Démarrer la dictée vocale au micro'}
           >
@@ -403,13 +425,13 @@ export function VoiceDictationControl({
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
                   <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-white"></span>
                 </span>
-                <Mic className="w-3.5 h-3.5" />
-                <span>En écoute... (Cliquer pour arrêter)</span>
+                <Mic className={prominent ? 'w-4 h-4' : 'w-3.5 h-3.5'} />
+                <span>En écoute... (Arrêter)</span>
               </>
             ) : (
               <>
-                <Mic className="w-3.5 h-3.5 text-emerald-600" />
-                <span>{isRequestingPermission ? 'Demande micro...' : 'Dictée vocale'}</span>
+                <Mic className={`${prominent ? 'w-4 h-4 text-white' : 'w-3.5 h-3.5 text-emerald-600'}`} />
+                <span>{isRequestingPermission ? 'Demande micro...' : prominent ? 'Dicter au micro' : 'Dictée vocale'}</span>
               </>
             )}
           </button>

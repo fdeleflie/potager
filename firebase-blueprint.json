@@ -1,5 +1,16 @@
 {
   "entities": {
+    "NoteUpdate": {
+      "title": "NoteUpdate",
+      "description": "A dated follow-up update attached to a note",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "text": { "type": "string" }
+      },
+      "required": ["id", "date", "text"]
+    },
     "Note": {
       "title": "Note",
       "description": "A note with optional photos",
@@ -11,6 +22,10 @@
         "photos": {
           "type": "array",
           "items": { "type": "string" }
+        },
+        "updates": {
+          "type": "array",
+          "items": { "$ref": "#/entities/NoteUpdate" }
         }
       },
       "required": ["id", "date", "text"]
@@ -89,6 +104,7 @@
         "content": { "type": "string" },
         "photos": { "type": "array", "items": { "type": "string" } },
         "tags": { "type": "array", "items": { "type": "string" } },
+        "updates": { "type": "array", "items": { "$ref": "#/entities/NoteUpdate" } },
         "weatherCondition": { "type": "string" },
         "temperature": { "type": "number" },
         "temperatureMin": { "type": "number" },

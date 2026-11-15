@@ -27,7 +27,14 @@ import { v4 as uuidv4 } from 'uuid';
 import { SeasonProvider } from './contexts/SeasonContext';
 
 export default function App() {
-  const [currentView, setCurrentView] = useState('dashboard');
+  const [currentView, setCurrentView] = useState(() => {
+    try {
+      const saved = localStorage.getItem('potager_home_view');
+      return saved === 'dashboard' || saved === 'journal' ? saved : 'journal';
+    } catch {
+      return 'journal';
+    }
+  });
 
   // Handle navigation with history
   const handleNavigate = (view: string, replace = false) => {
@@ -52,7 +59,12 @@ export default function App() {
       if (event.state && event.state.view) {
         setCurrentView(event.state.view);
       } else {
-        setCurrentView('dashboard');
+        try {
+          const saved = localStorage.getItem('potager_home_view');
+          setCurrentView(saved === 'dashboard' || saved === 'journal' ? saved : 'journal');
+        } catch {
+          setCurrentView('journal');
+        }
       }
       window.scrollTo(0, 0);
     };

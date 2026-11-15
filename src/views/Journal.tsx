@@ -1,18 +1,19 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, JournalEntry } from '../db';
+import { db, JournalEntry, NoteUpdate } from '../db';
 import { useFirebaseData, fb, syncPriorityCollections } from '../hooks/useFirebaseData';
 import { v4 as uuidv4 } from 'uuid';
-import { BookOpen, Plus, Save, Trash2, Search, Filter, Edit, X, Camera, CheckCircle2, XCircle, CalendarClock, CalendarPlus, Printer, RotateCcw, Calendar, AlignJustify, Table, CalendarDays, ExternalLink, Sparkles, RefreshCw, Zap, Copy, AlertTriangle, Eye, Tag, Settings, Thermometer, CloudRain, Droplets, Scissors, ArrowUpDown } from 'lucide-react';
+import { BookOpen, Plus, Save, Trash2, Search, Filter, Edit, X, Camera, CheckCircle2, XCircle, CalendarClock, CalendarPlus, Printer, RotateCcw, Calendar, AlignJustify, Table, CalendarDays, ExternalLink, Sparkles, RefreshCw, Zap, Copy, AlertTriangle, Eye, Tag, Settings, Thermometer, CloudRain, Droplets, Scissors, ArrowUpDown, History, ChevronDown, SlidersHorizontal, Wrench, Home, Check } from 'lucide-react';
 import { ConfirmModal } from '../components/Modals';
 import { JournalPrintModal } from '../components/JournalPrintModal';
 import { compressImage } from '../utils/image';
-import { shouldPublishNoteToJournal } from '../utils/notes';
+import { shouldPublishNoteToJournal, getSortedUpdates, getNoteLatestDate, formatDateShortFR, parseSafeDate, toDateKey, matchesSingleDateFilter, matchesDateSearchQuery } from '../utils/notes';
 import { PerpetualTask, ConfigItem, EncyclopediaEntry } from '../db';
 import { PerpetualTaskModal, MONTH_NAMES, PERIOD_LABELS } from '../components/PerpetualTaskModal';
 import { JournalTableView } from '../components/JournalTableView';
 import { JournalCalendarView } from '../components/JournalCalendarView';
 import { JournalEditModal } from '../components/JournalEditModal';
+import { NoteFollowUpModal } from '../components/NoteFollowUpModal';
 import { JournalDuplicatesModal, DuplicateGroup } from '../components/JournalDuplicatesModal';
 import { JournalRetrospective } from '../components/JournalRetrospective';
 import { WeatherReadingModal } from '../components/WeatherReadingModal';
@@ -54,14 +55,17 @@ export const JOURNAL_QUARTERS = [
 
 export interface CombinedEntry {
   id: string;
+  noteId?: string;
   title?: string;
   description?: string;
   commentaire?: string;
   statut?: string;
   tags?: string[];
   date: string;
+  latestDate?: string;
   content: string;
   photos?: string[];
+  updates?: NoteUpdate[];
   isDeleted: boolean;
   type: 'journal' | 'seedling' | 'tree';
   sourceId?: string;
@@ -90,10 +94,13 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
   const [newEntrySuccessStatus, setNewEntrySuccessStatus] = useState<'none' | 'success' | 'failure'>('none');
   const [searchTerm, setSearchTerm] = useState('');
   
-  // Date filters: Année, Trimestre, Mois (ou Tout)
+  // Date filters: Année, Trimestre, Mois, Date exacte + Critère Origine/MÀJ
   const [filterYear, setFilterYear] = useState<string>('all');
   const [filterQuarter, setFilterQuarter] = useState<string>('all');
   const [filterMonth, setFilterMonth] = useState<string>('all');
+  const [filterExactDate, setFilterExactDate] = useState<string>('');
+  const [filterDateScope, setFilterDateScope] = useState<'all' | 'origin' | 'update'>('all');
+  const [filterWithUpdatesOnly, setFilterWithUpdatesOnly] = useState<boolean>(false);
 
   const [filterType, setFilterType] = useState<'all' | 'journal' | 'seedling' | 'tree'>('all');
   const [filterSuccess, setFilterSuccess] = useState<'all' | 'success' | 'failure'>('all');
@@ -116,13 +123,64 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
     } catch {}
   };
 
-  // Quick form & retrospective collapse states to avoid scrolling
-  const [isFormOpen, setIsFormOpen] = useState(false);
+  // Express capture always ready at top, with optional drawers & voice signals
+  const [isFormOpen, setIsFormOpen] = useState(true);
+  const [showFormOptions, setShowFormOptions] = useState(false);
+  const [showToolsMenu, setShowToolsMenu] = useState(false);
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [voiceStartSignal, setVoiceStartSignal] = useState(0);
+  const [voiceStopSignal, setVoiceStopSignal] = useState(0);
+  const [homeViewPref, setHomeViewPref] = useState<'journal' | 'dashboard'>(() => {
+    try {
+      return localStorage.getItem('potager_home_view') === 'dashboard' ? 'dashboard' : 'journal';
+    } catch {
+      return 'journal';
+    }
+  });
+  const quickInputRef = useRef<HTMLTextAreaElement>(null);
+  const toolsMenuRef = useRef<HTMLDivElement>(null);
+
   const [isRetrospectiveOpen, setIsRetrospectiveOpen] = useState(false);
   const [saveFeedback, setSaveFeedback] = useState<string | null>(null);
   const [autoWeatherFeedback, setAutoWeatherFeedback] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      const intent = sessionStorage.getItem('journal_quick_capture');
+      if (intent === 'voice' || intent === 'text') {
+        sessionStorage.removeItem('journal_quick_capture');
+        setIsFormOpen(true);
+        setTimeout(() => quickInputRef.current?.focus(), 80);
+        if (intent === 'voice') {
+          setVoiceStartSignal(s => s + 1);
+        }
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (!showToolsMenu) return;
+    const handleClickOutside = (event: MouseEvent) => {
+      if (toolsMenuRef.current && !toolsMenuRef.current.contains(event.target as Node)) {
+        setShowToolsMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showToolsMenu]);
+
+  const handleToggleHomeViewPref = () => {
+    const next: 'journal' | 'dashboard' = homeViewPref === 'journal' ? 'dashboard' : 'journal';
+    setHomeViewPref(next);
+    try {
+      localStorage.setItem('potager_home_view', next);
+    } catch {}
+  };
   
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingEntryType, setEditingEntryType] = useState<'journal' | 'seedling' | 'tree'>('journal');
+  const [editingSourceId, setEditingSourceId] = useState<string | undefined>(undefined);
+  const [editingNoteId, setEditingNoteId] = useState<string | undefined>(undefined);
   const [editTitle, setEditTitle] = useState('');
   const [editContent, setEditContent] = useState('');
   const [editDate, setEditDate] = useState('');
@@ -140,6 +198,7 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
   const [isPerpetualModalOpen, setIsPerpetualModalOpen] = useState(false);
   const [perpetualModalData, setPerpetualModalData] = useState<Partial<PerpetualTask> | undefined>();
   const [modalEditingEntry, setModalEditingEntry] = useState<CombinedEntry | null>(null);
+  const [followUpEntrySnapshot, setFollowUpEntrySnapshot] = useState<CombinedEntry | null>(null);
 
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [editTags, setEditTags] = useState<string[]>([]);
@@ -419,6 +478,8 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
       ...e,
       title: e.title,
       type: 'journal',
+      updates: e.updates || [],
+      latestDate: getNoteLatestDate(e.date, e.updates),
       seasonId: e.seasonId,
       success: e.successStatus === 'success' ? true : e.successStatus === 'failure' ? false : (e.success !== undefined ? e.success : undefined),
       failureReason: e.failureReason,
@@ -448,10 +509,13 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
 
           combined.push({
             id: `${s.id}-${n.id}`,
+            noteId: n.id,
             title: n.title || `${s.vegetable} (${s.variety || 'Semis'})`,
             date: n.date,
+            latestDate: getNoteLatestDate(n.date, n.updates),
             content: n.text,
             photos: n.photos,
+            updates: n.updates || [],
             isDeleted: false,
             type: 'seedling',
             sourceId: s.id,
@@ -476,10 +540,12 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
         );
 
         if (!alreadyHasMatchingNote) {
+          const bilanDate = s.dateHarvested || s.datePlanted || s.dateTransplanted || s.dateSown || s.createdAt || new Date().toISOString().split('T')[0];
           combined.push({
             id: `${s.id}-bilan`,
             title: `Bilan : ${s.vegetable} (${s.variety || 'Semis'})`,
-            date: s.dateHarvested || s.datePlanted || s.dateTransplanted || s.dateSown || s.createdAt || new Date().toISOString().split('T')[0],
+            date: bilanDate,
+            latestDate: bilanDate,
             content: bilanText,
             isDeleted: false,
             type: 'seedling',
@@ -499,14 +565,20 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
         t.notes.forEach((n: any) => {
           combined.push({
             id: `${t.id}-${n.id}`,
+            noteId: n.id,
             title: n.title || `${t.species} (${t.variety || 'Arbre'})`,
             date: n.date,
+            latestDate: getNoteLatestDate(n.date, n.updates),
             content: n.text,
+            photos: n.photos,
+            updates: n.updates || [],
             isDeleted: false,
             type: 'tree',
             sourceId: t.id,
             sourceName: `${t.species} - ${t.variety || 'Sans variété'}`,
-            seasonId: t.seasonId
+            seasonId: t.seasonId,
+            success: n.successStatus === 'success' ? true : n.successStatus === 'failure' ? false : undefined,
+            failureReason: n.successStatus === 'failure' ? n.failureReason : undefined
           });
         });
       }
@@ -532,8 +604,42 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
       uniqueMap.set(item.id, item);
     });
 
-    return Array.from(uniqueMap.values()).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    return Array.from(uniqueMap.values()).sort((a, b) => {
+      const ta = parseSafeDate(a.latestDate || a.date)?.getTime() ?? 0;
+      const tb = parseSafeDate(b.latestDate || b.date)?.getTime() ?? 0;
+      return tb - ta;
+    });
   }, [rawJournalEntries, rawSeedlings, rawTrees, duplicateGroups, showDuplicatesOnly]);
+
+  const activeFollowUpEntry = React.useMemo(() => {
+    if (!followUpEntrySnapshot) return null;
+    return entries?.find(e => e.id === followUpEntrySnapshot.id) || followUpEntrySnapshot;
+  }, [followUpEntrySnapshot, entries]);
+
+  const handleSaveEntryUpdates = async (entry: CombinedEntry, nextUpdates: NoteUpdate[]) => {
+    const cleanedUpdates = getSortedUpdates(nextUpdates);
+    if (entry.type === 'journal') {
+      await fb.update('journal', entry.id, { updates: cleanedUpdates });
+      return;
+    }
+    if (entry.type === 'seedling' && entry.sourceId && entry.noteId) {
+      const seedling = (rawSeedlings || []).find((s: any) => s.id === entry.sourceId);
+      if (!seedling) return;
+      const updatedNotes = (seedling.notes || []).map((n: any) =>
+        n.id === entry.noteId ? { ...n, updates: cleanedUpdates } : n
+      );
+      await fb.update('seedlings', entry.sourceId, { notes: updatedNotes });
+      return;
+    }
+    if (entry.type === 'tree' && entry.sourceId && entry.noteId) {
+      const tree = (rawTrees || []).find((t: any) => t.id === entry.sourceId);
+      if (!tree) return;
+      const updatedNotes = (tree.notes || []).map((n: any) =>
+        n.id === entry.noteId ? { ...n, updates: cleanedUpdates } : n
+      );
+      await fb.update('trees', entry.sourceId, { notes: updatedNotes });
+    }
+  };
 
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>, isEdit: boolean = false) => {
     const file = e.target.files?.[0];
@@ -597,9 +703,10 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
       setTemperatureMin('');
       setTemperatureMax('');
       setRainfall('');
-      setIsFormOpen(false);
+      setShowFormOptions(false);
+      setVoiceStopSignal(s => s + 1);
       setSaveFeedback("Observation enregistrée avec succès dans le registre !");
-      setTimeout(() => setSaveFeedback(null), 4000);
+      setTimeout(() => setSaveFeedback(null), 3500);
     } catch (err) {
       console.error('Erreur enregistrement note journal:', err);
     } finally {
@@ -608,13 +715,17 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
   };
 
   const handleStartEdit = (entry: CombinedEntry) => {
-    if (entry.type !== 'journal') return;
+    const canEdit = entry.type === 'journal' || Boolean(entry.noteId && entry.sourceId);
+    if (!canEdit) return;
     if (activeView === 'list') {
       setEditingId(entry.id);
+      setEditingEntryType(entry.type);
+      setEditingSourceId(entry.sourceId);
+      setEditingNoteId(entry.noteId);
       setEditTitle(entry.title || '');
       setEditTags(entry.tags || []);
       setEditContent(entry.content);
-      setEditDate(entry.date);
+      setEditDate(toDateKey(entry.date) || entry.date);
       setEditPhotos(entry.photos || []);
       setEditSuccessStatus(
         entry.success === true ? 'success' :
@@ -630,6 +741,9 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
 
   const handleCancelEdit = () => {
     setEditingId(null);
+    setEditingEntryType('journal');
+    setEditingSourceId(undefined);
+    setEditingNoteId(undefined);
     setEditTitle('');
     setEditTags([]);
     setEditContent('');
@@ -643,38 +757,97 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
 
   const handleSaveEdit = async (id: string) => {
     if (!editContent.trim()) return;
-    await fb.update("journal", id, {
-      title: editTitle.trim() || undefined,
-      tags: editTags.length > 0 ? editTags : [],
-      content: editContent.trim(),
-      date: editDate,
-      photos: editPhotos,
-      successStatus: editSuccessStatus,
-      success: editSuccessStatus === 'success' ? true : editSuccessStatus === 'failure' ? false : undefined,
-      weatherCondition: editWeatherCondition || undefined,
-      temperature: editTemperature.trim() !== '' ? parseFloat(editTemperature) : undefined,
-      rainfall: editRainfall.trim() !== '' ? parseFloat(editRainfall) : undefined
-    });
-    setEditingId(null);
-    setEditTitle('');
-    setEditTags([]);
-    setEditContent('');
-    setEditDate('');
-    setEditPhotos([]);
-    setEditSuccessStatus('none');
-    setEditWeatherCondition('');
-    setEditTemperature('');
-    setEditRainfall('');
+    if (editingEntryType === 'journal') {
+      const nextStatut =
+        editSuccessStatus === 'success' ? 'Réussite' :
+        editSuccessStatus === 'failure' ? 'Échec' : 'Neutre';
+      await fb.update("journal", id, {
+        title: editTitle.trim() || undefined,
+        description: editTitle.trim() || undefined,
+        statut: nextStatut,
+        commentaire: editContent.trim(),
+        tags: editTags.length > 0 ? editTags : [],
+        content: editContent.trim(),
+        date: editDate,
+        photos: editPhotos,
+        successStatus: editSuccessStatus,
+        success: editSuccessStatus === 'success' ? true : editSuccessStatus === 'failure' ? false : undefined,
+        weatherCondition: editWeatherCondition || undefined,
+        temperature: editTemperature.trim() !== '' ? parseFloat(editTemperature) : undefined,
+        rainfall: editRainfall.trim() !== '' ? parseFloat(editRainfall) : undefined
+      });
+    } else if (editingEntryType === 'seedling' && editingSourceId && editingNoteId) {
+      const seedling = (rawSeedlings || []).find((s: any) => s.id === editingSourceId);
+      if (seedling) {
+        const updatedNotes = (seedling.notes || []).map((n: any) =>
+          n.id === editingNoteId
+            ? {
+                ...n,
+                date: editDate,
+                text: editContent.trim(),
+                photos: editPhotos,
+                successStatus: editSuccessStatus
+              }
+            : n
+        );
+        await fb.update("seedlings", editingSourceId, { notes: updatedNotes });
+      }
+    } else if (editingEntryType === 'tree' && editingSourceId && editingNoteId) {
+      const tree = (rawTrees || []).find((t: any) => t.id === editingSourceId);
+      if (tree) {
+        const updatedNotes = (tree.notes || []).map((n: any) =>
+          n.id === editingNoteId
+            ? {
+                ...n,
+                date: editDate,
+                text: editContent.trim(),
+                photos: editPhotos,
+                successStatus: editSuccessStatus
+              }
+            : n
+        );
+        await fb.update("trees", editingSourceId, { notes: updatedNotes });
+      }
+    }
+    handleCancelEdit();
   };
 
-  const handleCycleJournalSuccess = async (id: string, currentSuccess?: boolean) => {
+  const handleSetEntrySuccessStatus = async (entry: CombinedEntry, nextStatus: 'none' | 'success' | 'failure') => {
+    if (entry.type === 'journal') {
+      const nextStatut =
+        nextStatus === 'success' ? 'Réussite' :
+        nextStatus === 'failure' ? 'Échec' : 'Neutre';
+      await fb.update("journal", entry.id, {
+        successStatus: nextStatus,
+        success: nextStatus === 'success' ? true : nextStatus === 'failure' ? false : undefined,
+        statut: nextStatut
+      });
+      return;
+    }
+    if (entry.type === 'seedling' && entry.sourceId && entry.noteId) {
+      const seedling = (rawSeedlings || []).find((s: any) => s.id === entry.sourceId);
+      if (!seedling) return;
+      const updatedNotes = (seedling.notes || []).map((n: any) =>
+        n.id === entry.noteId ? { ...n, successStatus: nextStatus } : n
+      );
+      await fb.update('seedlings', entry.sourceId, { notes: updatedNotes });
+      return;
+    }
+    if (entry.type === 'tree' && entry.sourceId && entry.noteId) {
+      const tree = (rawTrees || []).find((t: any) => t.id === entry.sourceId);
+      if (!tree) return;
+      const updatedNotes = (tree.notes || []).map((n: any) =>
+        n.id === entry.noteId ? { ...n, successStatus: nextStatus } : n
+      );
+      await fb.update('trees', entry.sourceId, { notes: updatedNotes });
+    }
+  };
+
+  const handleCycleJournalSuccess = async (entry: CombinedEntry) => {
     const nextStatus: 'none' | 'success' | 'failure' =
-      currentSuccess === true ? 'failure' :
-      currentSuccess === false ? 'none' : 'success';
-    await fb.update("journal", id, {
-      successStatus: nextStatus,
-      success: nextStatus === 'success' ? true : nextStatus === 'failure' ? false : undefined
-    });
+      entry.success === true ? 'failure' :
+      entry.success === false ? 'none' : 'success';
+    await handleSetEntrySuccessStatus(entry, nextStatus);
   };
 
   const handleDelete = async (id: string, type: string) => {
@@ -770,12 +943,20 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
     const currentY = new Date().getFullYear().toString();
     yearSet.add(currentY);
     (entries || []).forEach(e => {
-      const d = new Date(e.date);
-      if (!isNaN(d.getTime())) {
+      const d = parseSafeDate(e.date);
+      if (d) {
         yearSet.add(d.getFullYear().toString());
       }
+      (e.updates || []).forEach(u => {
+        const ud = parseSafeDate(u.date);
+        if (ud) yearSet.add(ud.getFullYear().toString());
+      });
     });
     return Array.from(yearSet).sort((a, b) => b.localeCompare(a));
+  }, [entries]);
+
+  const entriesWithUpdatesCount = React.useMemo(() => {
+    return (entries || []).filter(e => (e.updates || []).length > 0).length;
   }, [entries]);
 
   const retrospectiveNotesCount = React.useMemo(() => {
@@ -786,8 +967,8 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
     const currentYear = today.getFullYear();
 
     return entries.filter(e => {
-      const d = new Date(e.date);
-      if (!isNaN(d.getTime())) return false;
+      const d = parseSafeDate(e.date);
+      if (!d) return false;
       return d.getFullYear() < currentYear && d.getMonth() === currentMonth && Math.abs(d.getDate() - currentDay) <= 3;
     }).length;
   }, [entries]);
@@ -831,15 +1012,24 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
     setFilterYear('all');
     setFilterQuarter('all');
     setFilterMonth('all');
+    setFilterExactDate('');
+    setFilterDateScope('all');
   };
 
-  const isDateFilterActive = filterYear !== 'all' || filterQuarter !== 'all' || filterMonth !== 'all';
+  const isDateFilterActive =
+    filterYear !== 'all' ||
+    filterQuarter !== 'all' ||
+    filterMonth !== 'all' ||
+    filterExactDate !== '' ||
+    filterDateScope !== 'all';
 
   const filteredEntries = (entries || []).filter(e => {
-    const searchLower = searchTerm.toLowerCase();
-    const matchesSearch = !searchTerm ||
+    const searchLower = searchTerm.toLowerCase().trim();
+    const matchesSearch = !searchLower ||
                           (e.title ? e.title.toLowerCase().includes(searchLower) : false) ||
                           e.content.toLowerCase().includes(searchLower) ||
+                          (e.updates ? e.updates.some(u => u.text.toLowerCase().includes(searchLower)) : false) ||
+                          matchesDateSearchQuery(searchLower, e.date, e.updates) ||
                           (e.tags ? e.tags.some((t: string) => t.toLowerCase().includes(searchLower)) : false) ||
                           (e.sourceName ? e.sourceName.toLowerCase().includes(searchLower) : false) ||
                           (e.failureReason ? e.failureReason.toLowerCase().includes(searchLower) : false) ||
@@ -860,34 +1050,31 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
     const matchesSeason = filterSeason === 'all' || (filterSeason === currentSeasonId ? isItemInCurrentSeason(e) : e.seasonId === filterSeason);
 
     if (showDuplicatesOnly && !e.hasDuplicate) return false;
+    if (filterWithUpdatesOnly && (!e.updates || e.updates.length === 0)) return false;
 
     if (!matchesSeason || !matchesSuccess || !matchesType || !matchesSearch) return false;
 
-    // Temporal date filtering: Année, Trimestre, Mois
-    const d = new Date(e.date);
-    if (isNaN(d.getTime())) return false;
+    // Temporal date filtering with explicit Origine / Mise à jour / Both scope
+    const hasValidOrigin = parseSafeDate(e.date) !== null;
+    if (!hasValidOrigin) return false;
 
-    if (filterYear !== 'all') {
-      if (d.getFullYear().toString() !== filterYear) return false;
+    const sortedUpdates = getSortedUpdates(e.updates);
+    if (filterDateScope === 'origin') {
+      return matchesSingleDateFilter(e.date, filterYear, filterQuarter, filterMonth, filterExactDate);
+    } else if (filterDateScope === 'update') {
+      if (sortedUpdates.length === 0) return false;
+      return sortedUpdates.some(u => matchesSingleDateFilter(u.date, filterYear, filterQuarter, filterMonth, filterExactDate));
+    } else {
+      const originMatch = matchesSingleDateFilter(e.date, filterYear, filterQuarter, filterMonth, filterExactDate);
+      const updateMatch = sortedUpdates.some(u => matchesSingleDateFilter(u.date, filterYear, filterQuarter, filterMonth, filterExactDate));
+      return originMatch || updateMatch;
     }
-
-    const monthNum = d.getMonth() + 1; // 1 to 12
-    if (filterQuarter !== 'all') {
-      const q = monthNum <= 3 ? 'Q1' : monthNum <= 6 ? 'Q2' : monthNum <= 9 ? 'Q3' : 'Q4';
-      if (q !== filterQuarter) return false;
-    }
-
-    if (filterMonth !== 'all') {
-      if (monthNum.toString() !== filterMonth) return false;
-    }
-
-    return true;
   }).sort((a, b) => {
     if (sortOrder === 'alpha') {
       return a.content.localeCompare(b.content);
     }
-    const dateA = new Date(a.date).getTime();
-    const dateB = new Date(b.date).getTime();
+    const dateA = parseSafeDate(a.latestDate || a.date)?.getTime() ?? 0;
+    const dateB = parseSafeDate(b.latestDate || b.date)?.getTime() ?? 0;
     return sortOrder === 'desc' ? dateB - dateA : dateA - dateB;
   });
 
@@ -903,10 +1090,10 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
         confirmText="Supprimer"
       />
 
-      {/* Header with Title and Action Toolbar */}
-      <header className="bg-white p-3.5 sm:p-4 rounded-2xl shadow-xs border border-stone-200/80 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center shadow-2xs">
+      {/* Header with Title and Streamlined Daily Actions */}
+      <header className="bg-white p-3 sm:p-4 rounded-2xl shadow-xs border border-stone-200/80 flex flex-wrap items-center justify-between gap-2.5">
+        <div className="flex items-center gap-2.5">
+          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-xs shrink-0">
             <BookOpen className="w-5 h-5" />
           </div>
           <div>
@@ -920,53 +1107,28 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
                 </span>
               )}
             </div>
-            <p className="text-xs text-stone-500">Registre d'observations, relevés météo & calendrier perpétuel</p>
+            <p className="text-[11px] sm:text-xs text-stone-500">Saisie rapide, dictée vocale & suivi chronologique</p>
           </div>
         </div>
 
-        {/* Action Buttons Toolbar */}
+        {/* Streamlined Action Toolbar */}
         <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap ml-auto">
-          {/* Main New Note Toggle Button */}
-          <button
-            type="button"
-            onClick={() => setIsFormOpen(prev => !prev)}
-            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer ${
-              isFormOpen
-                ? 'bg-stone-800 hover:bg-stone-900 text-white'
-                : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-600/20'
-            }`}
-            title={isFormOpen ? 'Fermer le formulaire de saisie' : 'Ouvrir la saisie d\'une nouvelle note'}
-          >
-            {isFormOpen ? (
-              <>
-                <X className="w-4 h-4" />
-                <span>Fermer la saisie</span>
-              </>
-            ) : (
-              <>
-                <Plus className="w-4 h-4" />
-                <span>Nouvelle observation</span>
-              </>
-            )}
-          </button>
-
           {/* Quick Weather Reading Modal */}
           <button
             type="button"
             onClick={() => setIsWeatherModalOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-2 bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 rounded-xl transition shadow-2xs text-xs font-semibold cursor-pointer"
+            className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 sm:py-2 bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 rounded-xl transition shadow-2xs text-xs font-semibold cursor-pointer"
             title="Ajouter rapidement un relevé météo / pluviomètre / température du jour"
           >
             <Thermometer className="w-3.5 h-3.5 text-blue-600" />
-            <span className="hidden sm:inline">Relevé Météo</span>
-            <span className="sm:hidden">Météo</span>
+            <span>Météo</span>
           </button>
 
           {/* Retrospective Button */}
           <button
             type="button"
             onClick={() => setIsRetrospectiveOpen(prev => !prev)}
-            className={`flex items-center gap-1.5 px-3 py-2 border rounded-xl transition shadow-2xs text-xs font-semibold cursor-pointer ${
+            className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 sm:py-2 border rounded-xl transition shadow-2xs text-xs font-semibold cursor-pointer ${
               isRetrospectiveOpen
                 ? 'bg-amber-100 border-amber-300 text-amber-900'
                 : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200'
@@ -982,67 +1144,115 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
             )}
           </button>
 
-          {/* Plant Multiplication Guide Button */}
-          <button
-            type="button"
-            onClick={() => setCurrentView('calendar-multiplications')}
-            className="flex items-center gap-1.5 px-3 py-2 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 rounded-xl transition shadow-2xs text-xs font-semibold cursor-pointer"
-            title="Consulter le calendrier des multiplications (boutures, marcottes, divisions) adapté à vos plantes"
-          >
-            <Scissors className="w-3.5 h-3.5 text-teal-600" />
-            <span className="hidden sm:inline">Multiplications</span>
-            <span className="sm:hidden">Boutures</span>
-            {activeMultiplicationsCount > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-teal-200 text-teal-900">
-                {activeMultiplicationsCount}
-              </span>
+          {/* Grouped Secondary Tools Menu */}
+          <div className="relative" ref={toolsMenuRef}>
+            <button
+              type="button"
+              onClick={() => setShowToolsMenu(prev => !prev)}
+              className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 sm:py-2 border rounded-xl transition shadow-2xs text-xs font-semibold cursor-pointer ${
+                showToolsMenu
+                  ? 'bg-stone-800 text-white border-stone-800'
+                  : 'bg-white hover:bg-stone-50 text-stone-700 border-stone-200'
+              }`}
+              title="Outils du journal (Impression, Export/Import, Planning, Paramètres)"
+            >
+              <Wrench className="w-3.5 h-3.5" />
+              <span>Outils</span>
+              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showToolsMenu ? 'rotate-180' : ''}`} />
+            </button>
+
+            {showToolsMenu && (
+              <div className="absolute right-0 mt-1.5 w-64 bg-white rounded-2xl shadow-xl border border-stone-200 p-1.5 z-40 space-y-0.5 text-xs">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsPrintModalOpen(true);
+                    setShowToolsMenu(false);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-stone-50 text-stone-700 font-medium text-left cursor-pointer"
+                >
+                  <Printer className="w-4 h-4 text-stone-500" />
+                  <span>Imprimer le registre</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsIntegrationModalOpen(true);
+                    setShowToolsMenu(false);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-indigo-50 text-indigo-800 font-medium text-left cursor-pointer"
+                >
+                  <ArrowUpDown className="w-4 h-4 text-indigo-600" />
+                  <span>Import / Export CSV & JSON</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCurrentView('calendar-multiplications');
+                    setShowToolsMenu(false);
+                  }}
+                  className="w-full flex items-center justify-between px-3 py-2 rounded-xl hover:bg-teal-50 text-teal-800 font-medium text-left cursor-pointer"
+                >
+                  <span className="flex items-center gap-2.5">
+                    <Scissors className="w-4 h-4 text-teal-600" />
+                    <span>Multiplications</span>
+                  </span>
+                  {activeMultiplicationsCount > 0 && (
+                    <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 text-teal-900">
+                      {activeMultiplicationsCount}
+                    </span>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCurrentView('calendar-perpetual');
+                    setShowToolsMenu(false);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-purple-50 text-purple-800 font-medium text-left cursor-pointer"
+                >
+                  <CalendarClock className="w-4 h-4 text-purple-600" />
+                  <span>Planning perpétuel</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    handlePrioritySync();
+                    setShowToolsMenu(false);
+                  }}
+                  disabled={isSyncingPriority}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-emerald-50 text-emerald-800 font-medium text-left cursor-pointer disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-4 h-4 text-emerald-600 ${isSyncingPriority ? 'animate-spin' : ''}`} />
+                  <span>Synchroniser maintenant</span>
+                </button>
+
+                <div className="my-1 border-t border-stone-100" />
+
+                <button
+                  type="button"
+                  onClick={handleToggleHomeViewPref}
+                  className="w-full flex items-center justify-between px-3 py-2 rounded-xl hover:bg-stone-50 text-stone-700 font-medium text-left cursor-pointer"
+                  title="Choisir la page affichée au démarrage de l'application"
+                >
+                  <span className="flex items-center gap-2.5">
+                    <Home className="w-4 h-4 text-emerald-600" />
+                    <span>Accueil : {homeViewPref === 'journal' ? 'Journal' : 'Tableau'}</span>
+                  </span>
+                  {homeViewPref === 'journal' && (
+                    <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">
+                      <Check className="w-3 h-3" />
+                      Journal
+                    </span>
+                  )}
+                </button>
+              </div>
             )}
-          </button>
-
-          {/* Planning perpétuel shortcut */}
-          <button
-            type="button"
-            onClick={() => setCurrentView('calendar-perpetual')}
-            className="hidden md:flex items-center gap-1.5 px-3 py-2 bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200 rounded-xl transition shadow-2xs text-xs font-medium cursor-pointer"
-            title="Accéder directement au planning perpétuel"
-          >
-            <CalendarClock className="w-3.5 h-3.5 text-purple-600" />
-            <span>Planning perpétuel</span>
-          </button>
-
-          {/* Print modal */}
-          <button
-            type="button"
-            onClick={() => setIsPrintModalOpen(true)}
-            className="flex items-center gap-1.5 px-2.5 py-2 bg-white hover:bg-stone-50 text-stone-700 border border-stone-200 rounded-xl transition shadow-2xs text-xs font-medium cursor-pointer"
-            title="Imprimer le registre ou journal"
-          >
-            <Printer className="w-3.5 h-3.5 text-stone-500" />
-            <span className="hidden md:inline">Imprimer</span>
-          </button>
-
-          {/* External tool integration (Import/Export: Date, Description, Commentaire, Statut) */}
-          <button
-            type="button"
-            onClick={() => setIsIntegrationModalOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 rounded-xl transition shadow-2xs text-xs font-semibold cursor-pointer"
-            title="Intégration du journal avec un nouvel outil (Export & Import : Date, Description, Commentaire, Statut)"
-          >
-            <ArrowUpDown className="w-3.5 h-3.5 text-indigo-600" />
-            <span className="hidden sm:inline">Intégration</span>
-            <span className="sm:hidden">Intégrer</span>
-          </button>
-
-          {/* Priority sync */}
-          <button
-            type="button"
-            onClick={handlePrioritySync}
-            disabled={isSyncingPriority}
-            className="p-2 text-stone-500 hover:text-emerald-700 hover:bg-emerald-50 border border-stone-200 rounded-xl transition cursor-pointer"
-            title="Synchroniser le Journal et le Perpétuel"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isSyncingPriority ? 'animate-spin text-emerald-600' : ''}`} />
-          </button>
+          </div>
         </div>
       </header>
 
@@ -1097,89 +1307,64 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
         </div>
       )}
 
-      {/* Collapsible New Observation Card */}
+      {/* Express Quick-Capture Card (Always ready for PC keyboard & Mobile voice) */}
       {isFormOpen ? (
-        <form onSubmit={handleSave} className="bg-white p-4 rounded-2xl shadow-sm border border-emerald-200 space-y-3 animate-fade-in">
-          <div className="flex items-center justify-between pb-2 border-b border-stone-100">
-            <div className="flex items-center gap-2">
+        <form onSubmit={handleSave} className="bg-white p-3.5 sm:p-4 rounded-2xl shadow-sm border-2 border-emerald-500/30 space-y-2.5">
+          {/* Top bar: Voice Dictation prominent + Date + Collapse */}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex-1 min-w-[220px]">
+              <VoiceDictationControl
+                value={content}
+                onChange={setContent}
+                prominent
+                startSignal={voiceStartSignal}
+                stopSignal={voiceStopSignal}
+              />
+            </div>
+
+            <div className="flex items-center gap-1.5 ml-auto">
               <input 
                 type="date" 
                 required
                 value={date}
                 onChange={e => setDate(e.target.value)}
-                className="px-2.5 py-1 text-xs font-semibold rounded-lg border border-stone-200 bg-stone-50 focus:bg-white focus:ring-2 focus:ring-emerald-500 outline-none"
+                className="px-2 py-1 text-xs font-semibold rounded-lg border border-stone-200 bg-stone-50 focus:bg-white focus:ring-2 focus:ring-emerald-500 outline-none"
+                title="Date de l'observation"
               />
-              <h2 className="text-sm font-bold text-stone-800">Rédiger une observation ou note</h2>
-            </div>
-            <button
-              type="button"
-              onClick={() => setIsFormOpen(false)}
-              className="text-xs text-stone-400 hover:text-stone-700 flex items-center gap-1 underline cursor-pointer"
-            >
-              Masquer
-            </button>
-          </div>
-
-          {/* Titre optionnel */}
-          <input 
-            type="text"
-            value={title}
-            onChange={e => setTitle(e.target.value)}
-            placeholder="Titre de la note (optionnel : ex. Première récolte de courgettes, Taille des tomates...)"
-            className="w-full px-3 py-1.5 text-xs font-medium rounded-xl border border-stone-200 bg-stone-50/60 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all placeholder:text-stone-400"
-          />
-
-          {/* Voice Dictation Speech-to-Text */}
-          <VoiceDictationControl
-            value={content}
-            onChange={setContent}
-          />
-
-          <textarea 
-            required
-            autoFocus
-            value={content}
-            onChange={e => setContent(e.target.value)}
-            rows={2}
-            className="w-full px-3 py-2 text-xs rounded-xl border border-stone-200 focus:ring-2 focus:ring-emerald-500 outline-none resize-none leading-relaxed"
-            placeholder="Aujourd'hui au potager, j'ai observé / réalisé (ou dictez oralement au micro)..."
-          />
-
-          {photos.length > 0 && (
-            <div className="flex gap-2 overflow-x-auto pb-1">
-              {photos.map((photo, index) => (
-                <div key={index} className="relative w-16 h-16 rounded-xl overflow-hidden border border-stone-200 shrink-0">
-                  <img src={photo} alt="Aperçu" className="w-full h-full object-cover" />
-                  <button 
-                    type="button"
-                    onClick={() => setPhotos(prev => prev.filter((_, i) => i !== index))}
-                    className="absolute top-1 right-1 p-0.5 bg-white/80 hover:bg-white rounded-full text-stone-700 shadow-sm"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Quick Activity Tags */}
-          <div className="space-y-1.5 pt-1 border-t border-stone-100">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-[11px] font-semibold text-stone-700 flex items-center gap-1.5">
-                <Tag className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Tags d'activités rapides :</span>
-              </span>
               <button
                 type="button"
-                onClick={() => setCurrentView('config-journal_tag')}
-                className="text-[11px] text-stone-500 hover:text-emerald-700 flex items-center gap-1 hover:underline cursor-pointer font-medium"
-                title="Configurer les tags dans le menu Configuration"
+                onClick={() => setIsFormOpen(false)}
+                className="px-2 py-1 text-[11px] text-stone-400 hover:text-stone-700 hover:bg-stone-100 rounded-lg cursor-pointer"
+                title="Réduire la zone de saisie"
               >
-                <Settings className="w-3 h-3" />
-                <span>Paramétrer</span>
+                Réduire
               </button>
             </div>
-            <div className="flex flex-wrap items-center gap-1.5">
+          </div>
+
+          {/* Main Quick Textarea (Ctrl+Enter / Cmd+Enter to save on PC) */}
+          <textarea 
+            ref={quickInputRef}
+            required
+            value={content}
+            onChange={e => setContent(e.target.value)}
+            onKeyDown={(e) => {
+              if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && content.trim() && !isSubmitting) {
+                e.preventDefault();
+                handleSave(e as unknown as React.FormEvent);
+              }
+            }}
+            rows={2}
+            className="w-full px-3 py-2 text-sm rounded-xl border border-stone-200 bg-stone-50/40 focus:bg-white focus:ring-2 focus:ring-emerald-500/25 focus:border-emerald-500 outline-none resize-y leading-relaxed placeholder:text-stone-400"
+            placeholder="Note express : dictez au micro ou saisissez votre observation... (Ctrl+Entrée pour enregistrer)"
+          />
+
+          {/* Horizontal 1-tap Activity Tags Strip */}
+          {availableJournalTags.length > 0 && (
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 no-scrollbar">
+              <span className="text-[10px] font-semibold text-stone-400 uppercase tracking-wider shrink-0">
+                Tags :
+              </span>
               {availableJournalTags.map(tag => {
                 const isSelected = selectedTags.includes(tag);
                 return (
@@ -1187,7 +1372,7 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
                     key={tag}
                     type="button"
                     onClick={() => handleToggleTag(tag)}
-                    className={`px-2.5 py-0.5 rounded-full text-xs font-medium transition-all flex items-center gap-1 cursor-pointer border ${
+                    className={`px-2.5 py-0.5 rounded-full text-[11px] font-medium transition-all flex items-center gap-1 cursor-pointer border shrink-0 ${
                       isSelected
                         ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs font-semibold'
                         : 'bg-stone-50 text-stone-700 border-stone-200 hover:bg-emerald-50 hover:text-emerald-800'
@@ -1199,247 +1384,322 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
                 );
               })}
             </div>
-          </div>
+          )}
 
-          {/* Quick Weather Indicators & Temperature in 1 click */}
-          <div className="space-y-2 pt-2 border-t border-stone-100 bg-stone-50/80 p-3 rounded-xl border border-stone-200/80">
-            <div className="flex items-center justify-between gap-2 flex-wrap">
-              <span className="text-[11px] font-semibold text-stone-700 flex items-center gap-1.5">
-                <CloudRain className="w-3.5 h-3.5 text-blue-500" />
-                <span>Indicateurs météo (1 clic) :</span>
-              </span>
+          {/* Attached Photos Preview */}
+          {photos.length > 0 && (
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {photos.map((photo, index) => (
+                <div key={index} className="relative w-14 h-14 rounded-xl overflow-hidden border border-stone-200 shrink-0">
+                  <img src={photo} alt="Aperçu" className="w-full h-full object-cover" />
+                  <button 
+                    type="button"
+                    onClick={() => setPhotos(prev => prev.filter((_, i) => i !== index))}
+                    className="absolute top-0.5 right-0.5 p-0.5 bg-white/90 hover:bg-white rounded-full text-stone-700 shadow-sm"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
 
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleFetchCurrentWeather}
-                  disabled={isFetchingWeather}
-                  className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 shadow-2xs"
-                  title="Récupérer la météo en direct et sélectionner l'indicateur automatiquement"
-                >
-                  <Sparkles className={`w-3.5 h-3.5 text-blue-600 ${isFetchingWeather ? 'animate-spin' : ''}`} />
-                  <span>{isFetchingWeather ? 'Relevé en cours...' : weatherLocation ? `Météo auto (${weatherLocation})` : 'Météo auto (GPS)'}</span>
-                </button>
-
-                {weatherCondition && (
+          {/* Auto Weather Confirmation / Captured Pill */}
+          {(autoWeatherFeedback || weatherCondition || temperature) && (
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              {autoWeatherFeedback && (
+                <div className="px-2.5 py-1 bg-blue-50 border border-blue-200 text-blue-900 rounded-lg font-medium flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                  <span>{autoWeatherFeedback}</span>
+                </div>
+              )}
+              {!autoWeatherFeedback && (weatherCondition || temperature) && (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-50 text-blue-900 border border-blue-200 font-medium">
+                  <span>{weatherCondition}</span>
+                  {temperature && <span>• {temperature}°C</span>}
+                  {rainfall && <span>• {rainfall} mm</span>}
                   <button
                     type="button"
                     onClick={() => {
                       setWeatherCondition('');
-                      setAutoWeatherFeedback(null);
+                      setTemperature('');
+                      setTemperatureMin('');
+                      setTemperatureMax('');
+                      setRainfall('');
                     }}
-                    className="text-[11px] text-stone-400 hover:text-stone-600 underline cursor-pointer"
+                    className="text-blue-500 hover:text-blue-800 ml-1"
+                    title="Effacer la météo"
                   >
-                    Effacer
+                    <X className="w-3 h-3" />
                   </button>
-                )}
-              </div>
+                </span>
+              )}
             </div>
+          )}
 
-            {autoWeatherFeedback && (
-              <div className="p-2 bg-blue-50 border border-blue-200 text-blue-900 rounded-lg text-xs font-medium flex items-center gap-1.5 animate-fade-in">
-                <CheckCircle2 className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-                <span>{autoWeatherFeedback}</span>
+          {/* Collapsible Optional Fields Drawer (Titre, Météo détaillée, Statut, Config tags) */}
+          {showFormOptions && (
+            <div className="pt-2.5 border-t border-stone-100 space-y-3 animate-fade-in">
+              <div className="flex flex-col sm:flex-row gap-2">
+                <input 
+                  type="text"
+                  value={title}
+                  onChange={e => setTitle(e.target.value)}
+                  placeholder="Titre optionnel (ex. Première récolte de courgettes, Taille...)"
+                  className="flex-1 px-3 py-1.5 text-xs font-medium rounded-xl border border-stone-200 bg-stone-50/60 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all placeholder:text-stone-400"
+                />
+                <button
+                  type="button"
+                  onClick={() => setCurrentView('config-journal_tag')}
+                  className="px-2.5 py-1.5 text-xs text-stone-600 hover:text-emerald-700 bg-stone-50 hover:bg-emerald-50 border border-stone-200 rounded-xl flex items-center gap-1.5 shrink-0 cursor-pointer font-medium"
+                  title="Configurer les tags dans le menu Configuration"
+                >
+                  <Settings className="w-3.5 h-3.5" />
+                  <span>Gérer les tags</span>
+                </button>
               </div>
-            )}
 
-            {/* 1-click Weather Indicators Grid */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-1.5">
-              {effectiveWeatherIndicators.map(opt => {
-                const isSelected = isWeatherOptionActive(weatherCondition, opt);
-                return (
+              {/* Detailed Weather Controls */}
+              <div className="space-y-2 bg-stone-50/80 p-3 rounded-xl border border-stone-200/80">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className="text-[11px] font-semibold text-stone-700 flex items-center gap-1.5">
+                    <CloudRain className="w-3.5 h-3.5 text-blue-500" />
+                    <span>Météo détaillée :</span>
+                  </span>
+                  {weatherCondition && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setWeatherCondition('');
+                        setAutoWeatherFeedback(null);
+                      }}
+                      className="text-[11px] text-stone-400 hover:text-stone-600 underline cursor-pointer"
+                    >
+                      Effacer
+                    </button>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-1.5">
+                  {effectiveWeatherIndicators.map(opt => {
+                    const isSelected = isWeatherOptionActive(weatherCondition, opt);
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => handleToggleWeatherOption(opt)}
+                        className={`px-2 py-1.5 rounded-lg border text-xs font-medium flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                          isSelected ? `${opt.activeClass} ring-2 ring-emerald-500 font-bold shadow-xs scale-102` : opt.colorClass
+                        }`}
+                      >
+                        <span className="text-sm leading-none">{opt.emoji}</span>
+                        <span className="truncate">{opt.label}</span>
+                        {isSelected && <CheckCircle2 className="w-3 h-3 text-white shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap pt-1.5 border-t border-stone-200/60 text-xs">
+                  <div className="flex items-center gap-1 bg-white px-2.5 py-1 rounded-lg border border-stone-200 shadow-2xs">
+                    <Thermometer className="w-3.5 h-3.5 text-orange-500" />
+                    <span className="text-[10px] text-stone-500 font-medium">T° :</span>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={temperature}
+                      onChange={e => setTemperature(e.target.value)}
+                      placeholder="21"
+                      className="w-12 text-xs font-semibold text-stone-900 outline-none bg-transparent"
+                    />
+                    <span className="text-[10px] text-stone-400">°C</span>
+                  </div>
+
+                  <div className="flex items-center gap-1 bg-white px-2.5 py-1 rounded-lg border border-stone-200 shadow-2xs">
+                    <span className="text-[10px] text-blue-600 font-bold">Min :</span>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={temperatureMin}
+                      onChange={e => setTemperatureMin(e.target.value)}
+                      placeholder="10"
+                      className="w-10 text-xs text-stone-900 outline-none bg-transparent"
+                    />
+                    <span className="text-stone-300">/</span>
+                    <span className="text-[10px] text-red-600 font-bold">Max :</span>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={temperatureMax}
+                      onChange={e => setTemperatureMax(e.target.value)}
+                      placeholder="24"
+                      className="w-10 text-xs text-stone-900 outline-none bg-transparent"
+                    />
+                    <span className="text-[10px] text-stone-400">°C</span>
+                  </div>
+
+                  <div className="flex items-center gap-1 bg-white px-2.5 py-1 rounded-lg border border-stone-200 shadow-2xs">
+                    <Droplets className="w-3.5 h-3.5 text-blue-500" />
+                    <span className="text-[10px] text-stone-500 font-medium">Pluie :</span>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      value={rainfall}
+                      onChange={e => setRainfall(e.target.value)}
+                      placeholder="0"
+                      className="w-10 text-xs font-semibold text-blue-700 outline-none bg-transparent"
+                    />
+                    <span className="text-[10px] text-stone-400">mm</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Statut Réussite / Échec */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[11px] font-medium text-stone-500">Statut :</span>
+                <div className="inline-flex rounded-lg border border-stone-200 p-0.5 bg-stone-50">
                   <button
-                    key={opt.id}
                     type="button"
-                    onClick={() => handleToggleWeatherOption(opt)}
-                    className={`px-2 py-1.5 rounded-lg border text-xs font-medium flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                      isSelected ? `${opt.activeClass} ring-2 ring-emerald-500 font-bold shadow-xs scale-102` : opt.colorClass
+                    onClick={() => setNewEntrySuccessStatus('none')}
+                    className={`px-2.5 py-0.5 text-xs font-medium rounded-md transition-all ${
+                      newEntrySuccessStatus === 'none'
+                        ? 'bg-white text-stone-800 shadow-xs border border-stone-200/60'
+                        : 'text-stone-500 hover:text-stone-800'
                     }`}
                   >
-                    <span className="text-sm leading-none">{opt.emoji}</span>
-                    <span className="truncate">{opt.label}</span>
-                    {isSelected && <CheckCircle2 className="w-3 h-3 text-white shrink-0" />}
+                    ⚪ Neutre
                   </button>
-                );
-              })}
-            </div>
-
-            {/* Inline Temperature & Rain readings */}
-            <div className="flex items-center gap-2 flex-wrap pt-1.5 border-t border-stone-200/60 text-xs">
-              <div className="flex items-center gap-1 bg-white px-2.5 py-1 rounded-lg border border-stone-200 shadow-2xs">
-                <Thermometer className="w-3.5 h-3.5 text-orange-500" />
-                <span className="text-[10px] text-stone-500 font-medium">T° :</span>
-                <input
-                  type="number"
-                  step="0.1"
-                  value={temperature}
-                  onChange={e => setTemperature(e.target.value)}
-                  placeholder="21"
-                  className="w-12 text-xs font-semibold text-stone-900 outline-none bg-transparent"
-                />
-                <span className="text-[10px] text-stone-400">°C</span>
-              </div>
-
-              <div className="flex items-center gap-1 bg-white px-2.5 py-1 rounded-lg border border-stone-200 shadow-2xs">
-                <span className="text-[10px] text-blue-600 font-bold">Min :</span>
-                <input
-                  type="number"
-                  step="0.1"
-                  value={temperatureMin}
-                  onChange={e => setTemperatureMin(e.target.value)}
-                  placeholder="10"
-                  className="w-10 text-xs text-stone-900 outline-none bg-transparent"
-                />
-                <span className="text-stone-300">/</span>
-                <span className="text-[10px] text-red-600 font-bold">Max :</span>
-                <input
-                  type="number"
-                  step="0.1"
-                  value={temperatureMax}
-                  onChange={e => setTemperatureMax(e.target.value)}
-                  placeholder="24"
-                  className="w-10 text-xs text-stone-900 outline-none bg-transparent"
-                />
-                <span className="text-[10px] text-stone-400">°C</span>
-              </div>
-
-              <div className="flex items-center gap-1 bg-white px-2.5 py-1 rounded-lg border border-stone-200 shadow-2xs">
-                <Droplets className="w-3.5 h-3.5 text-blue-500" />
-                <span className="text-[10px] text-stone-500 font-medium">Pluie :</span>
-                <input
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  value={rainfall}
-                  onChange={e => setRainfall(e.target.value)}
-                  placeholder="0"
-                  className="w-10 text-xs font-semibold text-blue-700 outline-none bg-transparent"
-                />
-                <span className="text-[10px] text-stone-400">mm</span>
+                  <button
+                    type="button"
+                    onClick={() => setNewEntrySuccessStatus('success')}
+                    className={`px-2.5 py-0.5 text-xs font-medium rounded-md transition-all inline-flex items-center gap-1 ${
+                      newEntrySuccessStatus === 'success'
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'text-stone-500 hover:text-emerald-700'
+                    }`}
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    Réussite
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNewEntrySuccessStatus('failure')}
+                    className={`px-2.5 py-0.5 text-xs font-medium rounded-md transition-all inline-flex items-center gap-1 ${
+                      newEntrySuccessStatus === 'failure'
+                        ? 'bg-red-600 text-white shadow-xs'
+                        : 'text-stone-500 hover:text-red-700'
+                    }`}
+                  >
+                    <XCircle className="w-3.5 h-3.5" />
+                    Échec
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
+          )}
 
-          {/* Statut Réussite / Échec */}
-          <div className="flex items-center gap-2 flex-wrap pt-1 border-t border-stone-100">
-            <span className="text-[11px] font-medium text-stone-500">Statut :</span>
-            <div className="inline-flex rounded-lg border border-stone-200 p-0.5 bg-stone-50">
+          {/* Express Bottom Action Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <label className="cursor-pointer flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-stone-200 text-stone-700 hover:bg-stone-50 transition-colors text-xs font-medium">
+                <Camera className="w-3.5 h-3.5 text-stone-500" />
+                <span>Photo{photos.length > 0 ? ` (${photos.length})` : ''}</span>
+                <input 
+                  type="file" 
+                  accept="image/*" 
+                  className="hidden" 
+                  onChange={e => handlePhotoUpload(e, false)} 
+                />
+              </label>
+
               <button
                 type="button"
-                onClick={() => setNewEntrySuccessStatus('none')}
-                className={`px-2.5 py-0.5 text-xs font-medium rounded-md transition-all ${
-                  newEntrySuccessStatus === 'none'
-                    ? 'bg-white text-stone-800 shadow-xs border border-stone-200/60'
-                    : 'text-stone-500 hover:text-stone-800'
-                }`}
+                onClick={handleFetchCurrentWeather}
+                disabled={isFetchingWeather}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 rounded-xl text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50"
+                title="Récupérer la météo en direct en 1 clic"
               >
-                ⚪ Neutre
+                <Sparkles className={`w-3.5 h-3.5 text-blue-600 ${isFetchingWeather ? 'animate-spin' : ''}`} />
+                <span>{isFetchingWeather ? 'Météo...' : 'Météo auto'}</span>
               </button>
+
               <button
                 type="button"
-                onClick={() => setNewEntrySuccessStatus('success')}
-                className={`px-2.5 py-0.5 text-xs font-medium rounded-md transition-all inline-flex items-center gap-1 ${
-                  newEntrySuccessStatus === 'success'
-                    ? 'bg-emerald-600 text-white shadow-xs'
-                    : 'text-stone-500 hover:text-emerald-700'
+                onClick={() => setShowFormOptions(prev => !prev)}
+                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl border text-xs font-medium transition-colors cursor-pointer ${
+                  showFormOptions || title || newEntrySuccessStatus !== 'none' || weatherCondition
+                    ? 'bg-stone-100 border-stone-300 text-stone-900 font-semibold'
+                    : 'bg-white border-stone-200 text-stone-600 hover:bg-stone-50'
                 }`}
+                title="Afficher les champs complémentaires (Titre, Météo manuelle, Statut)"
               >
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                Réussite
-              </button>
-              <button
-                type="button"
-                onClick={() => setNewEntrySuccessStatus('failure')}
-                className={`px-2.5 py-0.5 text-xs font-medium rounded-md transition-all inline-flex items-center gap-1 ${
-                  newEntrySuccessStatus === 'failure'
-                    ? 'bg-red-600 text-white shadow-xs'
-                    : 'text-stone-500 hover:text-red-700'
-                }`}
-              >
-                <XCircle className="w-3.5 h-3.5" />
-                Échec
+                <SlidersHorizontal className="w-3.5 h-3.5" />
+                <span>{showFormOptions ? 'Moins d\'options' : '+ Options'}</span>
               </button>
             </div>
-          </div>
 
-          <div className="flex justify-between items-center pt-2">
-            <label className="cursor-pointer flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-stone-200 text-stone-600 hover:bg-stone-50 transition-colors">
-              <Camera className="w-3.5 h-3.5 text-stone-500" />
-              <span className="text-xs font-medium">Ajouter photo(s)</span>
-              <input 
-                type="file" 
-                accept="image/*" 
-                className="hidden" 
-                onChange={e => handlePhotoUpload(e, false)} 
-              />
-            </label>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setIsFormOpen(false)}
-                className="px-3 py-1.5 text-xs font-medium text-stone-600 hover:bg-stone-100 rounded-lg transition-colors cursor-pointer"
-              >
-                Annuler
-              </button>
-              <button 
-                type="submit"
-                disabled={isSubmitting || !content.trim()}
-                className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-1.5 rounded-lg text-xs font-semibold shadow-sm transition-colors flex items-center gap-1.5 cursor-pointer"
-              >
-                {isSubmitting ? (
-                  <>
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    <span>Enregistrement...</span>
-                  </>
-                ) : (
-                  <>
-                    <Save className="w-3.5 h-3.5" />
-                    <span>Enregistrer dans le registre</span>
-                  </>
-                )}
-              </button>
-            </div>
+            <button 
+              type="submit"
+              disabled={isSubmitting || !content.trim()}
+              className="ml-auto bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded-xl text-xs sm:text-sm font-bold shadow-sm transition-colors flex items-center gap-1.5 cursor-pointer"
+            >
+              {isSubmitting ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>Enregistrement...</span>
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4" />
+                  <span>Enregistrer</span>
+                </>
+              )}
+            </button>
           </div>
         </form>
       ) : (
-        /* Compact 1-line interactive Quick Prompt Bar */
+        /* Compact 1-line interactive Quick Prompt Bar when collapsed */
         <button
           type="button"
-          onClick={() => setIsFormOpen(true)}
+          onClick={() => {
+            setIsFormOpen(true);
+            setTimeout(() => quickInputRef.current?.focus(), 60);
+          }}
           className="w-full bg-white hover:bg-stone-50/90 border border-stone-200/90 rounded-2xl p-2.5 sm:px-4 sm:py-2.5 text-left transition-all shadow-xs flex items-center justify-between gap-3 group cursor-pointer hover:border-emerald-300"
         >
           <div className="flex items-center gap-2.5 text-stone-500 text-xs truncate">
             <span className="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold text-sm shrink-0 group-hover:scale-105 transition-transform">
               ✍️
             </span>
-            <span className="truncate">Rédiger une observation, un geste ou noter la météo du jour...</span>
+            <span className="truncate">Rédiger ou dicter une observation...</span>
           </div>
           <span className="px-2.5 py-1 bg-emerald-600 group-hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shrink-0 transition-colors flex items-center gap-1 shadow-2xs">
             <Plus className="w-3.5 h-3.5" />
-            <span>Ajouter une note</span>
+            <span>Saisie rapide</span>
           </span>
         </button>
       )}
 
-      {/* View Switcher & Filters Bar */}
+      {/* View Switcher & Streamlined Filters Bar */}
       <div className="bg-white p-3 rounded-2xl shadow-xs border border-stone-200/80 space-y-2.5">
-        {/* Row 1: View Mode Switcher & Search Bar in one line */}
+        {/* Row 1: View Mode Switcher & Search Bar */}
         <div className="flex flex-wrap items-center justify-between gap-2">
           {/* View Switcher */}
           <div className="flex items-center gap-1 bg-stone-100 p-1 rounded-xl border border-stone-200/70 text-xs font-semibold">
             <button
               onClick={() => handleSetView('table')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+              className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
                 activeView === 'table' ? 'bg-white text-emerald-800 shadow-2xs font-bold' : 'text-stone-600 hover:text-stone-900'
               }`}
               title="Vue registre mensuel synthétique (vue par défaut)"
             >
               <Table className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Registre mensuel</span>
+              <span>Registre</span>
             </button>
             <button
               onClick={() => handleSetView('list')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+              className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
                 activeView === 'list' ? 'bg-white text-emerald-800 shadow-2xs font-bold' : 'text-stone-600 hover:text-stone-900'
               }`}
               title="Vue détaillée sous forme de fiches"
@@ -1449,7 +1709,7 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
             </button>
             <button
               onClick={() => handleSetView('calendar')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+              className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
                 activeView === 'calendar' ? 'bg-white text-emerald-800 shadow-2xs font-bold' : 'text-stone-600 hover:text-stone-900'
               }`}
               title="Vue calendrier mensuel interactif"
@@ -1460,11 +1720,11 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
           </div>
 
           {/* Search Input */}
-          <div className="flex-1 min-w-[220px] relative">
+          <div className="flex-1 min-w-[200px] relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400 w-3.5 h-3.5 pointer-events-none" />
             <input 
               type="text" 
-              placeholder="Rechercher (plante, variété, mot-clé, tag...)" 
+              placeholder="Rechercher (plante, mot-clé, suivi, date...)" 
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
               className="w-full pl-8 pr-8 py-1.5 text-xs text-stone-900 placeholder:text-stone-400 rounded-xl border border-stone-200 bg-stone-50/60 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all"
@@ -1481,15 +1741,130 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
           </div>
         </div>
 
-        {/* Row 2: Date Filters Bar (Année, Trimestre, Mois, ou Tout) */}
+        {/* Row 2: 1-Click Quick Chips + Advanced Dates Drawer Toggle */}
         <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-stone-100 text-xs">
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-[11px] font-semibold text-stone-600 flex items-center gap-1">
-              <Calendar className="w-3 h-3 text-emerald-600" />
-              <span>Dates :</span>
-            </span>
+            {/* Source quick chips */}
+            <div className="inline-flex items-center bg-stone-100 p-0.5 rounded-lg border border-stone-200/70">
+              <button
+                type="button"
+                onClick={() => setFilterType('all')}
+                className={`px-2 py-0.5 rounded-md text-[11px] font-medium transition-all cursor-pointer ${
+                  filterType === 'all' ? 'bg-white text-stone-900 shadow-2xs font-semibold' : 'text-stone-600 hover:text-stone-900'
+                }`}
+              >
+                Tout
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilterType('journal')}
+                className={`px-2 py-0.5 rounded-md text-[11px] font-medium transition-all cursor-pointer ${
+                  filterType === 'journal' ? 'bg-white text-blue-800 shadow-2xs font-semibold' : 'text-stone-600 hover:text-stone-900'
+                }`}
+              >
+                Journal
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilterType('seedling')}
+                className={`px-2 py-0.5 rounded-md text-[11px] font-medium transition-all cursor-pointer ${
+                  filterType === 'seedling' ? 'bg-white text-emerald-800 shadow-2xs font-semibold' : 'text-stone-600 hover:text-stone-900'
+                }`}
+              >
+                Semis & Arbres
+              </button>
+            </div>
 
-            {/* Bouton Tout */}
+            {/* Notes avec suivi uniquement */}
+            <button
+              type="button"
+              onClick={() => setFilterWithUpdatesOnly(prev => !prev)}
+              className={`inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium rounded-lg border transition-colors cursor-pointer ${
+                filterWithUpdatesOnly
+                  ? 'bg-amber-100 border-amber-300 text-amber-950 font-semibold'
+                  : 'bg-white border-stone-200 text-stone-600 hover:bg-amber-50 hover:text-amber-800'
+              }`}
+              title="Afficher uniquement les notes ayant des mises à jour de suivi"
+            >
+              <History className="w-3 h-3 text-amber-600" />
+              <span>Suivi ({entriesWithUpdatesCount})</span>
+            </button>
+
+            {/* Réussites / Échecs chips */}
+            <button
+              type="button"
+              onClick={() => setFilterSuccess(prev => prev === 'success' ? 'all' : 'success')}
+              className={`inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium rounded-lg border transition-colors cursor-pointer ${
+                filterSuccess === 'success'
+                  ? 'bg-emerald-100 border-emerald-300 text-emerald-900 font-semibold'
+                  : 'bg-white border-stone-200 text-stone-600 hover:bg-emerald-50'
+              }`}
+            >
+              <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+              <span>Réussites</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setFilterSuccess(prev => prev === 'failure' ? 'all' : 'failure')}
+              className={`inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium rounded-lg border transition-colors cursor-pointer ${
+                filterSuccess === 'failure'
+                  ? 'bg-red-100 border-red-300 text-red-900 font-semibold'
+                  : 'bg-white border-stone-200 text-stone-600 hover:bg-red-50'
+              }`}
+            >
+              <XCircle className="w-3 h-3 text-red-600" />
+              <span>Échecs</span>
+            </button>
+
+            {/* Advanced Dates / Season / Tags Toggle */}
+            <button
+              type="button"
+              onClick={() => setShowAdvancedFilters(prev => !prev)}
+              className={`inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium rounded-lg border transition-colors cursor-pointer ${
+                showAdvancedFilters || isDateFilterActive || filterSeason !== 'all' || filterTag !== 'all'
+                  ? 'bg-emerald-50 border-emerald-300 text-emerald-900 font-semibold'
+                  : 'bg-white border-stone-200 text-stone-600 hover:bg-stone-50'
+              }`}
+            >
+              <Calendar className="w-3 h-3 text-emerald-600" />
+              <span>Dates & Filtres</span>
+              {(isDateFilterActive || filterSeason !== 'all' || filterTag !== 'all') && (
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
+              )}
+              <ChevronDown className={`w-3 h-3 transition-transform ${showAdvancedFilters ? 'rotate-180' : ''}`} />
+            </button>
+
+            {/* Quick Reset when any filter is active */}
+            {(isDateFilterActive || filterType !== 'all' || filterSuccess !== 'all' || filterWithUpdatesOnly || filterSeason !== 'all' || filterTag !== 'all' || searchTerm) && (
+              <button
+                type="button"
+                onClick={() => {
+                  handleResetDateFilters();
+                  setFilterType('all');
+                  setFilterSuccess('all');
+                  setFilterWithUpdatesOnly(false);
+                  setFilterSeason('all');
+                  setFilterTag('all');
+                  setSearchTerm('');
+                }}
+                className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-stone-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                title="Réinitialiser tous les filtres"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>Réinitialiser</span>
+              </button>
+            )}
+          </div>
+
+          <div className="text-[11px] text-stone-500 font-semibold">
+            {filteredEntries.length} entrée{filteredEntries.length > 1 ? 's' : ''}
+          </div>
+        </div>
+
+        {/* Row 3: Collapsible Advanced Date, Season, Tag & Sort Filters */}
+        {showAdvancedFilters && (
+          <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-stone-100 text-xs animate-fade-in">
             <button
               type="button"
               onClick={handleResetDateFilters}
@@ -1499,8 +1874,49 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
                   : 'bg-stone-50 text-stone-600 hover:bg-stone-100 border border-stone-200/80'
               }`}
             >
-              Tout
+              Toutes dates
             </button>
+
+            {/* Critère de date : Origine ou MÀJ */}
+            <select
+              value={filterDateScope}
+              onChange={e => setFilterDateScope(e.target.value as 'all' | 'origin' | 'update')}
+              className={`px-2 py-0.5 text-xs font-medium rounded-lg border outline-none cursor-pointer transition-colors ${
+                filterDateScope !== 'all'
+                  ? 'bg-amber-50 border-amber-300 text-amber-900 font-semibold'
+                  : 'bg-white border-stone-200 text-stone-700'
+              }`}
+              title="Choisir si le filtre de date s'applique à la date d'origine, à la date de mise à jour, ou aux deux"
+            >
+              <option value="all">Origine ou MÀJ</option>
+              <option value="origin">Date d'origine</option>
+              <option value="update">Date de MÀJ</option>
+            </select>
+
+            {/* Date exacte */}
+            <div className="inline-flex items-center gap-1">
+              <input
+                type="date"
+                value={filterExactDate}
+                onChange={e => setFilterExactDate(e.target.value)}
+                title="Rechercher une date précise (selon critère Origine ou MÀJ)"
+                className={`px-2 py-0.5 text-xs font-medium rounded-lg border outline-none cursor-pointer transition-colors ${
+                  filterExactDate
+                    ? 'bg-emerald-50 border-emerald-300 text-emerald-900 font-semibold'
+                    : 'bg-white border-stone-200 text-stone-700'
+                }`}
+              />
+              {filterExactDate && (
+                <button
+                  type="button"
+                  onClick={() => setFilterExactDate('')}
+                  className="p-0.5 text-stone-400 hover:text-stone-700 rounded hover:bg-stone-100"
+                  title="Effacer la date précise"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
 
             {/* Année */}
             <select
@@ -1591,16 +2007,12 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
               onChange={e => setSortOrder(e.target.value as 'desc' | 'asc' | 'alpha')}
               className="px-2 py-0.5 text-xs font-medium rounded-lg border border-stone-200 bg-white text-stone-700 outline-none cursor-pointer"
             >
-              <option value="desc">Plus récent</option>
+              <option value="desc">Plus récent (MÀJ incluse)</option>
               <option value="asc">Plus ancien</option>
               <option value="alpha">A → Z</option>
             </select>
           </div>
-
-          <div className="text-[11px] text-stone-500 font-semibold">
-            {filteredEntries.length} entrée{filteredEntries.length > 1 ? 's' : ''}
-          </div>
-        </div>
+        )}
       </div>
 
       {activeView === 'list' && (
@@ -1625,13 +2037,15 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
                       className="px-2 py-1 text-xs rounded-lg border border-stone-200 focus:ring-2 focus:ring-emerald-500 outline-none"
                     />
                   </div>
-                  <input
-                    type="text"
-                    value={editTitle}
-                    onChange={e => setEditTitle(e.target.value)}
-                    placeholder="Titre de la note (optionnel)"
-                    className="w-full px-2 py-1 text-xs font-medium rounded-lg border border-stone-200 bg-stone-50/50 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none placeholder:text-stone-400"
-                  />
+                  {editingEntryType === 'journal' && (
+                    <input
+                      type="text"
+                      value={editTitle}
+                      onChange={e => setEditTitle(e.target.value)}
+                      placeholder="Titre de la note (optionnel)"
+                      className="w-full px-2 py-1 text-xs font-medium rounded-lg border border-stone-200 bg-stone-50/50 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none placeholder:text-stone-400"
+                    />
+                  )}
                   <VoiceDictationControl
                     value={editContent}
                     onChange={setEditContent}
@@ -1703,100 +2117,104 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
                     </div>
                   </div>
 
-                  {/* Inline edit tags */}
-                  <div className="space-y-1 pt-1 border-t border-stone-100">
-                    <span className="text-[11px] font-semibold text-stone-700 flex items-center gap-1">
-                      <Tag className="w-3 h-3 text-emerald-600" />
-                      <span>Tags d'activités :</span>
-                    </span>
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {availableJournalTags.map(tag => {
-                        const isSelected = editTags.includes(tag);
-                        return (
-                          <button
-                            key={tag}
-                            type="button"
-                            onClick={() => handleToggleEditTag(tag)}
-                            className={`px-2 py-0.5 rounded-full text-xs font-medium transition-all flex items-center gap-1 cursor-pointer border ${
-                              isSelected
-                                ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs font-semibold'
-                                : 'bg-stone-50 text-stone-700 border-stone-200 hover:bg-emerald-50 hover:text-emerald-800'
-                            }`}
-                          >
-                            <span>{tag}</span>
-                            {isSelected && <CheckCircle2 className="w-3 h-3 text-white" />}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
+                  {editingEntryType === 'journal' && (
+                    <>
+                      {/* Inline edit tags */}
+                      <div className="space-y-1 pt-1 border-t border-stone-100">
+                        <span className="text-[11px] font-semibold text-stone-700 flex items-center gap-1">
+                          <Tag className="w-3 h-3 text-emerald-600" />
+                          <span>Tags d'activités :</span>
+                        </span>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {availableJournalTags.map(tag => {
+                            const isSelected = editTags.includes(tag);
+                            return (
+                              <button
+                                key={tag}
+                                type="button"
+                                onClick={() => handleToggleEditTag(tag)}
+                                className={`px-2 py-0.5 rounded-full text-xs font-medium transition-all flex items-center gap-1 cursor-pointer border ${
+                                  isSelected
+                                    ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs font-semibold'
+                                    : 'bg-stone-50 text-stone-700 border-stone-200 hover:bg-emerald-50 hover:text-emerald-800'
+                                }`}
+                              >
+                                <span>{tag}</span>
+                                {isSelected && <CheckCircle2 className="w-3 h-3 text-white" />}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
 
-                  {/* Inline edit weather */}
-                  <div className="space-y-1.5 pt-1 border-t border-stone-100 bg-stone-50/50 p-2 rounded-lg">
-                    <div className="flex items-center justify-between text-[11px]">
-                      <span className="font-semibold text-stone-700 flex items-center gap-1">
-                        <CloudRain className="w-3 h-3 text-blue-500" />
-                        <span>Météo :</span>
-                      </span>
-                      {editWeatherCondition && (
-                        <button
-                          type="button"
-                          onClick={() => setEditWeatherCondition('')}
-                          className="text-[10px] text-stone-400 hover:text-stone-600 underline cursor-pointer"
-                        >
-                          Effacer
-                        </button>
-                      )}
-                    </div>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-1">
-                      {effectiveWeatherIndicators.map(opt => {
-                        const isSelected = editWeatherCondition === `${opt.emoji} ${opt.label}` ||
-                          (editWeatherCondition.includes(opt.label) && editWeatherCondition.includes(opt.emoji));
-                        return (
-                          <button
-                            key={opt.id}
-                            type="button"
-                            onClick={() => handleToggleEditWeatherOption(opt)}
-                            className={`px-1.5 py-0.5 rounded text-[11px] font-medium flex items-center justify-center gap-1 border transition-all cursor-pointer ${
-                              isSelected ? opt.activeClass : opt.colorClass
-                            }`}
-                          >
-                            <span>{opt.emoji}</span>
-                            <span className="truncate">{opt.label}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <div className="flex items-center gap-2 pt-1 border-t border-stone-200/50 text-[11px]">
-                      <div className="flex items-center gap-1 bg-white px-1.5 py-0.5 rounded border border-stone-200">
-                        <Thermometer className="w-3 h-3 text-orange-500" />
-                        <span className="text-[10px] text-stone-500">T°:</span>
-                        <input
-                          type="number"
-                          step="0.1"
-                          value={editTemperature}
-                          onChange={e => setEditTemperature(e.target.value)}
-                          placeholder="20"
-                          className="w-10 text-[11px] font-semibold text-stone-900 outline-none"
-                        />
-                        <span className="text-[10px] text-stone-400">°C</span>
+                      {/* Inline edit weather */}
+                      <div className="space-y-1.5 pt-1 border-t border-stone-100 bg-stone-50/50 p-2 rounded-lg">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="font-semibold text-stone-700 flex items-center gap-1">
+                            <CloudRain className="w-3 h-3 text-blue-500" />
+                            <span>Météo :</span>
+                          </span>
+                          {editWeatherCondition && (
+                            <button
+                              type="button"
+                              onClick={() => setEditWeatherCondition('')}
+                              className="text-[10px] text-stone-400 hover:text-stone-600 underline cursor-pointer"
+                            >
+                              Effacer
+                            </button>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-1">
+                          {effectiveWeatherIndicators.map(opt => {
+                            const isSelected = editWeatherCondition === `${opt.emoji} ${opt.label}` ||
+                              (editWeatherCondition.includes(opt.label) && editWeatherCondition.includes(opt.emoji));
+                            return (
+                              <button
+                                key={opt.id}
+                                type="button"
+                                onClick={() => handleToggleEditWeatherOption(opt)}
+                                className={`px-1.5 py-0.5 rounded text-[11px] font-medium flex items-center justify-center gap-1 border transition-all cursor-pointer ${
+                                  isSelected ? opt.activeClass : opt.colorClass
+                                }`}
+                              >
+                                <span>{opt.emoji}</span>
+                                <span className="truncate">{opt.label}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <div className="flex items-center gap-2 pt-1 border-t border-stone-200/50 text-[11px]">
+                          <div className="flex items-center gap-1 bg-white px-1.5 py-0.5 rounded border border-stone-200">
+                            <Thermometer className="w-3 h-3 text-orange-500" />
+                            <span className="text-[10px] text-stone-500">T°:</span>
+                            <input
+                              type="number"
+                              step="0.1"
+                              value={editTemperature}
+                              onChange={e => setEditTemperature(e.target.value)}
+                              placeholder="20"
+                              className="w-10 text-[11px] font-semibold text-stone-900 outline-none"
+                            />
+                            <span className="text-[10px] text-stone-400">°C</span>
+                          </div>
+                          <div className="flex items-center gap-1 bg-white px-1.5 py-0.5 rounded border border-stone-200">
+                            <Droplets className="w-3 h-3 text-blue-500" />
+                            <span className="text-[10px] text-stone-500">Pluie:</span>
+                            <input
+                              type="number"
+                              step="0.1"
+                              min="0"
+                              value={editRainfall}
+                              onChange={e => setEditRainfall(e.target.value)}
+                              placeholder="0"
+                              className="w-10 text-[11px] font-semibold text-blue-700 outline-none"
+                            />
+                            <span className="text-[10px] text-stone-400">mm</span>
+                          </div>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-1 bg-white px-1.5 py-0.5 rounded border border-stone-200">
-                        <Droplets className="w-3 h-3 text-blue-500" />
-                        <span className="text-[10px] text-stone-500">Pluie:</span>
-                        <input
-                          type="number"
-                          step="0.1"
-                          min="0"
-                          value={editRainfall}
-                          onChange={e => setEditRainfall(e.target.value)}
-                          placeholder="0"
-                          className="w-10 text-[11px] font-semibold text-blue-700 outline-none"
-                        />
-                        <span className="text-[10px] text-stone-400">mm</span>
-                      </div>
-                    </div>
-                  </div>
+                    </>
+                  )}
 
                   <div className="flex justify-between items-center pt-1">
                     <label className="cursor-pointer flex items-center gap-1.5 px-2 py-1 rounded-lg border border-stone-200 text-stone-600 hover:bg-stone-50 transition-colors">
@@ -1829,14 +2247,35 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
                 </div>
               ) : (
                 <>
-                  <div className="w-12 shrink-0 text-center">
-                    <div className="text-xl font-serif font-medium text-emerald-600 leading-none">
-                      {new Date(entry.date).getDate()}
-                    </div>
-                    <div className="text-[9px] font-medium text-stone-500 uppercase tracking-wider mt-0.5">
-                      {new Date(entry.date).toLocaleString('fr-FR', { month: 'short', year: 'numeric' })}
-                    </div>
-                  </div>
+                  {(() => {
+                    const sortedUpdates = getSortedUpdates(entry.updates);
+                    const latestDateStr = entry.latestDate || getNoteLatestDate(entry.date, sortedUpdates);
+                    const displayDate = parseSafeDate(latestDateStr) || new Date(entry.date);
+                    const hasUpdates = sortedUpdates.length > 0;
+                    const datesDiffer = hasUpdates && toDateKey(latestDateStr) !== toDateKey(entry.date);
+
+                    return (
+                      <div className="w-14 shrink-0 text-center">
+                        <div className="text-xl font-serif font-medium text-emerald-600 leading-none">
+                          {displayDate.getDate()}
+                        </div>
+                        <div className="text-[9px] font-medium text-stone-500 uppercase tracking-wider mt-0.5">
+                          {displayDate.toLocaleString('fr-FR', { month: 'short', year: 'numeric' })}
+                        </div>
+                        {hasUpdates && (
+                          <div className="mt-1 inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded bg-amber-50 text-amber-800 border border-amber-200 text-[9px] font-bold">
+                            <History className="w-2.5 h-2.5" />
+                            <span>MÀJ</span>
+                          </div>
+                        )}
+                        {datesDiffer && (
+                          <div className="text-[9px] text-stone-400 mt-0.5 leading-tight" title={`Note créée le ${formatDateShortFR(entry.date)}`}>
+                            Orig. {formatDateShortFR(entry.date)}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                   <div className="flex-1 border-l border-stone-100 pl-3 space-y-2">
                     {entry.type === 'journal' && (
                       <div className="flex items-center gap-2 mb-1 flex-wrap">
@@ -1856,7 +2295,7 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
                         )}
                         <button
                           type="button"
-                          onClick={() => handleCycleJournalSuccess(entry.id, entry.success)}
+                          onClick={() => handleCycleJournalSuccess(entry)}
                           title="Cliquer pour changer le statut (Réussite / Échec / Sans statut)"
                           className={`text-[10px] px-2 py-0.5 rounded-full font-medium inline-flex items-center gap-1 transition-all ${
                             entry.success === true
@@ -1869,6 +2308,19 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
                           {entry.success === true && <CheckCircle2 className="w-3 h-3 text-emerald-600" />}
                           {entry.success === false && <XCircle className="w-3 h-3 text-red-600" />}
                           {entry.success === true ? 'Réussite' : entry.success === false ? 'Échec' : 'Sans statut'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setFollowUpEntrySnapshot(entry)}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-900 border border-amber-200 hover:bg-amber-100 transition-colors cursor-pointer"
+                          title="Ajouter ou gérer les mises à jour datées de cette note"
+                        >
+                          <History className="w-3 h-3 text-amber-600" />
+                          <span>
+                            {(entry.updates?.length || 0) > 0
+                              ? `Suivi (${entry.updates!.length}) • + MÀJ`
+                              : '+ Suivi'}
+                          </span>
                         </button>
                         {(() => {
                           const linkedPerpetual = perpetualTasks.find(p => 
@@ -1937,22 +2389,58 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
                             Voir la fiche : {entry.sourceName}
                           </button>
                         )}
-                        {entry.type === 'seedling' && entry.success === true && (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full text-[10px] font-medium">
-                            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                            Réussite
-                          </span>
-                        )}
-                        {entry.type === 'seedling' && entry.success === false && (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-red-50 text-red-700 border border-red-200 rounded-full text-[10px] font-medium" title={entry.failureReason ? `Raison : ${entry.failureReason}` : undefined}>
-                            <XCircle className="w-3 h-3 text-red-600" />
-                            Échec{entry.failureReason ? ` : ${entry.failureReason}` : ''}
-                          </span>
+                        {entry.noteId ? (
+                          <button
+                            type="button"
+                            onClick={() => handleCycleJournalSuccess(entry)}
+                            title="Cliquer pour changer le statut (Réussite / Échec / Sans statut)"
+                            className={`text-[10px] px-2 py-0.5 rounded-full font-medium inline-flex items-center gap-1 transition-all cursor-pointer ${
+                              entry.success === true
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
+                                : entry.success === false
+                                ? 'bg-red-50 text-red-700 border border-red-200 hover:bg-red-100'
+                                : 'bg-stone-100 text-stone-500 hover:bg-stone-200/60'
+                            }`}
+                          >
+                            {entry.success === true && <CheckCircle2 className="w-3 h-3 text-emerald-600" />}
+                            {entry.success === false && <XCircle className="w-3 h-3 text-red-600" />}
+                            {entry.success === true ? 'Réussite' : entry.success === false ? 'Échec' : 'Sans statut'}
+                          </button>
+                        ) : (
+                          <>
+                            {entry.type === 'seedling' && entry.success === true && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full text-[10px] font-medium">
+                                <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                Réussite
+                              </span>
+                            )}
+                            {entry.type === 'seedling' && entry.success === false && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-red-50 text-red-700 border border-red-200 rounded-full text-[10px] font-medium" title={entry.failureReason ? `Raison : ${entry.failureReason}` : undefined}>
+                                <XCircle className="w-3 h-3 text-red-600" />
+                                Échec{entry.failureReason ? ` : ${entry.failureReason}` : ''}
+                              </span>
+                            )}
+                          </>
                         )}
                         {entry.type === 'tree' && (
                           <span className="text-[10px] text-stone-500 font-medium">
                             {entry.sourceName}
                           </span>
+                        )}
+                        {entry.noteId && (
+                          <button
+                            type="button"
+                            onClick={() => setFollowUpEntrySnapshot(entry)}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-900 border border-amber-200 hover:bg-amber-100 transition-colors cursor-pointer"
+                            title="Ajouter ou gérer les mises à jour datées de cette note"
+                          >
+                            <History className="w-3 h-3 text-amber-600" />
+                            <span>
+                              {(entry.updates?.length || 0) > 0
+                                ? `Suivi (${entry.updates!.length}) • + MÀJ`
+                                : '+ Suivi'}
+                            </span>
+                          </button>
                         )}
                         {(() => {
                           const linkedPerpetual = perpetualTasks.find(p => 
@@ -2047,6 +2535,26 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
                       </div>
                     )}
                     <p className="text-xs text-stone-800 whitespace-pre-wrap">{entry.content}</p>
+                    {(() => {
+                      const sortedUpdates = getSortedUpdates(entry.updates);
+                      if (sortedUpdates.length === 0) return null;
+                      return (
+                        <div className="mt-2 pl-3 border-l-2 border-amber-300 space-y-1.5 bg-amber-50/40 py-2 pr-2.5 rounded-r-xl">
+                          <div className="text-[10px] font-bold uppercase tracking-wider text-amber-800 flex items-center gap-1">
+                            <History className="w-3 h-3" />
+                            <span>Suivi chronologique ({sortedUpdates.length})</span>
+                          </div>
+                          {sortedUpdates.map(u => (
+                            <div key={u.id} className="text-xs text-stone-800">
+                              <span className="inline-block font-bold text-[10px] text-amber-950 bg-white border border-amber-200 px-1.5 py-0.2 rounded mr-1.5">
+                                {formatDateShortFR(u.date)}
+                              </span>
+                              <span className="whitespace-pre-wrap">{u.text}</span>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
                     {entry.photos && entry.photos.length > 0 && (
                       <div className="grid grid-cols-2 gap-1.5">
                         {entry.photos.map((photo, index) => (
@@ -2055,22 +2563,26 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
                       </div>
                     )}
                   </div>
-                  {entry.type === 'journal' && (
-                    <div className="flex flex-col gap-0.5 opacity-0 group-hover:opacity-100 transition-all shrink-0 self-start">
+                  {(entry.type === 'journal' || Boolean(entry.noteId && entry.sourceId)) && (
+                    <div className="flex flex-col gap-0.5 opacity-100 sm:opacity-70 sm:group-hover:opacity-100 transition-all shrink-0 self-start">
                       <button 
+                        type="button"
                         onClick={() => handleStartEdit(entry)}
-                        className="p-1 text-stone-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                        className="p-1.5 text-stone-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
                         title="Modifier"
                       >
                         <Edit className="w-3.5 h-3.5" />
                       </button>
-                      <button 
-                        onClick={() => handleDelete(entry.id, entry.type)}
-                        className="p-1 text-stone-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                        title="Mettre à la corbeille"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      {entry.type === 'journal' && (
+                        <button 
+                          type="button"
+                          onClick={() => handleDelete(entry.id, entry.type)}
+                          className="p-1.5 text-stone-500 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                          title="Mettre à la corbeille"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
                   )}
                 </>
@@ -2086,6 +2598,7 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
           entries={filteredEntries}
           perpetualTasks={perpetualTasks}
           onStartEdit={handleStartEdit}
+          onOpenFollowUp={(entry) => setFollowUpEntrySnapshot(entry)}
           onDelete={handleDelete}
           onCycleSuccess={handleCycleJournalSuccess}
           onOpenPerpetualModal={handleOpenPerpetualModal}
@@ -2100,6 +2613,7 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
           entries={filteredEntries}
           perpetualTasks={perpetualTasks}
           onStartEdit={handleStartEdit}
+          onOpenFollowUp={(entry) => setFollowUpEntrySnapshot(entry)}
           onDelete={handleDelete}
           onCycleSuccess={handleCycleJournalSuccess}
           onOpenPerpetualModal={handleOpenPerpetualModal}
@@ -2119,7 +2633,39 @@ export function Journal({ setCurrentView }: { setCurrentView: (view: string) => 
         entry={modalEditingEntry}
         onDelete={handleDelete}
         availableTags={availableJournalTags}
+        rawSeedlings={rawSeedlings}
+        rawTrees={rawTrees}
       />
+
+      {activeFollowUpEntry && (
+        <NoteFollowUpModal
+          isOpen={activeFollowUpEntry !== null}
+          onClose={() => setFollowUpEntrySnapshot(null)}
+          title={activeFollowUpEntry.title}
+          sourceLabel={
+            activeFollowUpEntry.type === 'journal'
+              ? 'Journal du potager'
+              : activeFollowUpEntry.sourceName
+          }
+          originDate={activeFollowUpEntry.date}
+          originText={activeFollowUpEntry.content}
+          updates={activeFollowUpEntry.updates || []}
+          onSaveUpdates={(nextUpdates) => handleSaveEntryUpdates(activeFollowUpEntry, nextUpdates)}
+          successStatus={
+            activeFollowUpEntry.success === true
+              ? 'success'
+              : activeFollowUpEntry.success === false
+              ? 'failure'
+              : 'none'
+          }
+          onChangeSuccessStatus={(next) => handleSetEntrySuccessStatus(activeFollowUpEntry, next)}
+          onOpenEdit={() => {
+            const target = activeFollowUpEntry;
+            setFollowUpEntrySnapshot(null);
+            setModalEditingEntry(target);
+          }}
+        />
+      )}
 
       <PerpetualTaskModal
         isOpen={isPerpetualModalOpen}

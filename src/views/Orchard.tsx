@@ -1,23 +1,25 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, Tree, Note, Structure, ConfigItem } from '../db';
+import { db, Tree, Note, NoteUpdate, Structure, ConfigItem } from '../db';
 import { useFirebaseData, fb } from '../hooks/useFirebaseData';
 import { StructureEditor } from '../components/StructureEditor';
 import { 
   Trees, Plus, Map as MapIcon, Image as ImageIcon, Trash2, Edit2, 
-  Camera, XCircle, Sprout, Leaf, Flower2, Apple, Grape, Carrot, 
+  Camera, CheckCircle2, XCircle, Sprout, Leaf, Flower2, Apple, Grape, Carrot, 
   Cherry, Citrus, Wheat, Shrub, Palmtree, TreePine, List, Printer, 
   Home, Square, Save, X, Palette, ZoomIn, ZoomOut, Magnet, Lock, Unlock,
   MousePointer2, MapPin, Grid3X3, Ruler, MapPinOff, Search, Sparkles,
-  BookOpen, ChevronDown, ChevronUp, Check, ExternalLink, Filter, Layers, Info
+  BookOpen, ChevronDown, ChevronUp, Check, ExternalLink, Filter, Layers, Info, History
 } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import { ConfirmModal } from '../components/Modals';
+import { NoteFollowUpModal } from '../components/NoteFollowUpModal';
 import { ICON_MAP, ICON_LIST, GARDEN_EMOJIS, isEmoji, GARDEN_EMOJI_CATEGORIES } from '../constants';
 import { printElement } from '../utils/print';
 import { getDistinctColor } from '../utils/colors';
 import { compressImage } from '../utils/image';
 import { getCanonicalCategory, normalizeCategoryKey } from '../utils/categories';
+import { getSortedUpdates, getNoteLatestDate, formatDateShortFR, parseSafeDate } from '../utils/notes';
 
 export function Orchard({ setCurrentView }: { setCurrentView?: (view: string) => void } = {}) {
   const { data: config, error: configError } = useFirebaseData<any>('config');
@@ -56,6 +58,7 @@ export function Orchard({ setCurrentView }: { setCurrentView?: (view: string) =>
   const [isEditingTree, setIsEditingTree] = useState(false);
   const [isMovingTree, setIsMovingTree] = useState(false);
   const [isCopyingTree, setIsCopyingTree] = useState(false);
+  const [followUpNoteId, setFollowUpNoteId] = useState<string | null>(null);
   const [draggingTreeId, setDraggingTreeId] = useState<string | null>(null);
   const [draggingStructureId, setDraggingStructureId] = useState<string | null>(null);
   const [dragOffset, setDragOffset] = useState<{ x: number, y: number }>({ x: 0, y: 0 });
@@ -1024,6 +1027,22 @@ export function Orchard({ setCurrentView }: { setCurrentView?: (view: string) =>
     setNewNoteText('');
     setNewNotePhotos([]);
     setShowNoteForm(false);
+  };
+
+  const handleSaveTreeNoteUpdates = async (noteId: string, nextUpdates: NoteUpdate[]) => {
+    if (!selectedTreeId || !selectedTreeDetails || !selectedTreeDetails.notes) return;
+    const updatedNotes = selectedTreeDetails.notes.map((n: Note) =>
+      n.id === noteId ? { ...n, updates: nextUpdates } : n
+    );
+    await fb.update("trees", selectedTreeId, { notes: updatedNotes });
+  };
+
+  const handleSetTreeNoteSuccess = async (noteId: string, nextStatus: 'none' | 'success' | 'failure') => {
+    if (!selectedTreeId || !selectedTreeDetails || !selectedTreeDetails.notes) return;
+    const updatedNotes = selectedTreeDetails.notes.map((n: Note) =>
+      n.id === noteId ? { ...n, successStatus: nextStatus } : n
+    );
+    await fb.update("trees", selectedTreeId, { notes: updatedNotes });
   };
 
   const speciesLegend = Array.from(new Set(treesInCurrentTerrain.map(t => t.species))).sort();
@@ -2725,32 +2744,97 @@ export function Orchard({ setCurrentView }: { setCurrentView?: (view: string) =>
                     {(!selectedTreeDetails.notes || selectedTreeDetails.notes.length === 0) ? (
                       <p className="text-stone-400 italic text-sm text-center py-4">Aucune note pour cet arbre.</p>
                     ) : (
-                      [...selectedTreeDetails.notes].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map((note) => (
+                      [...selectedTreeDetails.notes].sort((a, b) => {
+                        const ta = parseSafeDate(getNoteLatestDate(a.date, a.updates))?.getTime() ?? 0;
+                        const tb = parseSafeDate(getNoteLatestDate(b.date, b.updates))?.getTime() ?? 0;
+                        return tb - ta;
+                      }).map((note) => {
+                        const sortedUpdates = getSortedUpdates(note.updates);
+                        const latestDate = getNoteLatestDate(note.date, sortedUpdates);
+                        const hasUpdates = sortedUpdates.length > 0;
+                        return (
                         <div key={note.id} className="bg-white p-4 rounded-xl shadow-sm border border-stone-200/60">
-                          <div className="flex items-center justify-between mb-2">
-                            <time className="text-xs font-medium text-emerald-600">
-                              {new Date(note.date).toLocaleDateString()}
-                            </time>
-                            <button 
-                              onClick={() => {
-                                setConfirmState({
-                                  isOpen: true,
-                                  title: 'Supprimer la note',
-                                  message: 'Voulez-vous vraiment supprimer cette note ?',
-                                  isDanger: true,
-                                  onConfirm: async () => {
-                                    await fb.update("trees", selectedTreeId!, {
-                                      notes: selectedTreeDetails.notes!.filter(n => n.id !== note.id)
-                                    });
-                                  }
-                                });
-                              }}
-                              className="text-stone-400 hover:text-red-500 transition-colors"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                          <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              {hasUpdates ? (
+                                <>
+                                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 inline-flex items-center gap-1">
+                                    <History className="w-3 h-3 text-amber-600" />
+                                    MÀJ : {formatDateShortFR(latestDate)} ({sortedUpdates.length})
+                                  </span>
+                                  <time className="text-[11px] font-medium text-stone-500">
+                                    Orig. : {formatDateShortFR(note.date) || new Date(note.date).toLocaleDateString('fr-FR')}
+                                  </time>
+                                </>
+                              ) : (
+                                <time className="text-xs font-medium text-emerald-600">
+                                  {formatDateShortFR(note.date) || new Date(note.date).toLocaleDateString('fr-FR')}
+                                </time>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const curr = note.successStatus || 'none';
+                                  const next: 'none' | 'success' | 'failure' = curr === 'none' ? 'success' : curr === 'success' ? 'failure' : 'none';
+                                  handleSetTreeNoteSuccess(note.id, next);
+                                }}
+                                title="Cliquer pour changer le statut (Réussite / Échec / Sans statut)"
+                                className={`text-[10px] px-2 py-0.5 rounded-full font-medium inline-flex items-center gap-1 transition-all cursor-pointer ${
+                                  note.successStatus === 'success'
+                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
+                                    : note.successStatus === 'failure'
+                                    ? 'bg-red-50 text-red-700 border border-red-200 hover:bg-red-100'
+                                    : 'bg-stone-100 text-stone-500 hover:bg-stone-200/60'
+                                }`}
+                              >
+                                {note.successStatus === 'success' && <CheckCircle2 className="w-3 h-3 text-emerald-600" />}
+                                {note.successStatus === 'failure' && <XCircle className="w-3 h-3 text-red-600" />}
+                                {note.successStatus === 'success' ? 'Réussite' : note.successStatus === 'failure' ? 'Échec' : 'Sans statut'}
+                              </button>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => setFollowUpNoteId(note.id)}
+                                className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100 transition-colors inline-flex items-center gap-1"
+                                title="Ajouter ou consulter le suivi daté"
+                              >
+                                <History className="w-3 h-3" />
+                                <span>+ Suivi</span>
+                              </button>
+                              <button 
+                                onClick={() => {
+                                  setConfirmState({
+                                    isOpen: true,
+                                    title: 'Supprimer la note',
+                                    message: 'Voulez-vous vraiment supprimer cette note ?',
+                                    isDanger: true,
+                                    onConfirm: async () => {
+                                      await fb.update("trees", selectedTreeId!, {
+                                        notes: selectedTreeDetails.notes!.filter(n => n.id !== note.id)
+                                      });
+                                    }
+                                  });
+                                }}
+                                className="text-stone-400 hover:text-red-500 transition-colors p-0.5"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
                           </div>
                           {note.text && <p className="text-stone-700 text-sm whitespace-pre-wrap mb-2">{note.text}</p>}
+                          {hasUpdates && (
+                            <div className="mt-2 pt-2 border-t border-amber-100 space-y-1.5 border-l-2 border-amber-300 pl-2.5 ml-0.5 mb-2">
+                              {sortedUpdates.map(u => (
+                                <div key={u.id} className="text-xs text-stone-700 bg-amber-50/60 rounded-lg px-2 py-1.5 border border-amber-100">
+                                  <span className="inline-block font-bold text-amber-900 bg-amber-100/80 px-1.5 py-0.5 rounded text-[10px] mr-1.5">
+                                    {formatDateShortFR(u.date) || u.date}
+                                  </span>
+                                  <span className="whitespace-pre-wrap">{u.text}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                           {note.photos && note.photos.length > 0 && (
                             <div className="grid grid-cols-2 gap-2">
                               {note.photos.map((photo, index) => (
@@ -2759,7 +2843,8 @@ export function Orchard({ setCurrentView }: { setCurrentView?: (view: string) =>
                             </div>
                           )}
                         </div>
-                      ))
+                        );
+                      })
                     )}
                   </div>
                 </div>
@@ -3365,6 +3450,26 @@ export function Orchard({ setCurrentView }: { setCurrentView?: (view: string) =>
           )}
         </div>
       )}
+
+      {(() => {
+        const activeFollowUpNote = followUpNoteId && selectedTreeDetails?.notes
+          ? selectedTreeDetails.notes.find((n: Note) => n.id === followUpNoteId)
+          : null;
+        if (!activeFollowUpNote || !selectedTreeDetails) return null;
+        return (
+          <NoteFollowUpModal
+            isOpen={true}
+            onClose={() => setFollowUpNoteId(null)}
+            sourceLabel={`${selectedTreeDetails.species}${selectedTreeDetails.variety ? ` (${selectedTreeDetails.variety})` : ''}`}
+            originDate={activeFollowUpNote.date}
+            originText={activeFollowUpNote.text || ''}
+            updates={activeFollowUpNote.updates || []}
+            onSaveUpdates={(nextUpdates) => handleSaveTreeNoteUpdates(activeFollowUpNote.id, nextUpdates)}
+            successStatus={activeFollowUpNote.successStatus || 'none'}
+            onChangeSuccessStatus={(next) => handleSetTreeNoteSuccess(activeFollowUpNote.id, next)}
+          />
+        );
+      })()}
     </div>
   );
 }
