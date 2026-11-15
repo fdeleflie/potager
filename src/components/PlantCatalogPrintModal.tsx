@@ -25,6 +25,7 @@ export interface PlantCatalogPrintModalProps {
   healthIssues: ExportHealthItem[];
   activeFilterCategory?: string | string[];
   searchTerm?: string;
+  attributeTypes?: Array<{ id: string; value: string }>;
   allHarvestStorageItems?: HarvestStorageScheduleItem[];
   filteredHarvestStorageItems?: HarvestStorageScheduleItem[];
 }
@@ -41,6 +42,7 @@ export function PlantCatalogPrintModal({
   healthIssues,
   activeFilterCategory,
   searchTerm,
+  attributeTypes = [],
   allHarvestStorageItems,
   filteredHarvestStorageItems
 }: PlantCatalogPrintModalProps) {
@@ -855,24 +857,46 @@ export function PlantCatalogPrintModal({
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-stone-100">
-                                {p.varieties.map((v, i) => (
-                                  <tr key={i} className="hover:bg-stone-50">
-                                    <td className="py-2 px-3 font-semibold text-stone-900">{v.name}</td>
-                                    <td className="py-2 px-3 text-stone-600">
-                                      {v.attributes && Object.keys(v.attributes).length > 0 ? (
-                                        <div className="flex flex-wrap gap-1">
-                                          {Object.entries(v.attributes).map(([ak, av]) => (
-                                            <span key={ak} className="px-1.5 py-0.5 bg-stone-100 rounded text-[10px] text-stone-700">
-                                              {String(av)}
-                                            </span>
-                                          ))}
-                                        </div>
-                                      ) : (
-                                        <span className="text-stone-400 italic text-[10px]">-</span>
-                                      )}
-                                    </td>
-                                  </tr>
-                                ))}
+                                {p.varieties.map((v, i) => {
+                                  const attrs = v.attributes || {};
+                                  const ignoredKeys = new Set(['quantity', 'isTemporary', 'status', 'harvestMonths', 'storageMonths', 'harvestSource', 'isManualHarvest', 'rootstock', 'comment']);
+                                  const otherEntries = Object.entries(attrs).filter(([ak, av]) => !ignoredKeys.has(ak) && av !== undefined && av !== null && String(av).trim() !== '');
+                                  const hasDisplayInfo = Boolean(attrs.rootstock) || Boolean(attrs.comment) || otherEntries.length > 0;
+
+                                  return (
+                                    <tr key={i} className="hover:bg-stone-50">
+                                      <td className="py-2 px-3 font-semibold text-stone-900 align-top">{v.name}</td>
+                                      <td className="py-2 px-3 text-stone-600">
+                                        {hasDisplayInfo ? (
+                                          <div className="space-y-1">
+                                            <div className="flex flex-wrap gap-1">
+                                              {attrs.rootstock && (
+                                                <span className="px-1.5 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded text-[10px] font-semibold">
+                                                  Porte-greffe : {String(attrs.rootstock)}
+                                                </span>
+                                              )}
+                                              {otherEntries.map(([ak, av]) => {
+                                                const label = attributeTypes.find(t => t.id === ak)?.value;
+                                                return (
+                                                  <span key={ak} className="px-1.5 py-0.5 bg-stone-100 rounded text-[10px] text-stone-700">
+                                                    {label ? `${label} : ` : ''}{String(av)}
+                                                  </span>
+                                                );
+                                              })}
+                                            </div>
+                                            {attrs.comment && (
+                                              <p className="text-[10px] text-stone-600 italic whitespace-pre-wrap">
+                                                {String(attrs.comment)}
+                                              </p>
+                                            )}
+                                          </div>
+                                        ) : (
+                                          <span className="text-stone-400 italic text-[10px]">-</span>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
                               </tbody>
                             </table>
                           </div>
@@ -956,8 +980,8 @@ export function PlantCatalogPrintModal({
                 {/* Timeline Gantt Table */}
                 <div className="w-full border border-stone-300 rounded-lg overflow-hidden bg-white text-xs">
                   {/* Column Headers */}
-                  <div className="grid grid-cols-[220px_repeat(12,1fr)] bg-stone-50 border-b border-stone-300 font-semibold text-stone-700 text-center">
-                    <div className="p-2.5 text-left pl-3 border-r border-stone-300 text-stone-500 font-medium">
+                  <div className="grid grid-cols-[280px_repeat(12,1fr)] bg-stone-50 border-b border-stone-300 font-semibold text-stone-700 text-center">
+                    <div className="p-2.5 text-left pl-3 border-r border-stone-300 text-stone-600 font-bold uppercase tracking-wider text-[10px]">
                       Espèce & Variété
                     </div>
                     {MONTH_ABBR_FR.map((m, idx) => (
@@ -980,19 +1004,33 @@ export function PlantCatalogPrintModal({
                       </div>
                     ) : (
                       planningScheduleItems.map((item) => {
+                        const normSpecies = (item.species || '').trim();
+                        const normVariety = (item.variety || '').trim();
+                        const isDistinctVariety = normVariety && 
+                          normVariety.toLowerCase() !== normSpecies.toLowerCase() && 
+                          normVariety.toLowerCase() !== 'standard' &&
+                          normVariety.toLowerCase() !== 'inconnu';
+
                         return (
                           <div 
                             key={item.id}
-                            className="grid grid-cols-[220px_repeat(12,1fr)] hover:bg-stone-50/70 transition-colors page-break-inside-avoid"
+                            className="grid grid-cols-[280px_repeat(12,1fr)] hover:bg-stone-50/70 transition-colors page-break-inside-avoid"
                           >
                             {/* Left: Espèce - Variété */}
-                            <div className="p-2 pl-3 border-r border-stone-300 flex items-center justify-between gap-1.5 overflow-hidden">
-                              <span 
-                                className="font-medium text-stone-800 truncate"
-                                title={item.displayName}
-                              >
-                                {item.displayName}
-                              </span>
+                            <div className="p-2 pl-3 border-r border-stone-300 flex flex-col justify-center min-w-0">
+                              <div className="font-bold text-stone-900 text-xs leading-tight break-words">
+                                {normSpecies || item.displayName}
+                              </div>
+                              {isDistinctVariety && (
+                                <div className="text-stone-700 font-medium text-[11px] leading-tight break-words">
+                                  {normVariety}
+                                </div>
+                              )}
+                              {!isDistinctVariety && item.displayName && item.displayName !== normSpecies && (
+                                <div className="text-stone-600 font-normal text-[11px] leading-tight break-words">
+                                  {item.displayName}
+                                </div>
+                              )}
                             </div>
 
                             {/* 12 Months */}

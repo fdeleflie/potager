@@ -18,6 +18,7 @@ import {
   getCanonicalCategory 
 } from '../utils/categories';
 import { DEFAULT_WEATHER_INDICATORS, PRESET_WEATHER_COLOR_PALETTES } from '../utils/weatherIndicators';
+import { ensureRootstocksInitialized } from '../utils/rootstocks';
 
 export function Config({ onNavigate, initialTab }: { onNavigate?: (view: any) => void; initialTab?: string }) {
   const { seasons, currentSeasonId, setCurrentSeasonId, createNewSeason, updateSeason, deleteSeason } = useSeason();
@@ -258,7 +259,7 @@ export function Config({ onNavigate, initialTab }: { onNavigate?: (view: any) =>
   const [newValue, setNewValue] = useState('');
   const [newEmoji, setNewEmoji] = useState<string>('💧');
   const [newParentId, setNewParentId] = useState('');
-  const [activeTab, setActiveTab] = useState<'season' | 'journal_tag' | 'state' | 'location' | 'zone' | 'terrain' | 'variety_option' | 'variety_attr_type' | 'weather' | 'expense_category' | 'category' | 'perpetual_task_category' | 'quota'>((initialTab as any) || 'season');
+  const [activeTab, setActiveTab] = useState<'season' | 'journal_tag' | 'state' | 'location' | 'zone' | 'terrain' | 'variety_option' | 'variety_attr_type' | 'rootstock' | 'weather' | 'expense_category' | 'category' | 'perpetual_task_category' | 'quota'>((initialTab as any) || 'season');
 
   useEffect(() => {
     if (initialTab) {
@@ -271,6 +272,7 @@ export function Config({ onNavigate, initialTab }: { onNavigate?: (view: any) =>
     else if (activeTab === 'category') setNewEmoji('🥕');
     else if (activeTab === 'perpetual_task_category') setNewEmoji('✂️');
     else if (activeTab === 'expense_category') setNewEmoji('🛒');
+    else if (activeTab === 'rootstock') setNewEmoji('🌱');
     else setNewEmoji('');
   }, [activeTab]);
 
@@ -392,6 +394,24 @@ export function Config({ onNavigate, initialTab }: { onNavigate?: (view: any) =>
       db.config.bulkAdd(defaults as ConfigItem[]);
     }
   }, [config, varietyAttrTypes.length]);
+
+  // Seed starter rootstocks once if never initialized
+  React.useEffect(() => {
+    ensureRootstocksInitialized(config);
+  }, [config]);
+
+  // Usage count for rootstocks across catalog varieties
+  const rootstockUsage = React.useMemo(() => {
+    const map = new Map<string, number>();
+    if (!config) return map;
+    config.filter((c: any) => c.type === 'variety').forEach((v: any) => {
+      const rs = (v.attributes?.rootstock || '').trim();
+      if (rs) {
+        map.set(rs.toLowerCase(), (map.get(rs.toLowerCase()) || 0) + 1);
+      }
+    });
+    return map;
+  }, [config]);
 
   // Initialize selectedAttrType if empty
   React.useEffect(() => {
@@ -697,6 +717,21 @@ export function Config({ onNavigate, initialTab }: { onNavigate?: (view: any) =>
       }
     }
 
+    // If renaming a rootstock, propagate to varieties using it
+    if (activeTab === 'rootstock' && oldItem && oldItem.value !== finalValue) {
+      const varietiesToUpdate = config.filter((c: any) => 
+        c.type === 'variety' && (c.attributes?.rootstock || '').trim() === (oldItem.value || '').trim()
+      );
+      for (const v of varietiesToUpdate) {
+        await fb.update('config', v.id, {
+          attributes: {
+            ...(v.attributes || {}),
+            rootstock: finalValue
+          }
+        });
+      }
+    }
+
     setEditingItemId(null);
     setEditingItemEmoji('');
     setEditingItemValue('');
@@ -750,6 +785,7 @@ export function Config({ onNavigate, initialTab }: { onNavigate?: (view: any) =>
     { id: 'terrain', label: 'Terrains (Verger)' },
     { id: 'variety_attr_type', label: 'Champs Variétés' },
     { id: 'variety_option', label: 'Options de Champs' },
+    { id: 'rootstock', label: 'Porte-greffes' },
     { id: 'weather', label: 'Météo & Indicateurs' },
     { id: 'expense_category', label: 'Dépenses' },
     { id: 'quota', label: 'Quotas & Synchro' },
@@ -1293,6 +1329,18 @@ export function Config({ onNavigate, initialTab }: { onNavigate?: (view: any) =>
                 </div>
               )}
 
+              {/* Rootstock specific helper */}
+              {activeTab === 'rootstock' && (
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-2 p-3 bg-emerald-50/70 border border-emerald-200/80 rounded-lg text-xs text-emerald-900 shadow-2xs">
+                  <div className="flex items-center gap-2">
+                    <Trees className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                    <span>
+                      Administrez ici la liste déroulante des <strong>porte-greffes</strong> disponibles dans le Catalogue des plantes lors de l'édition des variétés (ex : <em>M9</em>, <em>MM106</em>, <em>Cognassier BA29</em>, <em>Franc</em>...).
+                    </span>
+                  </div>
+                </div>
+              )}
+
               <div className="flex flex-col gap-2 mb-4">
                 <form onSubmit={handleAdd} className="flex flex-col gap-2">
               <div className="flex gap-2 items-center">
@@ -1504,6 +1552,15 @@ export function Config({ onNavigate, initialTab }: { onNavigate?: (view: any) =>
                               {activeTab === 'journal_tag' && (
                                 <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200">
                                   Tag d'activité
+                                </span>
+                              )}
+                              {activeTab === 'rootstock' && (
+                                <span className={`text-[10px] font-medium px-2 py-0.5 rounded-md ${
+                                  (rootstockUsage.get((item.value || '').trim().toLowerCase()) || 0) > 0
+                                    ? 'text-emerald-700 bg-emerald-50 border border-emerald-200/80'
+                                    : 'text-stone-400 bg-stone-100'
+                                }`}>
+                                  {rootstockUsage.get((item.value || '').trim().toLowerCase()) || 0} variété{(rootstockUsage.get((item.value || '').trim().toLowerCase()) || 0) > 1 ? 's' : ''}
                                 </span>
                               )}
                             </>

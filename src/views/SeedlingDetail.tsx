@@ -683,6 +683,14 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
                       </div>
                     );
                   })}
+                  {varietyAttrs?.rootstock && (
+                    <div className="col-span-2">
+                      <span className="block text-[10px] font-medium text-stone-500 uppercase tracking-wider">Porte-greffe</span>
+                      <span className="inline-block mt-0.5 px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded text-xs font-medium">
+                        {varietyAttrs.rootstock}
+                      </span>
+                    </div>
+                  )}
                   {varietyAttrs?.tasteRating && (
                     <div>
                       <span className="block text-[10px] font-medium text-stone-500 uppercase tracking-wider">Note gustative</span>
@@ -693,6 +701,12 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
                     <div>
                       <span className="block text-[10px] font-medium text-stone-500 uppercase tracking-wider">Type</span>
                       <span className="text-stone-900">Hybride F1</span>
+                    </div>
+                  )}
+                  {varietyAttrs?.comment && (
+                    <div className="col-span-2">
+                      <span className="block text-[10px] font-medium text-stone-500 uppercase tracking-wider">Commentaire</span>
+                      <p className="text-stone-900 whitespace-pre-wrap">{varietyAttrs.comment}</p>
                     </div>
                   )}
                   {varietyAttrs?.other && (
@@ -995,6 +1009,14 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
                   );
                 })}
                 
+                {varietyAttrs.rootstock && (
+                  <div className="col-span-2">
+                    <span className="block text-[10px] font-medium text-stone-500 uppercase tracking-wider">Porte-greffe</span>
+                    <span className="inline-block mt-0.5 px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded text-xs font-medium">
+                      {varietyAttrs.rootstock}
+                    </span>
+                  </div>
+                )}
                 {varietyAttrs.tasteRating !== undefined && (
                   <div>
                     <span className="block text-[10px] font-medium text-stone-500 uppercase tracking-wider">Note gustative</span>
@@ -1006,6 +1028,12 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 text-[10px] font-medium">
                       Hybride F1
                     </span>
+                  </div>
+                )}
+                {varietyAttrs.comment && (
+                  <div className="col-span-2">
+                    <span className="block text-[10px] font-medium text-stone-500 uppercase tracking-wider">Commentaire</span>
+                    <p className="text-stone-900 whitespace-pre-wrap">{varietyAttrs.comment}</p>
                   </div>
                 )}
                 {varietyAttrs.other && (

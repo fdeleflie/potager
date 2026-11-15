@@ -9,7 +9,7 @@ import {
   ThumbsUp, ThumbsDown, Calendar, Maximize2, ChevronRight, ChevronLeft,
   List, Wand2, Trees, RefreshCw, Sparkles, Layers, MapPin, MapPinOff,
   Printer, Download, FileSpreadsheet, Tag, Sprout, Check, ChevronDown, ArrowRight,
-  Clock, Globe, RotateCcw
+  Clock, Globe, RotateCcw, MessageSquare, Settings
 } from 'lucide-react';
 import { ConfirmModal } from '../components/Modals';
 import { DuplicateDetectorModal } from '../components/DuplicateDetectorModal';
@@ -37,6 +37,7 @@ import {
 } from '../utils/categories';
 import { importOrchardPdfPlants, ImportResult } from '../utils/orchardImporter';
 import { isTechnicalId } from '../utils/varietyNormalizer';
+import { ensureRootstocksInitialized } from '../utils/rootstocks';
 
 type Tab = 'vegetables' | 'health';
 type PlantSubTab = 'culture' | 'varieties';
@@ -96,6 +97,8 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
   const [varietyEditForm, setVarietyEditForm] = useState<{
     name: string;
     quantity: number;
+    rootstock: string;
+    comment: string;
     isTemporary?: boolean;
     harvestMonths?: number[];
     storageMonths?: number[];
@@ -105,6 +108,8 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
   }>({
     name: '',
     quantity: 1,
+    rootstock: '',
+    comment: '',
     isTemporary: false,
     harvestMonths: [],
     storageMonths: [],
@@ -165,6 +170,11 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
 
     harmonizeDatabaseCategories();
   }, [encyclopedia, config]);
+
+  // Seed default rootstocks once if never initialized
+  useEffect(() => {
+    ensureRootstocksInitialized(config);
+  }, [config]);
 
   const handleManualImportOrchard = async () => {
     if (isImporting) return;
@@ -283,7 +293,11 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
           c.type === 'variety' && 
           (c.parentId === item.configId || c.parentId === item.encyclopediaId)
         ) || [];
-        const matchesVariety = plantVars.some((v: any) => (v.value || '').toLowerCase().includes(term));
+        const matchesVariety = plantVars.some((v: any) => 
+          (v.value || '').toLowerCase().includes(term) ||
+          (v.attributes?.rootstock || '').toLowerCase().includes(term) ||
+          (v.attributes?.comment || '').toLowerCase().includes(term)
+        );
         
         matchesSearch = matchesName || matchesCategory || matchesVariety;
       }
@@ -1142,6 +1156,15 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
     config?.filter(c => c.type === 'variety_option') || []
   , [config]);
 
+  const rootstockOptions = useMemo(() => {
+    if (!config) return [];
+    return config
+      .filter((c: any) => c.type === 'rootstock')
+      .map((c: any) => (c.value || '').trim())
+      .filter(Boolean)
+      .sort((a: string, b: string) => a.localeCompare(b, 'fr', { sensitivity: 'base' }));
+  }, [config]);
+
   const handleSaveVariety = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingVarietyId) return;
@@ -1149,7 +1172,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
     // Save new options to config
     for (const attrTypeId of Object.keys(varietyEditForm.attributes)) {
       const value = varietyEditForm.attributes[attrTypeId];
-      if (typeof value === 'string' && value.trim() && !['other', 'quantity'].includes(attrTypeId)) {
+      if (typeof value === 'string' && value.trim() && !['other', 'quantity', 'rootstock', 'comment', 'harvestSource', 'isManualHarvest'].includes(attrTypeId)) {
         const attrType = varietyAttrTypes.find(t => t.id === attrTypeId);
         if (attrType) {
           const parts = value.split(',').map(p => p.trim()).filter(p => p);
@@ -1173,19 +1196,43 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
 
     const safeQty = Math.max(1, Number(varietyEditForm.quantity) || 1);
     const isManual = varietyEditForm.harvestSource === 'manual' || varietyEditForm.isManualHarvest === true;
+    const cleanRootstock = (varietyEditForm.rootstock || '').trim();
+    const cleanComment = (varietyEditForm.comment || '').trim();
+
+    const nextAttributes: Record<string, any> = {
+      ...varietyEditForm.attributes,
+      quantity: safeQty,
+      isTemporary: Boolean(varietyEditForm.isTemporary),
+      status: varietyEditForm.isTemporary ? 'temporary' : 'confirmed',
+      harvestMonths: varietyEditForm.harvestMonths || [],
+      storageMonths: varietyEditForm.storageMonths || [],
+      harvestSource: isManual ? 'manual' : 'reference',
+      isManualHarvest: isManual
+    };
+
+    if (cleanRootstock) {
+      nextAttributes.rootstock = cleanRootstock;
+    } else {
+      delete nextAttributes.rootstock;
+    }
+
+    if (cleanComment) {
+      nextAttributes.comment = cleanComment;
+    } else {
+      delete nextAttributes.comment;
+    }
+
+    // Strip any undefined values inside nested attributes before saving to Firestore
+    for (const key of Object.keys(nextAttributes)) {
+      if (nextAttributes[key] === undefined) {
+        delete nextAttributes[key];
+      }
+    }
+
     await fb.update('config', editingVarietyId, { 
       value: varietyEditForm.name, 
       quantity: safeQty,
-      attributes: { 
-        ...varietyEditForm.attributes, 
-        quantity: safeQty,
-        isTemporary: Boolean(varietyEditForm.isTemporary),
-        status: varietyEditForm.isTemporary ? 'temporary' : 'confirmed',
-        harvestMonths: varietyEditForm.harvestMonths || [],
-        storageMonths: varietyEditForm.storageMonths || [],
-        harvestSource: isManual ? 'manual' : 'reference',
-        isManualHarvest: isManual
-      } 
+      attributes: nextAttributes
     });
     setEditingVarietyId(null);
   };
@@ -2648,6 +2695,42 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                         />
                                       </div>
                                     </div>
+
+                                    {/* Porte-greffe (Liste déroulante administrable dans Configuration) */}
+                                    <div className="space-y-1">
+                                      <div className="flex items-center justify-between gap-2">
+                                        <label className="text-xs font-medium text-stone-600 flex items-center gap-1.5">
+                                          <Trees className="w-3.5 h-3.5 text-emerald-600" />
+                                          <span>Porte-greffe</span>
+                                        </label>
+                                        {setCurrentView && (
+                                          <button
+                                            type="button"
+                                            onClick={() => setCurrentView('config-rootstock')}
+                                            className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800 hover:underline flex items-center gap-1 cursor-pointer"
+                                            title="Ajouter ou modifier les porte-greffes dans Configuration"
+                                          >
+                                            <Settings className="w-3 h-3" />
+                                            <span>Gérer la liste dans Configuration</span>
+                                          </button>
+                                        )}
+                                      </div>
+                                      <select
+                                        value={varietyEditForm.rootstock}
+                                        onChange={e => setVarietyEditForm(prev => ({ ...prev, rootstock: e.target.value }))}
+                                        className="w-full px-3 py-2 bg-white border border-stone-200 rounded-lg text-sm text-stone-800 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none cursor-pointer"
+                                      >
+                                        <option value="">— Aucun / Non spécifié —</option>
+                                        {varietyEditForm.rootstock && !rootstockOptions.includes(varietyEditForm.rootstock) && (
+                                          <option value={varietyEditForm.rootstock}>
+                                            {varietyEditForm.rootstock} (valeur actuelle)
+                                          </option>
+                                        )}
+                                        {rootstockOptions.map(opt => (
+                                          <option key={opt} value={opt}>{opt}</option>
+                                        ))}
+                                      </select>
+                                    </div>
                                     
                                     {varietyAttrTypes.map(attrType => {
                                       const options = varietyOptions.filter(o => o.parentId === attrType.id);
@@ -2736,6 +2819,21 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                         </div>
                                       );
                                     })}
+
+                                    {/* Zone commentaire dédiée à la variété */}
+                                    <div className="space-y-1">
+                                      <label className="text-xs font-medium text-stone-600 flex items-center gap-1.5">
+                                        <MessageSquare className="w-3.5 h-3.5 text-stone-400" />
+                                        <span>Commentaire / Observations sur la variété</span>
+                                      </label>
+                                      <textarea
+                                        rows={3}
+                                        value={varietyEditForm.comment}
+                                        onChange={e => setVarietyEditForm(prev => ({ ...prev, comment: e.target.value }))}
+                                        placeholder="Notes sur la variété : vigueur, sensibilité au gel, sol adapté, goût, provenance, remarques..."
+                                        className="w-full px-3 py-2 bg-white border border-stone-200 rounded-lg text-sm text-stone-800 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none resize-y"
+                                      />
+                                    </div>
                                     
                                     {/* Harvest & Storage Period Customization in Variety Edit Form */}
                                     <div className="pt-3 border-t border-stone-200 space-y-3">
@@ -3042,10 +3140,16 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                         );
                                       })()}
 
-                                      {variety.attributes && Object.keys(variety.attributes).filter(k => !['quantity', 'isTemporary', 'status', 'harvestMonths', 'storageMonths'].includes(k)).length > 0 && (
-                                        <div className="flex flex-wrap gap-1 mt-1.5">
-                                          {Object.entries(variety.attributes).map(([key, val]) => {
-                                            if (['quantity', 'isTemporary', 'status', 'harvestMonths', 'storageMonths'].includes(key)) return null;
+                                      {(variety.attributes?.rootstock || (variety.attributes && Object.keys(variety.attributes).filter(k => !['quantity', 'isTemporary', 'status', 'harvestMonths', 'storageMonths', 'harvestSource', 'isManualHarvest', 'rootstock', 'comment'].includes(k)).length > 0)) && (
+                                        <div className="flex flex-wrap gap-1.5 mt-2">
+                                          {variety.attributes?.rootstock && (
+                                            <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 bg-emerald-50 text-emerald-900 border border-emerald-200 rounded-md">
+                                              <Trees className="w-3 h-3 text-emerald-600 shrink-0" />
+                                              <span>Porte-greffe : {variety.attributes.rootstock}</span>
+                                            </span>
+                                          )}
+                                          {Object.entries(variety.attributes || {}).map(([key, val]) => {
+                                            if (['quantity', 'isTemporary', 'status', 'harvestMonths', 'storageMonths', 'harvestSource', 'isManualHarvest', 'rootstock', 'comment'].includes(key)) return null;
                                             const attrType = varietyAttrTypes.find(t => t.id === key);
                                             if (!attrType || !val) return null;
                                             const isColor = attrType.value.toLowerCase().includes('couleur');
@@ -3074,6 +3178,13 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                           })}
                                         </div>
                                       )}
+
+                                      {variety.attributes?.comment && (
+                                        <div className="mt-2 p-2.5 bg-white border border-stone-200/80 rounded-lg text-xs text-stone-700 flex items-start gap-2">
+                                          <MessageSquare className="w-3.5 h-3.5 text-stone-400 shrink-0 mt-0.5" />
+                                          <p className="whitespace-pre-wrap leading-relaxed">{variety.attributes.comment}</p>
+                                        </div>
+                                      )}
                                     </div>
                                     <div className="flex items-center gap-1.5 shrink-0">
                                       {setCurrentView && (
@@ -3100,6 +3211,8 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                           setVarietyEditForm({ 
                                             name: variety.value, 
                                             quantity: vQty,
+                                            rootstock: variety.attributes?.rootstock || '',
+                                            comment: variety.attributes?.comment || '',
                                             isTemporary: Boolean(variety.attributes?.isTemporary || variety.attributes?.status === 'temporary'),
                                             harvestMonths: [...harvestMonths],
                                             storageMonths: [...storageMonths],
@@ -3476,6 +3589,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
         filteredPlants={exportFilteredPlantsData}
         selectedPlant={printInitialPlant || exportSelectedPlantData}
         healthIssues={exportHealthData}
+        attributeTypes={varietyAttrTypes}
         activeFilterCategory={selectedCategories}
         searchTerm={searchTerm}
         allHarvestStorageItems={allHarvestStorageItems}

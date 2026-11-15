@@ -115,7 +115,7 @@ export interface JournalEntry {
 
 export interface ConfigItem {
   id: string;
-  type: 'vegetable' | 'variety' | 'state' | 'location' | 'zone' | 'terrain' | 'variety_option' | 'variety_attr_type' | 'setting' | 'expense_category' | 'category' | 'perpetual_task_category' | 'journal_tag' | 'weather_indicator' | 'custom_multiplication';
+  type: 'vegetable' | 'variety' | 'state' | 'location' | 'zone' | 'terrain' | 'variety_option' | 'variety_attr_type' | 'rootstock' | 'setting' | 'expense_category' | 'category' | 'perpetual_task_category' | 'journal_tag' | 'weather_indicator' | 'custom_multiplication';
   value: string;
   parentId?: string; // e.g., vegetable id for a variety, or variety_attr_type id for a variety_option
   attributes?: any; // For variety details, zone dimensions, terrain dimensions, color/emoji

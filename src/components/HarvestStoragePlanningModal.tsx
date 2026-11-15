@@ -407,15 +407,15 @@ export function HarvestStoragePlanningModal({
             <div className="w-full border border-stone-300 rounded-lg overflow-hidden bg-white">
               
               {/* Header Months */}
-              <div className="grid grid-cols-[220px_repeat(12,1fr)] bg-stone-50 border-b border-stone-300 text-xs font-semibold text-stone-700 text-center select-none">
-                <div className="p-2.5 text-left pl-3 border-r border-stone-300 text-stone-500 font-medium">
+              <div className="grid grid-cols-[280px_repeat(12,1fr)] bg-stone-50 border-b border-stone-300 text-xs font-semibold text-stone-700 text-center select-none">
+                <div className="p-2.5 text-left pl-3 border-r border-stone-300 text-stone-600 font-bold uppercase tracking-wider text-[10px]">
                   Espèce & Variété
                 </div>
                 {MONTH_ABBR_FR.map((m, idx) => (
                   <div 
                     key={m} 
-                    className={`py-2 px-1 border-r border-stone-200 last:border-r-0 ${
-                      [6, 7, 8, 9].includes(idx) ? 'bg-amber-50/40 text-stone-900' : ''
+                    className={`py-2 px-1 border-r border-stone-200 last:border-r-0 flex items-center justify-center ${
+                      [6, 7, 8, 9].includes(idx) ? 'bg-amber-50/40 text-stone-900 font-bold' : ''
                     }`}
                   >
                     {m}
@@ -434,47 +434,71 @@ export function HarvestStoragePlanningModal({
                     const hasHarvest = item.harvestMonths && item.harvestMonths.length > 0;
                     const hasStorage = item.storageMonths && item.storageMonths.length > 0;
 
+                    // Extract species and distinct variety if applicable
+                    const normSpecies = (item.species || '').trim();
+                    const normVariety = (item.variety || '').trim();
+                    const isDistinctVariety = normVariety && 
+                      normVariety.toLowerCase() !== normSpecies.toLowerCase() && 
+                      normVariety.toLowerCase() !== 'standard' &&
+                      normVariety.toLowerCase() !== 'inconnu';
+
                     return (
                       <div 
                         key={item.id}
-                        className="grid grid-cols-[220px_repeat(12,1fr)] hover:bg-stone-50/70 transition-colors group relative"
+                        className="grid grid-cols-[280px_repeat(12,1fr)] hover:bg-stone-50/70 transition-colors group relative"
                       >
                         {/* Variety Label on Left */}
-                        <div className="p-2 pl-3 border-r border-stone-300 flex items-center justify-between gap-1.5 overflow-hidden">
-                          <div className="flex items-center gap-1.5 truncate">
-                            {renderIcon(item)}
-                            <span 
-                              className="font-medium text-stone-800 truncate"
-                              title={item.displayName}
-                            >
-                              {item.displayName}
-                            </span>
-                            {item.isTemporary && (
-                              <span 
-                                className="px-1.5 py-0.5 bg-amber-50 text-amber-800 border border-amber-300 rounded text-[9px] font-bold shrink-0 tracking-tight"
-                                title="Variété à l'essai / En projet"
-                              >
-                                ⏳ Projet
-                              </span>
-                            )}
-                            {item.isManualHarvest ? (
-                              <span 
-                                className="px-1 py-0.5 bg-amber-50 text-amber-900 border border-amber-300 rounded text-[9px] font-semibold shrink-0"
-                                title="Dates modifiées manuellement"
-                              >
-                                ✏️ Manuel
-                              </span>
-                            ) : (
-                              <span 
-                                className="px-1 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded text-[9px] font-medium shrink-0"
-                                title="Dates issues de la référence internet / botanique"
-                              >
-                                🌐 Réf.
-                              </span>
-                            )}
+                        <div className="p-2 pl-3 border-r border-stone-300 flex items-start justify-between gap-1.5 overflow-hidden">
+                          <div className="flex items-start gap-2 min-w-0 flex-1">
+                            <div className="mt-0.5 shrink-0">
+                              {renderIcon(item)}
+                            </div>
+                            <div className="min-w-0 flex-1 space-y-0.5">
+                              {/* Species and Variety with multi-line break support */}
+                              <div className="font-bold text-stone-900 text-xs leading-tight break-words">
+                                {normSpecies || item.displayName}
+                              </div>
+                              {isDistinctVariety && (
+                                <div className="text-stone-700 font-medium text-[11px] leading-tight break-words">
+                                  {normVariety}
+                                </div>
+                              )}
+                              {!isDistinctVariety && item.displayName && item.displayName !== normSpecies && (
+                                <div className="text-stone-600 font-normal text-[11px] leading-tight break-words">
+                                  {item.displayName}
+                                </div>
+                              )}
+
+                              {/* Source & Status Badges */}
+                              <div className="flex items-center gap-1 flex-wrap pt-0.5">
+                                {item.isTemporary && (
+                                  <span 
+                                    className="px-1.5 py-0.5 bg-amber-50 text-amber-800 border border-amber-300 rounded text-[9px] font-bold shrink-0 tracking-tight"
+                                    title="Variété à l'essai / En projet"
+                                  >
+                                    ⏳ Projet
+                                  </span>
+                                )}
+                                {item.isManualHarvest ? (
+                                  <span 
+                                    className="px-1 py-0.5 bg-amber-50 text-amber-900 border border-amber-300 rounded text-[9px] font-semibold shrink-0"
+                                    title="Dates modifiées manuellement"
+                                  >
+                                    ✏️ Manuel
+                                  </span>
+                                ) : (
+                                  <span 
+                                    className="px-1 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded text-[9px] font-medium shrink-0"
+                                    title="Dates issues de la référence internet / botanique"
+                                  >
+                                    🌐 Réf.
+                                  </span>
+                                )}
+                              </div>
+                            </div>
                           </div>
                           
-                          <div className="flex items-center gap-1 shrink-0">
+                          <div className="flex items-center gap-1 shrink-0 pt-0.5">
                             {item.isTemporary && item.varietyConfigId && (
                               <button
                                 type="button"
