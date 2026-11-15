@@ -8,6 +8,7 @@ import { NoteFollowUpModal } from '../components/NoteFollowUpModal';
 import { getSeedlingDisplayPhoto, compressImage } from '../utils/image';
 import { printElement } from '../utils/print';
 import { shouldPublishNoteToJournal, isSystemLogNote, getSortedUpdates, getNoteLatestDate, formatDateShortFR, parseSafeDate } from '../utils/notes';
+import { getDistinctRootstocks } from '../utils/varietyPlantings';
 
 export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurrentView: (v: string) => void, seedlingId: string, onBack?: () => void }) {
   const { data: rawSeedlings, error: seedlingsError } = useFirebaseData<any>('seedlings');
@@ -693,12 +694,16 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
                       </div>
                     );
                   })}
-                  {varietyAttrs?.rootstock && (
+                  {getDistinctRootstocks(varietyAttrs).length > 0 && (
                     <div className="col-span-2">
                       <span className="block text-[10px] font-medium text-stone-500 uppercase tracking-wider">Porte-greffe</span>
-                      <span className="inline-block mt-0.5 px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded text-xs font-medium">
-                        {varietyAttrs.rootstock}
-                      </span>
+                      <div className="flex flex-wrap gap-1 mt-0.5">
+                        {getDistinctRootstocks(varietyAttrs).map(rs => (
+                          <span key={rs} className="inline-block px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded text-xs font-medium">
+                            {rs}
+                          </span>
+                        ))}
+                      </div>
                     </div>
                   )}
                   {varietyAttrs?.tasteRating && (
@@ -1019,12 +1024,16 @@ export function SeedlingDetail({ setCurrentView, seedlingId, onBack }: { setCurr
                   );
                 })}
                 
-                {varietyAttrs.rootstock && (
+                {getDistinctRootstocks(varietyAttrs).length > 0 && (
                   <div className="col-span-2">
                     <span className="block text-[10px] font-medium text-stone-500 uppercase tracking-wider">Porte-greffe</span>
-                    <span className="inline-block mt-0.5 px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded text-xs font-medium">
-                      {varietyAttrs.rootstock}
-                    </span>
+                    <div className="flex flex-wrap gap-1 mt-0.5">
+                      {getDistinctRootstocks(varietyAttrs).map(rs => (
+                        <span key={rs} className="inline-block px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded text-xs font-medium">
+                          {rs}
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 )}
                 {varietyAttrs.tasteRating !== undefined && (

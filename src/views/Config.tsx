@@ -19,6 +19,7 @@ import {
 } from '../utils/categories';
 import { DEFAULT_WEATHER_INDICATORS, PRESET_WEATHER_COLOR_PALETTES } from '../utils/weatherIndicators';
 import { ensureRootstocksInitialized } from '../utils/rootstocks';
+import { getDistinctRootstocks } from '../utils/varietyPlantings';
 
 export function Config({ onNavigate, initialTab }: { onNavigate?: (view: any) => void; initialTab?: string }) {
   const { seasons, currentSeasonId, setCurrentSeasonId, createNewSeason, updateSeason, deleteSeason } = useSeason();
@@ -400,15 +401,15 @@ export function Config({ onNavigate, initialTab }: { onNavigate?: (view: any) =>
     ensureRootstocksInitialized(config);
   }, [config]);
 
-  // Usage count for rootstocks across catalog varieties
+  // Usage count for rootstocks across catalog varieties (including per-specimen plantings)
   const rootstockUsage = React.useMemo(() => {
     const map = new Map<string, number>();
     if (!config) return map;
     config.filter((c: any) => c.type === 'variety').forEach((v: any) => {
-      const rs = (v.attributes?.rootstock || '').trim();
-      if (rs) {
-        map.set(rs.toLowerCase(), (map.get(rs.toLowerCase()) || 0) + 1);
-      }
+      getDistinctRootstocks(v.attributes).forEach(rs => {
+        const key = rs.toLowerCase();
+        map.set(key, (map.get(key) || 0) + 1);
+      });
     });
     return map;
   }, [config]);
@@ -717,18 +718,25 @@ export function Config({ onNavigate, initialTab }: { onNavigate?: (view: any) =>
       }
     }
 
-    // If renaming a rootstock, propagate to varieties using it
+    // If renaming a rootstock, propagate to varieties using it (legacy + per-specimen plantings)
     if (activeTab === 'rootstock' && oldItem && oldItem.value !== finalValue) {
-      const varietiesToUpdate = config.filter((c: any) => 
-        c.type === 'variety' && (c.attributes?.rootstock || '').trim() === (oldItem.value || '').trim()
+      const oldTrimmed = (oldItem.value || '').trim();
+      const varietiesToUpdate = config.filter((c: any) =>
+        c.type === 'variety' && getDistinctRootstocks(c.attributes).includes(oldTrimmed)
       );
       for (const v of varietiesToUpdate) {
-        await fb.update('config', v.id, {
-          attributes: {
-            ...(v.attributes || {}),
-            rootstock: finalValue
-          }
-        });
+        const nextAttrs: Record<string, any> = { ...(v.attributes || {}) };
+        if ((nextAttrs.rootstock || '').trim() === oldTrimmed) {
+          nextAttrs.rootstock = finalValue;
+        }
+        if (Array.isArray(nextAttrs.plantings)) {
+          nextAttrs.plantings = nextAttrs.plantings.map((p: any) =>
+            (p?.rootstock || '').trim() === oldTrimmed
+              ? { ...p, rootstock: finalValue }
+              : p
+          );
+        }
+        await fb.update('config', v.id, { attributes: nextAttrs });
       }
     }
 

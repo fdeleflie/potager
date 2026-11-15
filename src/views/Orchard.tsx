@@ -172,6 +172,7 @@ export function Orchard({ setCurrentView }: { setCurrentView?: (view: string) =>
           setNewTree({
             species: item.species,
             variety: item.variety || '',
+            datePlanted: item.datePlanted || '',
             color: item.color || '#10b981',
             icon: item.icon || 'Trees',
             spacing: item.spacing || 200,

@@ -2,6 +2,7 @@
  * Plant Catalog & Health Issues Export Utility
  * Generates Excel-friendly CSV (with UTF-8 BOM) and structured JSON exports
  */
+import { getVarietyPlantings } from './varietyPlantings';
 
 export interface ExportPlantItem {
   id: string;
@@ -167,6 +168,8 @@ export function generatePlantVarietiesDetailedCSV(
     'Nom de la plante',
     'Catégorie',
     'Nom de la variété',
+    'Date de plantation',
+    'Emplacement terrain',
     'Porte-greffe',
     ...dynamicAttrHeaders,
     'Commentaire',
@@ -194,6 +197,8 @@ export function generatePlantVarietiesDetailedCSV(
         plant.category || '',
         '(Toutes / Sans variété spécifique)',
         '',
+        '',
+        '',
         ...attrValues,
         '',
         plant.sowingPeriod || '',
@@ -214,11 +219,29 @@ export function generatePlantVarietiesDetailedCSV(
           return val ? String(val) : '';
         });
 
+        const plantingsList = getVarietyPlantings(v.attributes)
+          .map((p, idx) => ({ ...p, num: idx + 1 }))
+          .filter(p => p.datePlanted || p.location || p.rootstock);
+
+        const dateCell = plantingsList.length > 1 || plantingsList.some(p => p.num > 1)
+          ? plantingsList.filter(p => p.datePlanted).map(p => `#${p.num}: ${p.datePlanted}`).join(' | ')
+          : (plantingsList[0]?.datePlanted || '');
+
+        const locationCell = plantingsList.length > 1 || plantingsList.some(p => p.num > 1)
+          ? plantingsList.filter(p => p.location).map(p => `#${p.num}: ${p.location}`).join(' | ')
+          : (plantingsList[0]?.location || '');
+
+        const rootstockCell = plantingsList.length > 1 || plantingsList.some(p => p.num > 1)
+          ? plantingsList.filter(p => p.rootstock).map(p => `#${p.num}: ${p.rootstock}`).join(' | ')
+          : (plantingsList[0]?.rootstock || '');
+
         rows.push([
           plant.name || '',
           plant.category || '',
           v.name || '',
-          v.attributes?.rootstock ? String(v.attributes.rootstock) : '',
+          dateCell,
+          locationCell,
+          rootstockCell,
           ...attrValues,
           v.attributes?.comment ? String(v.attributes.comment) : '',
           plant.sowingPeriod || '',

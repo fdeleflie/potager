@@ -3,7 +3,8 @@
  * Grounded in the orchard planning specifications and visual charts.
  */
 
-import { normalizeSpeciesName, normalizeVarietyKey, areVarietiesEquivalent } from './varietyNormalizer';
+import { normalizeSpeciesName, normalizeVarietyKey, areVarietiesEquivalent, isTechnicalId } from './varietyNormalizer';
+import { getCanonicalCategory } from './categories';
 
 export type HarvestSource = 'manual' | 'reference' | 'species_default' | 'none';
 
@@ -467,3 +468,132 @@ export function formatMonthRangeSummary(months?: number[]): string {
 
   return clean.map(m => MONTH_ABBR_FR[m - 1]).join(', ');
 }
+
+/**
+ * Builds the full catalog list of HarvestStorageScheduleItem from Firestore config, encyclopedia, and trees.
+ */
+export function buildCatalogHarvestStorageItems(
+  config: any[] | undefined,
+  encyclopedia: any[] | undefined,
+  trees: any[] | undefined
+): HarvestStorageScheduleItem[] {
+  if (!config || !encyclopedia) return [];
+
+  const configVegetables = config.filter((c: any) => c.type === 'vegetable');
+  const encyclopediaEntries = encyclopedia;
+
+  const allNames = Array.from(new Set([
+    ...configVegetables.map((c: any) => (c.value || '').toLowerCase().trim()),
+    ...encyclopediaEntries.map((e: any) => (e.name || '').toLowerCase().trim()),
+  ])).filter(Boolean);
+
+  const items: HarvestStorageScheduleItem[] = [];
+
+  allNames
+    .map(nameLower => {
+      const conf = configVegetables.find((c: any) => (c.value || '').toLowerCase().trim() === nameLower);
+      const enc = encyclopediaEntries.find((e: any) => (e.name || '').toLowerCase().trim() === nameLower);
+      const treeSample = trees?.find((t: any) => !t.isDeleted && (t.species || '').toLowerCase().trim() === nameLower);
+
+      const displayName = enc?.name || conf?.value || treeSample?.species || '';
+      const rawCategories: string[] = Array.isArray(enc?.categories) && enc.categories.length > 0
+        ? enc.categories
+        : (enc?.category ? [enc.category] : (treeSample ? ['Arbre fruitier'] : ['Légume']));
+      const canonicalCategories = rawCategories.map((c: string) => getCanonicalCategory(c, config));
+      const primaryCategory = canonicalCategories[0] || 'Légume';
+      const icon = enc?.icon || (primaryCategory === 'Arbre fruitier' ? (treeSample?.icon || 'Trees') : 'Sprout');
+      const color = enc?.color || treeSample?.color || '#10b981';
+      const id = conf ? `c-${conf.id}` : (enc ? `e-${enc.id}` : nameLower);
+
+      return {
+        id,
+        nameLower,
+        name: displayName,
+        configId: conf?.id,
+        encyclopediaId: enc?.id,
+        category: primaryCategory,
+        harvestPeriod: enc?.harvestPeriod || '',
+        icon,
+        color,
+      };
+    })
+    .sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { numeric: true, sensitivity: 'base' }))
+    .forEach(p => {
+      const ids = new Set<string>();
+      if (p.configId) ids.add(p.configId);
+      if (p.encyclopediaId) ids.add(p.encyclopediaId);
+      encyclopediaEntries.forEach((e: any) => {
+        if ((e.name || '').trim().toLowerCase() === p.nameLower && e.id) ids.add(e.id);
+      });
+      configVegetables.forEach((c: any) => {
+        if ((c.value || '').trim().toLowerCase() === p.nameLower && c.id) ids.add(c.id);
+      });
+
+      const vars = config.filter((c: any) => c.type === 'variety' && ids.has(c.parentId) && !isTechnicalId(c.value));
+      const orchardCount = trees?.filter((t: any) => !t.isDeleted && (t.species || '').toLowerCase().trim() === p.nameLower).length || 0;
+
+      if (vars.length > 0) {
+        vars.forEach((v: any) => {
+          const resolved = resolveVarietyHarvestAndStorage(
+            p.name,
+            v.value,
+            v.attributes || {},
+            p.harvestPeriod
+          );
+          const qty = Math.max(1, v.quantity !== undefined ? Number(v.quantity) : (v.attributes?.quantity !== undefined ? Number(v.attributes.quantity) : 1));
+          const isTemp = Boolean(v.attributes?.isTemporary || v.attributes?.status === 'temporary');
+          items.push({
+            id: `${p.id}___${v.id || v.value}`,
+            species: p.name,
+            variety: v.value,
+            displayName: `${p.name} - ${v.value}`,
+            category: p.category,
+            icon: p.icon,
+            color: p.color,
+            harvestMonths: resolved.harvestMonths,
+            storageMonths: resolved.storageMonths,
+            harvestSource: resolved.source,
+            isManualHarvest: resolved.isManual,
+            defaultHarvestMonths: resolved.defaultHarvestMonths,
+            defaultStorageMonths: resolved.defaultStorageMonths,
+            varietyConfigId: v.id,
+            parentId: p.id,
+            totalQuantity: qty,
+            orchardCount,
+            isTemporary: isTemp,
+            status: isTemp ? 'temporary' : 'confirmed'
+          });
+        });
+      } else {
+        const resolved = resolveVarietyHarvestAndStorage(
+          p.name,
+          'Standard',
+          undefined,
+          p.harvestPeriod
+        );
+        items.push({
+          id: `${p.id}___standard`,
+          species: p.name,
+          variety: 'Standard',
+          displayName: `${p.name} - Standard`,
+          category: p.category,
+          icon: p.icon,
+          color: p.color,
+          harvestMonths: resolved.harvestMonths,
+          storageMonths: resolved.storageMonths,
+          harvestSource: resolved.source,
+          isManualHarvest: resolved.isManual,
+          defaultHarvestMonths: resolved.defaultHarvestMonths,
+          defaultStorageMonths: resolved.defaultStorageMonths,
+          parentId: p.id,
+          totalQuantity: Math.max(1, orchardCount),
+          orchardCount,
+          isTemporary: false,
+          status: 'confirmed'
+        });
+      }
+    });
+
+  return items;
+}
+

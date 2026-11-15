@@ -16,7 +16,6 @@ import { DuplicateDetectorModal } from '../components/DuplicateDetectorModal';
 import { DeletePlantModal } from '../components/DeletePlantModal';
 import { PlantCatalogExportModal } from '../components/PlantCatalogExportModal';
 import { PlantCatalogPrintModal } from '../components/PlantCatalogPrintModal';
-import { HarvestStoragePlanningModal } from '../components/HarvestStoragePlanningModal';
 import { ExportPlantItem, ExportHealthItem } from '../utils/catalogExport';
 import { 
   HarvestStorageScheduleItem, 
@@ -38,6 +37,15 @@ import {
 import { importOrchardPdfPlants, ImportResult } from '../utils/orchardImporter';
 import { isTechnicalId } from '../utils/varietyNormalizer';
 import { ensureRootstocksInitialized } from '../utils/rootstocks';
+import { formatDateShortFR, toDateKey } from '../utils/notes';
+import {
+  VarietyPlantingEntry,
+  VarietyMissingDateStats,
+  getVarietyPlantings,
+  getVarietyMissingDateStats,
+  resizePlantingsToQuantity,
+  buildPlantingsPayload
+} from '../utils/varietyPlantings';
 
 type Tab = 'vegetables' | 'health';
 type PlantSubTab = 'culture' | 'varieties';
@@ -70,11 +78,17 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
   const [plantToDelete, setPlantToDelete] = useState<any | null>(null);
   const [isDeletePlantModalOpen, setIsDeletePlantModalOpen] = useState(false);
 
-  // Plant Catalog Export, Print & Harvest Planning modal states
+  // Plant Catalog Export & Print modal states
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
-  const [isHarvestPlanningOpen, setIsHarvestPlanningOpen] = useState(false);
   const [printInitialPlant, setPrintInitialPlant] = useState<ExportPlantItem | null>(null);
+
+  // Missing planting date visibility & audit modal states
+  const [filterOnlyMissingDate, setFilterOnlyMissingDate] = useState(false);
+  const [filterPlantVarietiesMissingDate, setFilterPlantVarietiesMissingDate] = useState(false);
+  const [isMissingDateModalOpen, setIsMissingDateModalOpen] = useState(false);
+  const [missingDateModalSearch, setMissingDateModalSearch] = useState('');
+  const [missingDateModalFilterMode, setMissingDateModalFilterMode] = useState<'all' | 'none' | 'partial'>('all');
   
   // Data
   const { data: encyclopedia, error: encError } = useFirebaseData<any>('encyclopedia');
@@ -91,13 +105,16 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
   const [customCategoryName, setCustomCategoryName] = useState('');
   const [newVarietyName, setNewVarietyName] = useState('');
   const [newVarietyQuantity, setNewVarietyQuantity] = useState<number>(1);
+  const [newVarietyPlantings, setNewVarietyPlantings] = useState<VarietyPlantingEntry[]>([
+    { datePlanted: '', location: '', rootstock: '' }
+  ]);
   const [newVarietyIsTemporary, setNewVarietyIsTemporary] = useState(false);
   const [varietyError, setVarietyError] = useState<string | null>(null);
   const [editingVarietyId, setEditingVarietyId] = useState<string | null>(null);
   const [varietyEditForm, setVarietyEditForm] = useState<{
     name: string;
     quantity: number;
-    rootstock: string;
+    plantings: VarietyPlantingEntry[];
     comment: string;
     isTemporary?: boolean;
     harvestMonths?: number[];
@@ -108,7 +125,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
   }>({
     name: '',
     quantity: 1,
-    rootstock: '',
+    plantings: [{ datePlanted: '', location: '', rootstock: '' }],
     comment: '',
     isTemporary: false,
     harvestMonths: [],
@@ -279,9 +296,116 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
     });
   };
 
+  // Missing planting date analysis across all plants and varieties
+  const {
+    missingDateVarietiesList,
+    missingDateCountByPlantId,
+    missingDateSpecimensByPlantId,
+    totalMissingDateSpecimens
+  } = useMemo(() => {
+    const list: Array<{
+      variety: any;
+      plant: any;
+      stats: VarietyMissingDateStats;
+      isTemporary: boolean;
+    }> = [];
+    const varCountMap = new Map<string, number>();
+    const specCountMap = new Map<string, number>();
+    let totalSpecimens = 0;
+
+    if (!unifiedPlants || !config) {
+      return {
+        missingDateVarietiesList: list,
+        missingDateCountByPlantId: varCountMap,
+        missingDateSpecimensByPlantId: specCountMap,
+        totalMissingDateSpecimens: 0
+      };
+    }
+
+    const nameToIds = new Map<string, Set<string>>();
+    encyclopedia?.forEach((e: any) => {
+      const n = (e.name || '').trim().toLowerCase();
+      if (n && e.id) {
+        if (!nameToIds.has(n)) nameToIds.set(n, new Set());
+        nameToIds.get(n)!.add(e.id);
+      }
+    });
+    config.filter((c: any) => c.type === 'vegetable').forEach((c: any) => {
+      const n = (c.value || '').trim().toLowerCase();
+      if (n && c.id) {
+        if (!nameToIds.has(n)) nameToIds.set(n, new Set());
+        nameToIds.get(n)!.add(c.id);
+      }
+    });
+
+    unifiedPlants.forEach(plant => {
+      const plantName = (plant.name || '').trim().toLowerCase();
+      const ids = new Set<string>();
+      if (plant.configId) ids.add(plant.configId);
+      if (plant.encyclopediaId) ids.add(plant.encyclopediaId);
+      nameToIds.get(plantName)?.forEach(id => ids.add(id));
+
+      const seenVarIds = new Set<string>();
+      const plantVars = config
+        .filter((c: any) => c.type === 'variety' && ids.has(c.parentId) && !isTechnicalId(c.value))
+        .sort((a: any, b: any) => (a.value || '').localeCompare(b.value || ''));
+
+      let plantMissingVarCount = 0;
+      let plantMissingSpecCount = 0;
+
+      plantVars.forEach((v: any) => {
+        if (seenVarIds.has(v.id)) return;
+        seenVarIds.add(v.id);
+        const qty = v.quantity !== undefined ? Number(v.quantity) : (v.attributes?.quantity !== undefined ? Number(v.attributes.quantity) : 1);
+        const stats = getVarietyMissingDateStats(v.attributes, qty);
+        if (stats.isMissingAny) {
+          plantMissingVarCount += 1;
+          plantMissingSpecCount += stats.missing;
+          totalSpecimens += stats.missing;
+          list.push({
+            variety: v,
+            plant,
+            stats,
+            isTemporary: Boolean(v.attributes?.isTemporary || v.attributes?.status === 'temporary')
+          });
+        }
+      });
+
+      if (plantMissingVarCount > 0) {
+        varCountMap.set(plant.id, plantMissingVarCount);
+        specCountMap.set(plant.id, plantMissingSpecCount);
+      }
+    });
+
+    return {
+      missingDateVarietiesList: list,
+      missingDateCountByPlantId: varCountMap,
+      missingDateSpecimensByPlantId: specCountMap,
+      totalMissingDateSpecimens: totalSpecimens
+    };
+  }, [unifiedPlants, config, encyclopedia]);
+
+  const filteredMissingDateModalItems = useMemo(() => {
+    const q = missingDateModalSearch.toLowerCase().trim();
+    return missingDateVarietiesList.filter(item => {
+      if (missingDateModalFilterMode === 'none' && !item.stats.isMissingAll) return false;
+      if (missingDateModalFilterMode === 'partial' && item.stats.isMissingAll) return false;
+      if (!q) return true;
+      return (
+        (item.plant.name || '').toLowerCase().includes(q) ||
+        (item.plant.category || '').toLowerCase().includes(q) ||
+        (item.variety.value || '').toLowerCase().includes(q)
+      );
+    });
+  }, [missingDateVarietiesList, missingDateModalSearch, missingDateModalFilterMode]);
+
   const filteredPlants = useMemo(() => {
     const term = searchTerm.toLowerCase().trim();
     return unifiedPlants.filter(item => {
+      if (filterOnlyMissingDate && (missingDateCountByPlantId.get(item.id) || 0) === 0) {
+        return false;
+      }
+
       const itemCats = item.categories && item.categories.length > 0 ? item.categories : [item.category];
       let matchesSearch = true;
       if (term) {
@@ -296,6 +420,11 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
         const matchesVariety = plantVars.some((v: any) => 
           (v.value || '').toLowerCase().includes(term) ||
           (v.attributes?.rootstock || '').toLowerCase().includes(term) ||
+          (v.attributes?.location || '').toLowerCase().includes(term) ||
+          (Array.isArray(v.attributes?.plantings) && v.attributes.plantings.some((p: any) =>
+            (p?.location || '').toLowerCase().includes(term) ||
+            (p?.rootstock || '').toLowerCase().includes(term)
+          )) ||
           (v.attributes?.comment || '').toLowerCase().includes(term)
         );
         
@@ -310,7 +439,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
 
       return matchesSearch && matchesCategory;
     });
-  }, [unifiedPlants, searchTerm, selectedCategories, config]);
+  }, [unifiedPlants, searchTerm, selectedCategories, config, filterOnlyMissingDate, missingDateCountByPlantId]);
 
   const filteredHealth = useMemo(() => healthIssues?.filter((item: any) => 
     (item.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -713,10 +842,16 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
     return treeCount + seedlingCount;
   };
 
-  const handlePlaceOnOrchardPlan = (plant: any, varietyName?: string) => {
+  const handlePlaceOnOrchardPlan = (plant: any, varietyName?: string, datePlanted?: string) => {
+    const matchedVar = varietyName
+      ? plantVarieties.find((v: any) => (v.value || '').toLowerCase().trim() === varietyName.toLowerCase().trim())
+      : undefined;
+    const varPlantings = getVarietyPlantings(matchedVar?.attributes);
+    const resolvedDatePlanted = datePlanted || varPlantings.find(p => p.datePlanted)?.datePlanted || matchedVar?.attributes?.datePlanted;
     const placementData = {
       species: plant.name,
       variety: varietyName || '',
+      datePlanted: resolvedDatePlanted || undefined,
       color: plant.color || '#10b981',
       icon: plant.icon || 'Trees',
       spacing: parseInt(plant.spacing) || 200,
@@ -1086,22 +1221,38 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
       selectedVeg.harvestPeriod
     );
 
+    const plantingsPayload = buildPlantingsPayload(newVarietyPlantings, initialQty);
+    const newAttrs: Record<string, any> = {
+      quantity: initialQty,
+      isTemporary: newVarietyIsTemporary,
+      status: newVarietyIsTemporary ? 'temporary' : 'confirmed',
+      harvestMonths: defaultH,
+      storageMonths: defaultS
+    };
+    if (plantingsPayload.plantings) {
+      newAttrs.plantings = plantingsPayload.plantings;
+    }
+    if (plantingsPayload.datePlanted) {
+      newAttrs.datePlanted = plantingsPayload.datePlanted;
+    }
+    if (plantingsPayload.location) {
+      newAttrs.location = plantingsPayload.location;
+    }
+    if (plantingsPayload.rootstock) {
+      newAttrs.rootstock = plantingsPayload.rootstock;
+    }
+
     await fb.add('config', {
       id: uuidv4(),
       type: "variety",
       value: trimmed,
       parentId: targetParentId,
       quantity: initialQty,
-      attributes: { 
-        quantity: initialQty,
-        isTemporary: newVarietyIsTemporary,
-        status: newVarietyIsTemporary ? 'temporary' : 'confirmed',
-        harvestMonths: defaultH,
-        storageMonths: defaultS
-      }
+      attributes: newAttrs
     });
     setNewVarietyName("");
     setNewVarietyQuantity(1);
+    setNewVarietyPlantings([{ datePlanted: '', location: '', rootstock: '' }]);
     setNewVarietyIsTemporary(false);
   };
 
@@ -1172,7 +1323,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
     // Save new options to config
     for (const attrTypeId of Object.keys(varietyEditForm.attributes)) {
       const value = varietyEditForm.attributes[attrTypeId];
-      if (typeof value === 'string' && value.trim() && !['other', 'quantity', 'rootstock', 'comment', 'harvestSource', 'isManualHarvest'].includes(attrTypeId)) {
+      if (typeof value === 'string' && value.trim() && !['other', 'quantity', 'rootstock', 'datePlanted', 'location', 'plantings', 'comment', 'harvestSource', 'isManualHarvest'].includes(attrTypeId)) {
         const attrType = varietyAttrTypes.find(t => t.id === attrTypeId);
         if (attrType) {
           const parts = value.split(',').map(p => p.trim()).filter(p => p);
@@ -1196,8 +1347,8 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
 
     const safeQty = Math.max(1, Number(varietyEditForm.quantity) || 1);
     const isManual = varietyEditForm.harvestSource === 'manual' || varietyEditForm.isManualHarvest === true;
-    const cleanRootstock = (varietyEditForm.rootstock || '').trim();
     const cleanComment = (varietyEditForm.comment || '').trim();
+    const plantingsPayload = buildPlantingsPayload(varietyEditForm.plantings, safeQty);
 
     const nextAttributes: Record<string, any> = {
       ...varietyEditForm.attributes,
@@ -1210,10 +1361,28 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
       isManualHarvest: isManual
     };
 
-    if (cleanRootstock) {
-      nextAttributes.rootstock = cleanRootstock;
+    if (plantingsPayload.rootstock) {
+      nextAttributes.rootstock = plantingsPayload.rootstock;
     } else {
       delete nextAttributes.rootstock;
+    }
+
+    if (plantingsPayload.plantings) {
+      nextAttributes.plantings = plantingsPayload.plantings;
+    } else {
+      delete nextAttributes.plantings;
+    }
+
+    if (plantingsPayload.datePlanted) {
+      nextAttributes.datePlanted = plantingsPayload.datePlanted;
+    } else {
+      delete nextAttributes.datePlanted;
+    }
+
+    if (plantingsPayload.location) {
+      nextAttributes.location = plantingsPayload.location;
+    } else {
+      delete nextAttributes.location;
     }
 
     if (cleanComment) {
@@ -1342,6 +1511,54 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
     });
   };
 
+  const openVarietyEditor = (variety: any, plantContext?: any) => {
+    const targetPlant = plantContext || selectedVeg;
+    const vQty = Math.max(
+      1,
+      variety.quantity !== undefined
+        ? Number(variety.quantity)
+        : variety.attributes?.quantity !== undefined
+          ? Number(variety.attributes.quantity)
+          : 1
+    );
+    const { harvestMonths, storageMonths, isManual } = resolveVarietyHarvestAndStorage(
+      targetPlant?.name || '',
+      variety.value,
+      variety.attributes,
+      targetPlant?.harvestPeriod
+    );
+    setEditingVarietyId(variety.id);
+    setVarietyEditForm({
+      name: variety.value,
+      quantity: vQty,
+      plantings: resizePlantingsToQuantity(getVarietyPlantings(variety.attributes), vQty),
+      comment: variety.attributes?.comment || '',
+      isTemporary: Boolean(variety.attributes?.isTemporary || variety.attributes?.status === 'temporary'),
+      harvestMonths: [...harvestMonths],
+      storageMonths: [...storageMonths],
+      harvestSource: isManual ? 'manual' : 'reference',
+      isManualHarvest: isManual,
+      attributes: variety.attributes || {}
+    });
+  };
+
+  const handleJumpToMissingDateVariety = (item: { variety: any; plant: any }) => {
+    setIsMissingDateModalOpen(false);
+    setActiveTab('vegetables');
+    setSelectedHealthId(null);
+    setIsEditing(false);
+    setSelectedVegId(item.plant.id);
+    setPlantSubTab('varieties');
+    setFilterPlantVarietiesMissingDate(false);
+    openVarietyEditor(item.variety, item.plant);
+    setTimeout(() => {
+      const el = document.getElementById(`variety-card-${item.variety.id}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }, 100);
+  };
+
   if (error) {
     return (
       <div className="p-8 text-center bg-red-50 rounded-xl border border-red-200">
@@ -1393,52 +1610,64 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
         </div>
       )}
 
-      <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 rounded-2xl shadow-sm border border-stone-200/60">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-emerald-100 text-emerald-600 rounded-xl">
-            <BookOpen className="w-5 h-5" />
+      <header className="flex flex-col lg:flex-row lg:items-center justify-between gap-2.5 bg-white px-3.5 py-2.5 rounded-2xl shadow-sm border border-stone-200/60">
+        <div className="flex items-center gap-2.5 shrink-0">
+          <div className="p-1.5 bg-emerald-100 text-emerald-600 rounded-xl shrink-0">
+            <BookOpen className="w-4 h-4" />
           </div>
-          <div>
-            <h1 className="text-xl font-serif font-medium text-stone-900">Catalogue des Plantes</h1>
-            <p className="text-xs text-stone-500">Gérez vos légumes, variétés et fiches santé</p>
+          <div className="min-w-0">
+            <h1 className="text-lg font-serif font-medium text-stone-900 leading-tight whitespace-nowrap">Catalogue des Plantes</h1>
+            <p className="text-[11px] text-stone-500 leading-tight whitespace-nowrap">Légumes, variétés & fiches santé</p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 flex-wrap">
-          <button
-            type="button"
-            onClick={() => setIsHarvestPlanningOpen(true)}
-            className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-900 border border-red-200/90 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 shadow-xs cursor-pointer"
-            title="Planning annuel de récolte et conservation du catalogue (vue par période ou variété)"
-          >
-            <Calendar className="w-3.5 h-3.5 text-red-600" />
-            <span>Planning Récolte & Stockage</span>
-            <span className="px-1.5 py-0.2 bg-red-200/80 text-red-900 rounded-full text-[10px] font-bold">
-              {allHarvestStorageItems.length}
-            </span>
-          </button>
-
+        <div className="flex items-center gap-1.5 flex-wrap lg:justify-end">
           <button
             type="button"
             onClick={() => {
               setPrintInitialPlant(exportSelectedPlantData);
               setIsPrintModalOpen(true);
             }}
-            className="px-3 py-1.5 bg-white hover:bg-stone-50 text-stone-700 border border-stone-200 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer"
+            className="px-2 py-1.5 bg-white hover:bg-stone-50 text-stone-700 border border-stone-200 rounded-xl text-[11px] font-semibold transition-all flex items-center gap-1 shadow-2xs cursor-pointer whitespace-nowrap"
             title="Imprimer le catalogue, une fiche culture ou le livret récapitulatif"
           >
-            <Printer className="w-3.5 h-3.5 text-stone-600" />
-            <span>Imprimer</span>
+            <Printer className="w-3.5 h-3.5 text-stone-600 shrink-0" />
+            <span className="hidden 2xl:inline">Imprimer</span>
           </button>
 
           <button
             type="button"
             onClick={() => setIsExportModalOpen(true)}
-            className="px-3 py-1.5 bg-white hover:bg-stone-50 text-stone-700 border border-stone-200 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer"
+            className="px-2 py-1.5 bg-white hover:bg-stone-50 text-stone-700 border border-stone-200 rounded-xl text-[11px] font-semibold transition-all flex items-center gap-1 shadow-2xs cursor-pointer whitespace-nowrap"
             title="Exporter les données du catalogue au format Excel, CSV ou JSON"
           >
-            <Download className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Exporter</span>
+            <Download className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+            <span className="hidden 2xl:inline">Exporter</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setIsMissingDateModalOpen(true)}
+            className={`px-2 py-1.5 rounded-xl text-[11px] font-semibold transition-all flex items-center gap-1 shadow-xs cursor-pointer border whitespace-nowrap ${
+              missingDateVarietiesList.length > 0
+                ? 'bg-rose-50 hover:bg-rose-100 text-rose-800 border-rose-200'
+                : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200'
+            }`}
+            title={
+              missingDateVarietiesList.length > 0
+                ? `${missingDateVarietiesList.length} variété(s) sans date de plantation (${totalMissingDateSpecimens} plant(s))`
+                : 'Toutes les variétés ont une date de plantation'
+            }
+          >
+            <Calendar className={`w-3.5 h-3.5 shrink-0 ${missingDateVarietiesList.length > 0 ? 'text-rose-600' : 'text-emerald-600'}`} />
+            <span>{missingDateVarietiesList.length > 0 ? 'Sans date' : 'Dates OK'}</span>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+              missingDateVarietiesList.length > 0
+                ? 'bg-rose-200 text-rose-900'
+                : 'bg-emerald-200 text-emerald-900'
+            }`}>
+              {missingDateVarietiesList.length}
+            </span>
           </button>
 
           <button
@@ -1447,11 +1676,11 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
               setDuplicateModalPlantFilter(undefined);
               setIsDuplicateModalOpen(true);
             }}
-            className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200/90 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 shadow-xs cursor-pointer"
+            className="px-2 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200/90 rounded-xl text-[11px] font-semibold transition-all flex items-center gap-1 shadow-xs cursor-pointer whitespace-nowrap"
             title="Ouvrir le détecteur de doublons et fusionner les variantes d'orthographe"
           >
-            <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-            <span>Détecteur de similarités</span>
+            <Sparkles className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+            <span>Similarités</span>
             {allSimilarVarietyGroups.length > 0 && (
               <span className="px-1.5 py-0.2 bg-amber-200 text-amber-900 rounded-full text-[10px] font-bold">
                 {allSimilarVarietyGroups.length}
@@ -1473,11 +1702,11 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                   onConfirm: handleCleanAllDuplicates
                 });
               }}
-              className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 shadow-sm disabled:opacity-50 cursor-pointer"
+              className="px-2 py-1.5 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white rounded-xl text-[11px] font-semibold transition-all flex items-center gap-1 shadow-sm disabled:opacity-50 cursor-pointer whitespace-nowrap"
               title="Supprimer immédiatement tous les doublons de plantes et de variétés du catalogue"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${isCleaningAll ? 'animate-spin' : ''}`} />
-              <span>{isCleaningAll ? 'Nettoyage...' : `Nettoyer ${totalGlobalDuplicates} doublon(s)`}</span>
+              <RefreshCw className={`w-3.5 h-3.5 shrink-0 ${isCleaningAll ? 'animate-spin' : ''}`} />
+              <span>{isCleaningAll ? 'Nettoyage...' : `Nettoyer (${totalGlobalDuplicates})`}</span>
             </button>
           )}
 
@@ -1485,31 +1714,33 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
             type="button"
             onClick={handleManualImportOrchard}
             disabled={isImporting}
-            className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200/80 rounded-xl text-xs font-medium transition-all flex items-center gap-1.5 shadow-sm disabled:opacity-50"
+            className="px-2 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200/80 rounded-xl text-[11px] font-semibold transition-all flex items-center gap-1 shadow-2xs disabled:opacity-50 cursor-pointer whitespace-nowrap"
             title="Alimenter et synchroniser les 46 fruitiers et variétés relevés sur le plan du verger"
           >
-            <Trees className={`w-4 h-4 text-emerald-600 ${isImporting ? 'animate-spin' : ''}`} />
-            <span>{isImporting ? 'Alimentation...' : 'Fruitiers du Plan (46)'}</span>
+            <Trees className={`w-3.5 h-3.5 text-emerald-600 shrink-0 ${isImporting ? 'animate-spin' : ''}`} />
+            <span>{isImporting ? 'Import...' : 'Fruitiers (46)'}</span>
           </button>
 
-          <div className="flex bg-stone-100 p-1 rounded-xl">
+          <div className="flex bg-stone-100 p-0.5 rounded-xl shrink-0">
             <button
               onClick={() => { setActiveTab("vegetables"); setSelectedHealthId(null); setIsEditing(false); }}
-              className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${
+              className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
                 activeTab === "vegetables" ? "bg-white text-emerald-600 shadow-sm" : "text-stone-500 hover:text-stone-700"
               }`}
+              title="Plantes & Variétés"
             >
-              <Leaf className="w-4 h-4" />
-              Plantes & Variétés
+              <Leaf className="w-3.5 h-3.5 shrink-0" />
+              <span>Plantes<span className="hidden 2xl:inline"> &amp; Variétés</span></span>
             </button>
             <button
               onClick={() => { setActiveTab("health"); setSelectedVegId(null); setIsEditing(false); }}
-              className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${
+              className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
                 activeTab === "health" ? "bg-white text-rose-600 shadow-sm" : "text-stone-500 hover:text-stone-700"
               }`}
+              title="Santé & Ravageurs"
             >
-              <Stethoscope className="w-4 h-4" />
-              Santé & Ravageurs
+              <Stethoscope className="w-3.5 h-3.5 shrink-0" />
+              <span>Santé<span className="hidden 2xl:inline"> &amp; Ravageurs</span></span>
             </button>
           </div>
         </div>
@@ -1679,6 +1910,28 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                     );
                   })}
                 </div>
+                {/* Missing planting date quick filter */}
+                {missingDateVarietiesList.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setFilterOnlyMissingDate(prev => !prev)}
+                    className={`w-full px-3 py-1.5 rounded-xl text-xs font-semibold transition-all flex items-center justify-between border cursor-pointer ${
+                      filterOnlyMissingDate
+                        ? 'bg-rose-600 text-white border-rose-600 shadow-xs'
+                        : 'bg-rose-50/80 text-rose-800 border-rose-200 hover:bg-rose-100/80'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <Calendar className={`w-3.5 h-3.5 ${filterOnlyMissingDate ? 'text-white' : 'text-rose-600'}`} />
+                      <span>Sans date de plantation</span>
+                    </span>
+                    <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                      filterOnlyMissingDate ? 'bg-rose-800 text-white' : 'bg-rose-200/80 text-rose-900'
+                    }`}>
+                      {missingDateCountByPlantId.size} plante(s) • {missingDateVarietiesList.length} var.
+                    </span>
+                  </button>
+                )}
               </div>
             )}
 
@@ -1729,9 +1982,9 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
             )}
 
             {activeTab === "vegetables" && (
-              <div className="flex items-center justify-between px-2.5 py-1.5 bg-stone-50 border border-stone-200/80 rounded-xl text-[11px] text-stone-600">
+              <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 bg-stone-50 border border-stone-200/80 rounded-xl text-[11px] text-stone-600 flex-wrap">
                 <span className="font-semibold text-stone-400 uppercase tracking-wider text-[9px]">Légende :</span>
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 flex-wrap">
                   <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-stone-700 bg-white px-1.5 py-0.5 rounded-md border border-stone-200/90 shadow-2xs" title="Nombre total de plants possédés (somme des variétés)">
                     <Sprout className="w-2.5 h-2.5 text-stone-600" />
                     Total
@@ -1744,6 +1997,10 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                     <MapPin className="w-2.5 h-2.5 text-emerald-600" />
                     Sur plan
                   </span>
+                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded-md border border-rose-200 shadow-2xs" title="Nombre de variétés sans date de plantation">
+                    <Calendar className="w-2.5 h-2.5 text-rose-600" />
+                    Sans date
+                  </span>
                 </div>
               </div>
             )}
@@ -1754,10 +2011,12 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                   const totalCount = totalPlantCountsByPlantId.get(item.id) || 0;
                   const varietyCount = varietyCountsByPlantId.get(item.id) || 0;
                   const planCount = planCountsByPlantId.get(item.id) || 0;
+                  const missingVarCount = missingDateCountByPlantId.get(item.id) || 0;
+                  const missingSpecCount = missingDateSpecimensByPlantId.get(item.id) || 0;
                   return (
                     <button
                       key={item.id}
-                      onClick={() => { setSelectedVegId(item.id); setIsEditing(false); setPlantSubTab("culture"); }}
+                      onClick={() => { setSelectedVegId(item.id); setIsEditing(false); setPlantSubTab("culture"); setFilterPlantVarietiesMissingDate(false); }}
                       className={`w-full text-left px-3 py-2.5 rounded-xl text-sm transition-all flex items-center justify-between group ${
                         selectedVegId === item.id ? "bg-emerald-50 text-emerald-700 font-medium" : "text-stone-600 hover:bg-stone-50"
                       }`}
@@ -1787,6 +2046,15 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                           >
                             <MapPin className="w-2.5 h-2.5 text-emerald-600" />
                             {planCount}
+                          </span>
+                        )}
+                        {missingVarCount > 0 && (
+                          <span 
+                            className="inline-flex items-center gap-0.5 text-[10px] font-bold text-rose-700 bg-rose-100/90 px-1.5 py-0.5 rounded-full border border-rose-200 shrink-0" 
+                            title={`${missingVarCount} variété(s) sans date de plantation (${missingSpecCount} exemplaire(s))`}
+                          >
+                            <Calendar className="w-2.5 h-2.5 text-rose-600" />
+                            {missingVarCount}
                           </span>
                         )}
                       </div>
@@ -2519,11 +2787,33 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                   </div>
                 ) : (
                   <div className="p-6 space-y-6">
-                    <div className="flex items-center justify-between">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
                       <h3 className="text-sm font-bold text-stone-800 flex items-center gap-2">
                         <List className="w-4 h-4 text-stone-400" />
                         Variétés de {selectedVeg.name}
                       </h3>
+                      {(() => {
+                        const plantMissingCount = missingDateCountByPlantId.get(selectedVeg.id) || 0;
+                        if (plantMissingCount === 0 && !filterPlantVarietiesMissingDate) return null;
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => setFilterPlantVarietiesMissingDate(prev => !prev)}
+                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                              filterPlantVarietiesMissingDate
+                                ? 'bg-rose-600 text-white border-rose-600 shadow-2xs'
+                                : 'bg-rose-50 text-rose-800 border-rose-200 hover:bg-rose-100'
+                            }`}
+                          >
+                            <Calendar className={`w-3.5 h-3.5 ${filterPlantVarietiesMissingDate ? 'text-white' : 'text-rose-600'}`} />
+                            <span>
+                              {filterPlantVarietiesMissingDate
+                                ? `Filtre : sans date (${plantMissingCount})`
+                                : `Sans date de plantation (${plantMissingCount})`}
+                            </span>
+                          </button>
+                        );
+                      })()}
                     </div>
 
                     {/* Summary Counters Banner */}
@@ -2571,7 +2861,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                       </div>
                     ) : (
                       <>
-                        <form onSubmit={handleAddVariety} className="space-y-2">
+                        <form onSubmit={handleAddVariety} className="space-y-2.5">
                           <div className="flex flex-col sm:flex-row gap-2">
                             <input
                               type="text"
@@ -2587,7 +2877,15 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                   type="number"
                                   min="1"
                                   value={newVarietyQuantity}
-                                  onChange={(e) => setNewVarietyQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+                                  onChange={(e) => {
+                                    const q = Math.max(1, parseInt(e.target.value) || 1);
+                                    setNewVarietyQuantity(q);
+                                    setNewVarietyPlantings(prev =>
+                                      q > prev.length
+                                        ? resizePlantingsToQuantity(prev, q)
+                                        : prev
+                                    );
+                                  }}
                                   className="w-14 bg-white border border-stone-200 rounded-lg px-2 py-1 text-xs text-center font-bold text-stone-800 focus:outline-emerald-500"
                                 />
                               </div>
@@ -2601,8 +2899,119 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                               </button>
                             </div>
                           </div>
-                          
-                          <div className="flex items-center gap-2 pt-0.5">
+
+                          {/* Adaptive Planting Date(s), Rootstock(s) & Terrain Location(s) */}
+                          <div className="bg-stone-50/90 border border-stone-200/90 rounded-xl p-2.5 space-y-2">
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <span className="text-xs font-medium text-stone-600 flex items-center gap-1.5">
+                                <Calendar className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                <span>
+                                  {newVarietyQuantity > 1
+                                    ? `Mise en terre, porte-greffe & endroit (${newVarietyQuantity} exemplaires, optionnel) :`
+                                    : 'Mise en terre, porte-greffe & endroit sur le terrain (optionnel) :'}
+                                </span>
+                              </span>
+                              <div className="flex items-center gap-3 flex-wrap">
+                                {newVarietyQuantity > 1 && newVarietyPlantings[0]?.datePlanted && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const d0 = newVarietyPlantings[0].datePlanted;
+                                      setNewVarietyPlantings(prev =>
+                                        resizePlantingsToQuantity(prev, newVarietyQuantity).map(p => ({
+                                          ...p,
+                                          datePlanted: p.datePlanted || d0
+                                        }))
+                                      );
+                                    }}
+                                    className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800 hover:underline cursor-pointer"
+                                  >
+                                    Appliquer date #1
+                                  </button>
+                                )}
+                                {newVarietyQuantity > 1 && newVarietyPlantings[0]?.rootstock && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const r0 = newVarietyPlantings[0].rootstock;
+                                      setNewVarietyPlantings(prev =>
+                                        resizePlantingsToQuantity(prev, newVarietyQuantity).map(p => ({
+                                          ...p,
+                                          rootstock: p.rootstock || r0
+                                        }))
+                                      );
+                                    }}
+                                    className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800 hover:underline cursor-pointer"
+                                  >
+                                    Appliquer porte-greffe #1
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="space-y-1.5">
+                              {Array.from({ length: Math.max(1, newVarietyQuantity) }, (_, idx) => {
+                                const entry = newVarietyPlantings[idx] || { datePlanted: '', location: '', rootstock: '' };
+                                const updateSlot = (patch: Partial<VarietyPlantingEntry>) => {
+                                  setNewVarietyPlantings(prev => {
+                                    const next = resizePlantingsToQuantity(prev, Math.max(prev.length, newVarietyQuantity));
+                                    next[idx] = { ...next[idx], ...patch };
+                                    return next;
+                                  });
+                                };
+                                return (
+                                  <div key={idx} className="flex flex-col sm:flex-row sm:items-center gap-1.5">
+                                    {newVarietyQuantity > 1 && (
+                                      <span className="text-[11px] font-bold text-stone-500 bg-white border border-stone-200 rounded-md px-2 py-1 shrink-0 w-fit">
+                                        #{idx + 1}
+                                      </span>
+                                    )}
+                                    <div className="flex items-center gap-1 bg-white border border-stone-200 rounded-lg px-2 py-1 text-xs shrink-0">
+                                      <input
+                                        type="date"
+                                        value={entry.datePlanted}
+                                        onChange={(e) => updateSlot({ datePlanted: e.target.value })}
+                                        className="bg-transparent text-xs font-medium text-stone-800 focus:outline-none"
+                                      />
+                                      {entry.datePlanted && (
+                                        <button
+                                          type="button"
+                                          onClick={() => updateSlot({ datePlanted: '' })}
+                                          className="text-stone-400 hover:text-stone-600 p-0.5 cursor-pointer"
+                                          title="Effacer la date"
+                                        >
+                                          <X className="w-3 h-3" />
+                                        </button>
+                                      )}
+                                    </div>
+                                    <select
+                                      value={entry.rootstock}
+                                      onChange={(e) => updateSlot({ rootstock: e.target.value })}
+                                      className="bg-white border border-stone-200 rounded-lg px-2 py-1 text-xs text-stone-800 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none cursor-pointer sm:w-44 shrink-0"
+                                      title="Porte-greffe"
+                                    >
+                                      <option value="">Porte-greffe...</option>
+                                      {rootstockOptions.map(opt => (
+                                        <option key={opt} value={opt}>{opt}</option>
+                                      ))}
+                                    </select>
+                                    <div className="relative flex-1">
+                                      <MapPin className="w-3.5 h-3.5 text-stone-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                                      <input
+                                        type="text"
+                                        value={entry.location}
+                                        onChange={(e) => updateSlot({ location: e.target.value })}
+                                        placeholder="Endroit sur le terrain (ex: Près du portail...)"
+                                        className="w-full pl-8 pr-2.5 py-1 bg-white border border-stone-200 rounded-lg text-xs text-stone-800 placeholder-stone-400 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none"
+                                      />
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap items-center justify-end gap-2 pt-0.5">
                             <label className="flex items-center gap-1.5 cursor-pointer text-xs text-stone-600 select-none">
                               <input
                                 type="checkbox"
@@ -2612,7 +3021,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                               />
                               <span className="flex items-center gap-1 font-medium">
                                 <Clock className="w-3.5 h-3.5 text-amber-600" />
-                                <span>Ajout temporaire / En projet (sauvegarder à l'essai avant intégration définitive au catalogue)</span>
+                                <span>Ajout temporaire / En projet (à l'essai avant intégration)</span>
                               </span>
                             </label>
                           </div>
@@ -2665,11 +3074,37 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                         )}
 
                         <div className="space-y-2">
-                          {plantVarieties.length === 0 ? (
-                            <p className="text-sm text-stone-500 italic text-center py-4">Aucune variété enregistrée pour cette plante.</p>
-                          ) : (
-                            plantVarieties.map(variety => (
-                              <div key={variety.id} className="bg-stone-50 rounded-xl border border-stone-100 overflow-hidden">
+                          {(() => {
+                            const visiblePlantVarieties = filterPlantVarietiesMissingDate
+                              ? plantVarieties.filter(v => {
+                                  const qty = v.quantity !== undefined ? Number(v.quantity) : (v.attributes?.quantity !== undefined ? Number(v.attributes.quantity) : 1);
+                                  return getVarietyMissingDateStats(v.attributes, qty).isMissingAny;
+                                })
+                              : plantVarieties;
+
+                            if (plantVarieties.length === 0) {
+                              return <p className="text-sm text-stone-500 italic text-center py-4">Aucune variété enregistrée pour cette plante.</p>;
+                            }
+
+                            if (visiblePlantVarieties.length === 0) {
+                              return (
+                                <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-center space-y-2">
+                                  <p className="text-xs font-medium text-emerald-800">
+                                    Toutes les variétés de {selectedVeg.name} ont une date de plantation renseignée !
+                                  </p>
+                                  <button
+                                    type="button"
+                                    onClick={() => setFilterPlantVarietiesMissingDate(false)}
+                                    className="px-3 py-1 bg-white border border-emerald-300 text-emerald-800 rounded-lg text-xs font-semibold hover:bg-emerald-100 cursor-pointer"
+                                  >
+                                    Afficher toutes les variétés
+                                  </button>
+                                </div>
+                              );
+                            }
+
+                            return visiblePlantVarieties.map(variety => (
+                              <div id={`variety-card-${variety.id}`} key={variety.id} className="bg-stone-50 rounded-xl border border-stone-100 overflow-hidden">
                                 {editingVarietyId === variety.id ? (
                                   <form onSubmit={handleSaveVariety} className="p-4 space-y-4">
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -2689,47 +3124,204 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                           type="number"
                                           min="1"
                                           value={varietyEditForm.quantity}
-                                          onChange={e => setVarietyEditForm(prev => ({ ...prev, quantity: Math.max(1, parseInt(e.target.value) || 1) }))}
+                                          onChange={e => {
+                                            const q = Math.max(1, parseInt(e.target.value) || 1);
+                                            setVarietyEditForm(prev => ({
+                                              ...prev,
+                                              quantity: q,
+                                              plantings: q > prev.plantings.length
+                                                ? resizePlantingsToQuantity(prev.plantings, q)
+                                                : prev.plantings
+                                            }));
+                                          }}
                                           className="w-full px-3 py-2 bg-white border border-stone-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                                           required
                                         />
                                       </div>
                                     </div>
 
-                                    {/* Porte-greffe (Liste déroulante administrable dans Configuration) */}
-                                    <div className="space-y-1">
-                                      <div className="flex items-center justify-between gap-2">
-                                        <label className="text-xs font-medium text-stone-600 flex items-center gap-1.5">
-                                          <Trees className="w-3.5 h-3.5 text-emerald-600" />
-                                          <span>Porte-greffe</span>
+                                    {/* Dates de plantation, porte-greffes & emplacements sur le terrain (adapté à la quantité) */}
+                                    <div className="bg-white border border-stone-200 rounded-xl p-3 space-y-2.5">
+                                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                                        <label className="text-xs font-semibold text-stone-700 flex items-center gap-1.5">
+                                          <Calendar className="w-3.5 h-3.5 text-emerald-600" />
+                                          <span>
+                                            {varietyEditForm.quantity > 1
+                                              ? `Plantation, porte-greffe & emplacement (${varietyEditForm.quantity} exemplaires)`
+                                              : 'Date de plantation, porte-greffe & emplacement sur le terrain'}
+                                          </span>
                                         </label>
-                                        {setCurrentView && (
-                                          <button
-                                            type="button"
-                                            onClick={() => setCurrentView('config-rootstock')}
-                                            className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800 hover:underline flex items-center gap-1 cursor-pointer"
-                                            title="Ajouter ou modifier les porte-greffes dans Configuration"
-                                          >
-                                            <Settings className="w-3 h-3" />
-                                            <span>Gérer la liste dans Configuration</span>
-                                          </button>
-                                        )}
+                                        <div className="flex items-center gap-3 flex-wrap">
+                                          {varietyEditForm.quantity > 1 && varietyEditForm.plantings[0]?.datePlanted && (
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                const d0 = varietyEditForm.plantings[0].datePlanted;
+                                                setVarietyEditForm(prev => ({
+                                                  ...prev,
+                                                  plantings: resizePlantingsToQuantity(prev.plantings, prev.quantity).map(p => ({
+                                                    ...p,
+                                                    datePlanted: p.datePlanted || d0
+                                                  }))
+                                                }));
+                                              }}
+                                              className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800 hover:underline cursor-pointer"
+                                            >
+                                              Appliquer date #1
+                                            </button>
+                                          )}
+                                          {varietyEditForm.quantity > 1 && varietyEditForm.plantings[0]?.rootstock && (
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                const r0 = varietyEditForm.plantings[0].rootstock;
+                                                setVarietyEditForm(prev => ({
+                                                  ...prev,
+                                                  plantings: resizePlantingsToQuantity(prev.plantings, prev.quantity).map(p => ({
+                                                    ...p,
+                                                    rootstock: p.rootstock || r0
+                                                  }))
+                                                }));
+                                              }}
+                                              className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800 hover:underline cursor-pointer"
+                                            >
+                                              Appliquer PG #1
+                                            </button>
+                                          )}
+                                          {setCurrentView && (
+                                            <button
+                                              type="button"
+                                              onClick={() => setCurrentView('config-rootstock')}
+                                              className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800 hover:underline flex items-center gap-1 cursor-pointer"
+                                              title="Ajouter ou modifier les porte-greffes dans Configuration"
+                                            >
+                                              <Settings className="w-3 h-3" />
+                                              <span>Gérer porte-greffes</span>
+                                            </button>
+                                          )}
+                                        </div>
                                       </div>
-                                      <select
-                                        value={varietyEditForm.rootstock}
-                                        onChange={e => setVarietyEditForm(prev => ({ ...prev, rootstock: e.target.value }))}
-                                        className="w-full px-3 py-2 bg-white border border-stone-200 rounded-lg text-sm text-stone-800 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none cursor-pointer"
-                                      >
-                                        <option value="">— Aucun / Non spécifié —</option>
-                                        {varietyEditForm.rootstock && !rootstockOptions.includes(varietyEditForm.rootstock) && (
-                                          <option value={varietyEditForm.rootstock}>
-                                            {varietyEditForm.rootstock} (valeur actuelle)
-                                          </option>
-                                        )}
-                                        {rootstockOptions.map(opt => (
-                                          <option key={opt} value={opt}>{opt}</option>
-                                        ))}
-                                      </select>
+
+                                      <div className="space-y-2">
+                                        {Array.from({ length: Math.max(1, varietyEditForm.quantity) }, (_, idx) => {
+                                          const entry = varietyEditForm.plantings[idx] || { datePlanted: '', location: '', rootstock: '' };
+                                          const updateEditSlot = (patch: Partial<VarietyPlantingEntry>) => {
+                                            setVarietyEditForm(prev => {
+                                              const nextPlantings = resizePlantingsToQuantity(
+                                                prev.plantings,
+                                                Math.max(prev.plantings.length, prev.quantity)
+                                              );
+                                              nextPlantings[idx] = { ...nextPlantings[idx], ...patch };
+                                              return { ...prev, plantings: nextPlantings };
+                                            });
+                                          };
+
+                                          return (
+                                            <div
+                                              key={idx}
+                                              className={`grid grid-cols-1 ${
+                                                varietyEditForm.quantity > 1
+                                                  ? 'md:grid-cols-[auto_165px_185px_1fr]'
+                                                  : 'md:grid-cols-3'
+                                              } gap-2 items-center ${
+                                                varietyEditForm.quantity > 1 ? 'p-2 bg-stone-50/80 rounded-lg border border-stone-200/70' : ''
+                                              }`}
+                                            >
+                                              {varietyEditForm.quantity > 1 && (
+                                                <span className="text-[11px] font-bold text-stone-600 bg-white border border-stone-200 rounded-md px-2 py-1 text-center w-fit">
+                                                  Exemplaire #{idx + 1}
+                                                </span>
+                                              )}
+                                              <div>
+                                                {varietyEditForm.quantity === 1 && (
+                                                  <div className="flex items-center justify-between mb-1">
+                                                    <span className="text-[11px] text-stone-500">Date de mise en terre</span>
+                                                    {entry.datePlanted && (
+                                                      <button
+                                                        type="button"
+                                                        onClick={() => updateEditSlot({ datePlanted: '' })}
+                                                        className="text-[11px] text-stone-400 hover:text-stone-600 underline cursor-pointer"
+                                                      >
+                                                        Effacer
+                                                      </button>
+                                                    )}
+                                                  </div>
+                                                )}
+                                                <div className="flex items-center gap-1 bg-white border border-stone-200 rounded-lg px-2.5 py-1.5">
+                                                  <input
+                                                    type="date"
+                                                    value={entry.datePlanted}
+                                                    onChange={e => updateEditSlot({ datePlanted: e.target.value })}
+                                                    className="w-full bg-transparent text-xs sm:text-sm text-stone-800 outline-none"
+                                                  />
+                                                  {varietyEditForm.quantity > 1 && entry.datePlanted && (
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => updateEditSlot({ datePlanted: '' })}
+                                                      className="text-stone-400 hover:text-stone-600 p-0.5 cursor-pointer shrink-0"
+                                                      title="Effacer la date"
+                                                    >
+                                                      <X className="w-3 h-3" />
+                                                    </button>
+                                                  )}
+                                                </div>
+                                              </div>
+                                              <div>
+                                                {varietyEditForm.quantity === 1 && (
+                                                  <div className="flex items-center justify-between mb-1">
+                                                    <span className="text-[11px] text-stone-500 flex items-center gap-1">
+                                                      <Trees className="w-3 h-3 text-emerald-600" />
+                                                      Porte-greffe
+                                                    </span>
+                                                  </div>
+                                                )}
+                                                <select
+                                                  value={entry.rootstock}
+                                                  onChange={e => updateEditSlot({ rootstock: e.target.value })}
+                                                  className="w-full px-2.5 py-1.5 bg-white border border-stone-200 rounded-lg text-xs sm:text-sm text-stone-800 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none cursor-pointer"
+                                                  title="Porte-greffe"
+                                                >
+                                                  <option value="">— Porte-greffe —</option>
+                                                  {entry.rootstock && !rootstockOptions.includes(entry.rootstock) && (
+                                                    <option value={entry.rootstock}>
+                                                      {entry.rootstock} (actuel)
+                                                    </option>
+                                                  )}
+                                                  {rootstockOptions.map(opt => (
+                                                    <option key={opt} value={opt}>{opt}</option>
+                                                  ))}
+                                                </select>
+                                              </div>
+                                              <div>
+                                                {varietyEditForm.quantity === 1 && (
+                                                  <div className="flex items-center justify-between mb-1">
+                                                    <span className="text-[11px] text-stone-500">Endroit approximatif sur le terrain</span>
+                                                    {entry.location && (
+                                                      <button
+                                                        type="button"
+                                                        onClick={() => updateEditSlot({ location: '' })}
+                                                        className="text-[11px] text-stone-400 hover:text-stone-600 underline cursor-pointer"
+                                                      >
+                                                        Effacer
+                                                      </button>
+                                                    )}
+                                                  </div>
+                                                )}
+                                                <div className="relative">
+                                                  <MapPin className="w-3.5 h-3.5 text-stone-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                                                  <input
+                                                    type="text"
+                                                    value={entry.location}
+                                                    onChange={e => updateEditSlot({ location: e.target.value })}
+                                                    placeholder="ex: Près du portail, côté haie..."
+                                                    className="w-full pl-8 pr-3 py-1.5 bg-white border border-stone-200 rounded-lg text-xs sm:text-sm text-stone-800 placeholder-stone-400 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none"
+                                                  />
+                                                </div>
+                                              </div>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
                                     </div>
                                     
                                     {varietyAttrTypes.map(attrType => {
@@ -3027,6 +3619,27 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                                   0 / {currentQty} placé
                                                 </span>
                                               )}
+                                              {(() => {
+                                                const missingStats = getVarietyMissingDateStats(variety.attributes, currentQty);
+                                                if (!missingStats.isMissingAny) return null;
+                                                return (
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => openVarietyEditor(variety)}
+                                                    className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border transition-colors cursor-pointer ${
+                                                      missingStats.isMissingAll
+                                                        ? 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+                                                        : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
+                                                    }`}
+                                                    title="Cliquer pour renseigner la ou les dates de plantation"
+                                                  >
+                                                    <Calendar className="w-2.5 h-2.5 shrink-0" />
+                                                    {missingStats.isMissingAll
+                                                      ? 'Sans date de plantation'
+                                                      : `${missingStats.missing}/${missingStats.total} date(s) manquante(s)`}
+                                                  </button>
+                                                );
+                                              })()}
                                             </>
                                           );
                                         })()}
@@ -3140,44 +3753,118 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                         );
                                       })()}
 
-                                      {(variety.attributes?.rootstock || (variety.attributes && Object.keys(variety.attributes).filter(k => !['quantity', 'isTemporary', 'status', 'harvestMonths', 'storageMonths', 'harvestSource', 'isManualHarvest', 'rootstock', 'comment'].includes(k)).length > 0)) && (
-                                        <div className="flex flex-wrap gap-1.5 mt-2">
-                                          {variety.attributes?.rootstock && (
-                                            <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 bg-emerald-50 text-emerald-900 border border-emerald-200 rounded-md">
-                                              <Trees className="w-3 h-3 text-emerald-600 shrink-0" />
-                                              <span>Porte-greffe : {variety.attributes.rootstock}</span>
-                                            </span>
-                                          )}
-                                          {Object.entries(variety.attributes || {}).map(([key, val]) => {
-                                            if (['quantity', 'isTemporary', 'status', 'harvestMonths', 'storageMonths', 'harvestSource', 'isManualHarvest', 'rootstock', 'comment'].includes(key)) return null;
-                                            const attrType = varietyAttrTypes.find(t => t.id === key);
-                                            if (!attrType || !val) return null;
-                                            const isColor = attrType.value.toLowerCase().includes('couleur');
-                                            const isEmoji = attrType.value.toLowerCase().includes('emoji');
-                                            
-                                            if (isColor) {
-                                              return (
-                                                <span key={key} className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 bg-stone-200 text-stone-600 rounded">
-                                                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: val as string }} />
-                                                  {val as string}
-                                                </span>
-                                              );
-                                            }
-                                            if (isEmoji) {
-                                              return (
-                                                <span key={key} className="text-sm" title={attrType.value}>
-                                                  {val as string}
-                                                </span>
-                                              );
-                                            }
-                                            return (
-                                              <span key={key} className="text-[10px] px-1.5 py-0.5 bg-stone-200 text-stone-600 rounded">
-                                                {attrType.value}: {val as string}
+                                      {(() => {
+                                        const vLower = (variety.value || '').toLowerCase().trim();
+                                        const varietyPlantings = getVarietyPlantings(variety.attributes);
+                                        const filledPlantings = varietyPlantings
+                                          .map((p, idx) => ({ ...p, num: idx + 1 }))
+                                          .filter(p => Boolean(p.datePlanted || p.location || p.rootstock));
+                                        const currentQty = Math.max(
+                                          1,
+                                          variety.quantity !== undefined
+                                            ? Number(variety.quantity)
+                                            : (variety.attributes?.quantity !== undefined ? Number(variety.attributes.quantity) : 1)
+                                        );
+                                        const showNumbered = currentQty > 1 || filledPlantings.length > 1 || filledPlantings.some(p => p.num > 1);
+                                        const planTreeDate = filledPlantings.every(p => !p.datePlanted)
+                                          ? plantOrchardTrees.find((t: any) => (t.variety || '').toLowerCase().trim() === vLower && t.datePlanted)?.datePlanted
+                                          : undefined;
+                                        const hasOtherAttrs = variety.attributes && Object.keys(variety.attributes).filter(k => !['quantity', 'isTemporary', 'status', 'harvestMonths', 'storageMonths', 'harvestSource', 'isManualHarvest', 'rootstock', 'datePlanted', 'location', 'plantings', 'comment'].includes(k)).length > 0;
+
+                                        if (filledPlantings.length === 0 && !planTreeDate && !hasOtherAttrs) return null;
+
+                                        return (
+                                          <div className="flex flex-wrap gap-1.5 mt-2">
+                                            {filledPlantings.length > 0 && !showNumbered && (
+                                              <>
+                                                {filledPlantings[0].datePlanted && (
+                                                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 bg-blue-50 text-blue-900 border border-blue-200 rounded-md">
+                                                    <Calendar className="w-3 h-3 text-blue-600 shrink-0" />
+                                                    <span>Planté le {formatDateShortFR(filledPlantings[0].datePlanted) || filledPlantings[0].datePlanted}</span>
+                                                  </span>
+                                                )}
+                                                {filledPlantings[0].rootstock && (
+                                                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 bg-emerald-50 text-emerald-900 border border-emerald-200 rounded-md">
+                                                    <Trees className="w-3 h-3 text-emerald-600 shrink-0" />
+                                                    <span>Porte-greffe : {filledPlantings[0].rootstock}</span>
+                                                  </span>
+                                                )}
+                                                {filledPlantings[0].location && (
+                                                  <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 bg-amber-50 text-amber-900 border border-amber-200 rounded-md">
+                                                    <MapPin className="w-3 h-3 text-amber-600 shrink-0" />
+                                                    <span>{filledPlantings[0].location}</span>
+                                                  </span>
+                                                )}
+                                              </>
+                                            )}
+
+                                            {filledPlantings.length > 0 && showNumbered && filledPlantings.map(p => (
+                                              <span
+                                                key={p.num}
+                                                className="inline-flex items-center flex-wrap gap-1.5 text-[11px] font-medium px-2 py-0.5 bg-blue-50 text-blue-950 border border-blue-200 rounded-md"
+                                              >
+                                                <span className="font-bold text-blue-700">#{p.num}</span>
+                                                {p.datePlanted && (
+                                                  <span className="inline-flex items-center gap-1 font-semibold">
+                                                    <Calendar className="w-3 h-3 text-blue-600 shrink-0" />
+                                                    {formatDateShortFR(p.datePlanted) || p.datePlanted}
+                                                  </span>
+                                                )}
+                                                {p.rootstock && (
+                                                  <span className="inline-flex items-center gap-1 text-emerald-900 font-semibold">
+                                                    <Trees className="w-3 h-3 text-emerald-600 shrink-0" />
+                                                    {p.rootstock}
+                                                  </span>
+                                                )}
+                                                {p.location && (
+                                                  <span className="inline-flex items-center gap-1 text-amber-900">
+                                                    <MapPin className="w-3 h-3 text-amber-600 shrink-0" />
+                                                    {p.location}
+                                                  </span>
+                                                )}
                                               </span>
-                                            );
-                                          })}
-                                        </div>
-                                      )}
+                                            ))}
+
+                                            {planTreeDate && (
+                                              <span
+                                                className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 bg-stone-100 text-stone-700 border border-stone-200 rounded-md"
+                                                title="Date enregistrée sur l'arbre placé sur le plan du verger"
+                                              >
+                                                <Calendar className="w-3 h-3 text-stone-500 shrink-0" />
+                                                <span>Sur le plan : planté le {formatDateShortFR(planTreeDate) || planTreeDate}</span>
+                                              </span>
+                                            )}
+                                            {Object.entries(variety.attributes || {}).map(([key, val]) => {
+                                              if (['quantity', 'isTemporary', 'status', 'harvestMonths', 'storageMonths', 'harvestSource', 'isManualHarvest', 'rootstock', 'datePlanted', 'location', 'plantings', 'comment'].includes(key)) return null;
+                                              const attrType = varietyAttrTypes.find(t => t.id === key);
+                                              if (!attrType || !val) return null;
+                                              const isColor = attrType.value.toLowerCase().includes('couleur');
+                                              const isEmoji = attrType.value.toLowerCase().includes('emoji');
+                                              
+                                              if (isColor) {
+                                                return (
+                                                  <span key={key} className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 bg-stone-200 text-stone-600 rounded">
+                                                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: val as string }} />
+                                                    {val as string}
+                                                  </span>
+                                                );
+                                              }
+                                              if (isEmoji) {
+                                                return (
+                                                  <span key={key} className="text-sm" title={attrType.value}>
+                                                    {val as string}
+                                                  </span>
+                                                );
+                                              }
+                                              return (
+                                                <span key={key} className="text-[10px] px-1.5 py-0.5 bg-stone-200 text-stone-600 rounded">
+                                                  {attrType.value}: {val as string}
+                                                </span>
+                                              );
+                                            })}
+                                          </div>
+                                        );
+                                      })()}
 
                                       {variety.attributes?.comment && (
                                         <div className="mt-2 p-2.5 bg-white border border-stone-200/80 rounded-lg text-xs text-stone-700 flex items-start gap-2">
@@ -3199,28 +3886,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                         </button>
                                       )}
                                       <button
-                                        onClick={() => {
-                                          setEditingVarietyId(variety.id);
-                                          const vQty = Math.max(1, variety.quantity !== undefined ? Number(variety.quantity) : (variety.attributes?.quantity !== undefined ? Number(variety.attributes.quantity) : 1));
-                                          const { harvestMonths, storageMonths, source, isManual } = resolveVarietyHarvestAndStorage(
-                                            selectedVeg.name,
-                                            variety.value,
-                                            variety.attributes,
-                                            selectedVeg.harvestPeriod
-                                          );
-                                          setVarietyEditForm({ 
-                                            name: variety.value, 
-                                            quantity: vQty,
-                                            rootstock: variety.attributes?.rootstock || '',
-                                            comment: variety.attributes?.comment || '',
-                                            isTemporary: Boolean(variety.attributes?.isTemporary || variety.attributes?.status === 'temporary'),
-                                            harvestMonths: [...harvestMonths],
-                                            storageMonths: [...storageMonths],
-                                            harvestSource: isManual ? 'manual' : 'reference',
-                                            isManualHarvest: isManual,
-                                            attributes: variety.attributes || {} 
-                                          });
-                                        }}
+                                        onClick={() => openVarietyEditor(variety)}
                                         className="p-1.5 text-stone-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
                                         title="Modifier la variété"
                                       >
@@ -3237,8 +3903,8 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                   </div>
                                 )}
                               </div>
-                            ))
-                          )}
+                            ));
+                          })()}
                         </div>
 
                         {/* Section: Placed Trees on Orchard Plan */}
@@ -3596,15 +4262,6 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
         filteredHarvestStorageItems={filteredHarvestStorageItems}
       />
 
-      <HarvestStoragePlanningModal
-        isOpen={isHarvestPlanningOpen}
-        onClose={() => setIsHarvestPlanningOpen(false)}
-        allItems={allHarvestStorageItems}
-        filteredItems={filteredHarvestStorageItems}
-        activeFilterCategory={selectedCategories}
-        searchTerm={searchTerm}
-      />
-
       {importReportModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
           <div className="bg-white rounded-2xl shadow-xl border border-stone-200 w-full max-w-lg overflow-hidden animate-in fade-in zoom-in duration-200">
@@ -3843,6 +4500,171 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                 className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-semibold shadow-xs disabled:opacity-50 transition-all cursor-pointer flex items-center gap-1.5"
               >
                 {isSavingPeriods ? 'Enregistrement...' : 'Enregistrer les périodes'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Variétés sans date de plantation */}
+      {isMissingDateModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/45 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl shadow-2xl border border-stone-200 w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-150">
+            <div className="p-5 border-b border-stone-100 flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className={`p-2 rounded-xl ${missingDateVarietiesList.length > 0 ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                  <Calendar className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-serif text-lg font-medium text-stone-900">
+                    Variétés sans date de plantation
+                  </h3>
+                  <p className="text-xs text-stone-500 mt-0.5">
+                    {missingDateVarietiesList.length > 0
+                      ? `${missingDateVarietiesList.length} variété(s) sur ${missingDateCountByPlantId.size} plante(s) • ${totalMissingDateSpecimens} exemplaire(s) à dater`
+                      : 'Toutes vos variétés ont leur date de plantation renseignée.'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsMissingDateModalOpen(false)}
+                className="text-stone-400 hover:text-stone-600 p-1.5 rounded-lg hover:bg-stone-100 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {missingDateVarietiesList.length > 0 && (
+              <div className="px-5 py-3 bg-stone-50 border-b border-stone-100 flex flex-col sm:flex-row sm:items-center gap-2.5">
+                <div className="relative flex-1">
+                  <Search className="w-3.5 h-3.5 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={missingDateModalSearch}
+                    onChange={(e) => setMissingDateModalSearch(e.target.value)}
+                    placeholder="Filtrer par plante, catégorie ou variété..."
+                    className="w-full pl-8 pr-3 py-1.5 bg-white border border-stone-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-400"
+                  />
+                </div>
+                <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-stone-200 text-[11px] shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setMissingDateModalFilterMode('all')}
+                    className={`px-2.5 py-1 rounded-lg font-medium transition-colors cursor-pointer ${
+                      missingDateModalFilterMode === 'all' ? 'bg-rose-600 text-white' : 'text-stone-600 hover:bg-stone-100'
+                    }`}
+                  >
+                    Toutes ({missingDateVarietiesList.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMissingDateModalFilterMode('none')}
+                    className={`px-2.5 py-1 rounded-lg font-medium transition-colors cursor-pointer ${
+                      missingDateModalFilterMode === 'none' ? 'bg-rose-600 text-white' : 'text-stone-600 hover:bg-stone-100'
+                    }`}
+                  >
+                    Aucune date ({missingDateVarietiesList.filter(i => i.stats.isMissingAll).length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMissingDateModalFilterMode('partial')}
+                    className={`px-2.5 py-1 rounded-lg font-medium transition-colors cursor-pointer ${
+                      missingDateModalFilterMode === 'partial' ? 'bg-amber-600 text-white' : 'text-stone-600 hover:bg-stone-100'
+                    }`}
+                  >
+                    Partiel ({missingDateVarietiesList.filter(i => !i.stats.isMissingAll).length})
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="flex-1 overflow-y-auto p-5 space-y-2 custom-scrollbar">
+              {missingDateVarietiesList.length === 0 ? (
+                <div className="py-10 text-center space-y-2">
+                  <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto" />
+                  <p className="text-sm font-medium text-stone-800">Tout est à jour !</p>
+                  <p className="text-xs text-stone-500">
+                    Chaque exemplaire de chaque variété du catalogue possède une date de plantation.
+                  </p>
+                </div>
+              ) : filteredMissingDateModalItems.length === 0 ? (
+                <p className="text-xs text-stone-500 italic text-center py-8">
+                  Aucune variété ne correspond à votre recherche.
+                </p>
+              ) : (
+                filteredMissingDateModalItems.map(item => (
+                  <div
+                    key={item.variety.id}
+                    className="p-3 bg-stone-50 hover:bg-stone-100/80 border border-stone-200/80 rounded-xl flex items-center justify-between gap-3 transition-colors"
+                  >
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-semibold px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-900">
+                          {item.plant.name}
+                        </span>
+                        <span className="text-sm font-semibold text-stone-900 truncate">
+                          {item.variety.value}
+                        </span>
+                        <span className="text-[11px] font-medium px-1.5 py-0.5 rounded bg-white border border-stone-200 text-stone-600">
+                          Qté : {item.stats.total}
+                        </span>
+                        {item.isTemporary && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-800">
+                            <Clock className="w-2.5 h-2.5" />
+                            En projet
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 text-[11px]">
+                        <span className={`font-semibold ${item.stats.isMissingAll ? 'text-rose-700' : 'text-amber-700'}`}>
+                          {item.stats.isMissingAll
+                            ? item.stats.total > 1
+                              ? `Aucune date saisie (${item.stats.total} exemplaires)`
+                              : 'Aucune date saisie'
+                            : `${item.stats.filled} daté(s) sur ${item.stats.total} — ${item.stats.missing} manquant(s)`}
+                        </span>
+                        <span className="text-stone-400">•</span>
+                        <span className="text-stone-500">{item.plant.category}</span>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleJumpToMissingDateVariety(item)}
+                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold transition-colors flex items-center gap-1.5 shrink-0 shadow-2xs cursor-pointer"
+                    >
+                      <span>Saisir</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="p-4 bg-stone-50 border-t border-stone-100 flex items-center justify-between gap-2">
+              {missingDateVarietiesList.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('vegetables');
+                    setSelectedVegId(null);
+                    setFilterOnlyMissingDate(true);
+                    setIsMissingDateModalOpen(false);
+                  }}
+                  className="px-3.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-200 rounded-xl text-xs font-semibold transition-colors cursor-pointer"
+                >
+                  Filtrer le catalogue ({missingDateCountByPlantId.size} plantes)
+                </button>
+              ) : (
+                <div />
+              )}
+              <button
+                type="button"
+                onClick={() => setIsMissingDateModalOpen(false)}
+                className="px-4 py-1.5 bg-white hover:bg-stone-100 text-stone-700 border border-stone-200 rounded-xl text-xs font-medium transition-colors cursor-pointer"
+              >
+                Fermer
               </button>
             </div>
           </div>

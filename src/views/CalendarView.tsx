@@ -12,12 +12,15 @@ import {
   Plus, 
   ArrowRight,
   Scissors,
-  Sparkles
+  Sparkles,
+  CalendarRange
 } from 'lucide-react';
 import { printElement } from '../utils/print';
 import { useSeason } from '../contexts/SeasonContext';
 import { PerpetualPlanningTab } from '../components/PerpetualPlanningTab';
 import { MultiplicationsPlanningTab } from '../components/MultiplicationsPlanningTab';
+import { HarvestStoragePlanningModal } from '../components/HarvestStoragePlanningModal';
+import { buildCatalogHarvestStorageItems } from '../utils/harvestStorageData';
 import { PerpetualTaskModal, CATEGORY_CONFIG, MONTH_NAMES, usePerpetualCategories, getPerpetualTaskMonths } from '../components/PerpetualTaskModal';
 
 interface CalendarEvent {
@@ -35,15 +38,16 @@ export function CalendarView({
   initialMonth = 'all'
 }: { 
   setCurrentView: (v: string) => void;
-  initialTab?: 'month' | 'year' | 'agenda' | 'perpetual' | 'multiplications';
+  initialTab?: 'month' | 'year' | 'agenda' | 'perpetual' | 'multiplications' | 'harvest-storage';
   initialMonth?: number | 'all';
 }) {
   const { currentSeasonId, isItemInCurrentSeason } = useSeason();
   const categories = usePerpetualCategories();
   const [currentDate, setCurrentDate] = useState(new Date());
 
-  // Main 3-pillars tab navigation
-  const [mainTab, setMainTab] = useState<'agenda' | 'perpetual' | 'multiplications'>(() => {
+  // Main 4-pillars tab navigation
+  const [mainTab, setMainTab] = useState<'agenda' | 'perpetual' | 'multiplications' | 'harvest-storage'>(() => {
+    if (initialTab === 'harvest-storage') return 'harvest-storage';
     if (initialTab === 'multiplications') return 'multiplications';
     if (initialTab === 'perpetual') return 'perpetual';
     return 'agenda';
@@ -63,7 +67,9 @@ export function CalendarView({
   const [perpetualInitialMonth, setPerpetualInitialMonth] = useState<number | 'all'>(initialMonth);
 
   useEffect(() => {
-    if (initialTab === 'multiplications') {
+    if (initialTab === 'harvest-storage') {
+      setMainTab('harvest-storage');
+    } else if (initialTab === 'multiplications') {
       setMainTab('multiplications');
     } else if (initialTab === 'perpetual') {
       setMainTab('perpetual');
@@ -86,11 +92,18 @@ export function CalendarView({
   const { data: rawSeedlings, error: seedlingsError } = useFirebaseData<any>('seedlings');
   const { data: rawTasks, error: tasksError } = useFirebaseData<any>('tasks');
   const { data: rawPerpetualTasks, error: perpetualError } = useFirebaseData<PerpetualTask>('perpetualTasks');
+  const { data: config } = useFirebaseData<any>('config');
+  const { data: encyclopedia } = useFirebaseData<any>('encyclopedia');
+  const { data: trees } = useFirebaseData<any>('trees');
 
   const error = seedlingsError || tasksError || perpetualError;
   const seedlings = (rawSeedlings || []).filter(s => !s.isDeleted && isItemInCurrentSeason(s));
   const tasks = (rawTasks || []).filter(t => isItemInCurrentSeason(t));
   const perpetualTasks = useMemo(() => (rawPerpetualTasks || []).filter(t => !t.isDeleted), [rawPerpetualTasks]);
+  const allHarvestStorageItems = useMemo(
+    () => buildCatalogHarvestStorageItems(config, encyclopedia, trees),
+    [config, encyclopedia, trees]
+  );
 
   const events = useMemo(() => {
     if (!seedlings) return {};
@@ -317,45 +330,57 @@ export function CalendarView({
         </div>
       )}
 
-      {/* Main Header with 2 Core Pillars */}
+      {/* Main Header with 4 Core Pillars */}
       <header className="flex flex-col lg:flex-row lg:items-center justify-between gap-3.5 bg-white p-4 rounded-2xl shadow-sm border border-stone-200/70 print:hidden">
         <div className="flex items-center gap-3">
           <div className={`p-2.5 rounded-2xl shadow-inner ${
             mainTab === 'perpetual'
               ? 'bg-purple-100 text-purple-700'
-              : 'bg-emerald-100 text-emerald-700'
+              : mainTab === 'harvest-storage'
+                ? 'bg-red-100 text-red-600'
+                : mainTab === 'multiplications'
+                  ? 'bg-teal-100 text-teal-700'
+                  : 'bg-emerald-100 text-emerald-700'
           }`}>
             {mainTab === 'perpetual' ? (
               <CalendarClock className="w-5 h-5" />
+            ) : mainTab === 'harvest-storage' ? (
+              <CalendarRange className="w-5 h-5" />
+            ) : mainTab === 'multiplications' ? (
+              <Scissors className="w-5 h-5" />
             ) : (
               <CalendarIcon className="w-5 h-5" />
             )}
           </div>
           <div>
             <h1 className="text-xl font-serif font-bold text-stone-900 tracking-tight">
-              {mainTab === 'multiplications'
-                ? 'Multiplications & Bouturage'
-                : mainTab === 'perpetual' 
-                  ? 'Planning Perpétuel' 
-                  : 'Agenda de Saison'}
+              {mainTab === 'harvest-storage'
+                ? 'Planning Récolte & Stockage'
+                : mainTab === 'multiplications'
+                  ? 'Multiplications & Bouturage'
+                  : mainTab === 'perpetual' 
+                    ? 'Planning Perpétuel' 
+                    : 'Agenda de Saison'}
             </h1>
             <p className="text-xs text-stone-500">
-              {mainTab === 'multiplications'
-                ? 'Le calendrier mensuel des boutures, marcottes et greffes synchronisé avec les plantes de votre jardin'
-                : mainTab === 'perpetual'
-                  ? 'Les gestes récurrents (tailles, paillage, fertilisation, soins) qui reviennent chaque année au jardin'
-                  : 'Suivez vos semis, repiquages et récoltes réelles de l\'année'}
+              {mainTab === 'harvest-storage'
+                ? 'Gantt annuel des fenêtres de cueillette et de conservation des variétés du catalogue'
+                : mainTab === 'multiplications'
+                  ? 'Le calendrier mensuel des boutures, marcottes et greffes synchronisé avec les plantes de votre jardin'
+                  : mainTab === 'perpetual'
+                    ? 'Les gestes récurrents (tailles, paillage, fertilisation, soins) qui reviennent chaque année au jardin'
+                    : 'Suivez vos semis, repiquages et récoltes réelles de l\'année'}
             </p>
           </div>
         </div>
 
-        {/* 3 Main Tabs Switcher */}
+        {/* 4 Main Tabs Switcher */}
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex bg-stone-100 p-1 rounded-xl border border-stone-200/90 text-xs font-semibold">
+          <div className="flex flex-wrap bg-stone-100 p-1 rounded-xl border border-stone-200/90 text-xs font-semibold gap-0.5">
             <button
               type="button"
               onClick={() => setMainTab('agenda')}
-              className={`px-3.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+              className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
                 mainTab === 'agenda'
                   ? 'bg-white text-emerald-900 shadow-2xs font-bold'
                   : 'text-stone-600 hover:text-stone-900'
@@ -372,7 +397,7 @@ export function CalendarView({
                 setPerpetualInitialCategory(undefined);
                 setMainTab('perpetual');
               }}
-              className={`px-3.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+              className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
                 mainTab === 'perpetual'
                   ? 'bg-purple-600 text-white shadow-2xs font-bold'
                   : 'text-purple-700 hover:text-purple-900'
@@ -387,7 +412,7 @@ export function CalendarView({
               onClick={() => {
                 setMainTab('multiplications');
               }}
-              className={`px-3.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+              className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
                 mainTab === 'multiplications'
                   ? 'bg-teal-700 text-white shadow-2xs font-bold'
                   : 'text-teal-700 hover:text-teal-900'
@@ -395,6 +420,28 @@ export function CalendarView({
             >
               <Scissors className="w-3.5 h-3.5" />
               <span>Multiplications & Boutures</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setMainTab('harvest-storage')}
+              className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+                mainTab === 'harvest-storage'
+                  ? 'bg-red-600 text-white shadow-2xs font-bold'
+                  : 'text-red-700 hover:text-red-900'
+              }`}
+            >
+              <CalendarRange className="w-3.5 h-3.5" />
+              <span>Récolte & Stockage</span>
+              {allHarvestStorageItems.length > 0 && (
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                  mainTab === 'harvest-storage'
+                    ? 'bg-red-800/60 text-white'
+                    : 'bg-red-100 text-red-800'
+                }`}>
+                  {allHarvestStorageItems.length}
+                </span>
+              )}
             </button>
           </div>
 
@@ -476,8 +523,15 @@ export function CalendarView({
         </div>
       </header>
 
-      {/* VIEW RENDER: 3 Pillars */}
-      {mainTab === 'multiplications' ? (
+      {/* VIEW RENDER: 4 Pillars */}
+      {mainTab === 'harvest-storage' ? (
+        <HarvestStoragePlanningModal
+          isOpen={true}
+          embedded={true}
+          allItems={allHarvestStorageItems}
+          filteredItems={allHarvestStorageItems}
+        />
+      ) : mainTab === 'multiplications' ? (
         <MultiplicationsPlanningTab
           setCurrentView={setCurrentView}
           initialMonth={perpetualInitialMonth !== 'all' ? perpetualInitialMonth : undefined}

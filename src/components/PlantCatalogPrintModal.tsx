@@ -15,6 +15,7 @@ import {
   sortScheduleByPeriod, 
   sortScheduleByVariety 
 } from '../utils/harvestStorageData';
+import { getVarietyPlantings } from '../utils/varietyPlantings';
 
 export interface PlantCatalogPrintModalProps {
   isOpen: boolean;
@@ -859,9 +860,12 @@ export function PlantCatalogPrintModal({
                               <tbody className="divide-y divide-stone-100">
                                 {p.varieties.map((v, i) => {
                                   const attrs = v.attributes || {};
-                                  const ignoredKeys = new Set(['quantity', 'isTemporary', 'status', 'harvestMonths', 'storageMonths', 'harvestSource', 'isManualHarvest', 'rootstock', 'comment']);
+                                  const ignoredKeys = new Set(['quantity', 'isTemporary', 'status', 'harvestMonths', 'storageMonths', 'harvestSource', 'isManualHarvest', 'rootstock', 'datePlanted', 'location', 'plantings', 'comment']);
                                   const otherEntries = Object.entries(attrs).filter(([ak, av]) => !ignoredKeys.has(ak) && av !== undefined && av !== null && String(av).trim() !== '');
-                                  const hasDisplayInfo = Boolean(attrs.rootstock) || Boolean(attrs.comment) || otherEntries.length > 0;
+                                  const plantingsList = getVarietyPlantings(attrs)
+                                    .map((p, idx) => ({ ...p, num: idx + 1 }))
+                                    .filter(p => Boolean(p.datePlanted || p.location || p.rootstock));
+                                  const hasDisplayInfo = plantingsList.length > 0 || Boolean(attrs.comment) || otherEntries.length > 0;
 
                                   return (
                                     <tr key={i} className="hover:bg-stone-50">
@@ -870,11 +874,16 @@ export function PlantCatalogPrintModal({
                                         {hasDisplayInfo ? (
                                           <div className="space-y-1">
                                             <div className="flex flex-wrap gap-1">
-                                              {attrs.rootstock && (
-                                                <span className="px-1.5 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded text-[10px] font-semibold">
-                                                  Porte-greffe : {String(attrs.rootstock)}
+                                              {plantingsList.map(p => (
+                                                <span key={p.num} className="px-1.5 py-0.5 bg-blue-50 text-blue-800 border border-blue-200 rounded text-[10px] font-semibold">
+                                                  {plantingsList.length > 1 || p.num > 1 ? `#${p.num} : ` : ''}
+                                                  {[
+                                                    p.datePlanted ? `Planté le ${p.datePlanted}` : '',
+                                                    p.rootstock ? `PG : ${p.rootstock}` : '',
+                                                    p.location ? `📍 ${p.location}` : ''
+                                                  ].filter(Boolean).join(' • ')}
                                                 </span>
-                                              )}
+                                              ))}
                                               {otherEntries.map(([ak, av]) => {
                                                 const label = attributeTypes.find(t => t.id === ak)?.value;
                                                 return (

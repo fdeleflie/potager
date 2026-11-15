@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Sidebar } from './Sidebar';
-import { Menu, ChevronLeft, Cloud, CloudOff, RefreshCw, CheckCircle2, Mic, PenLine } from 'lucide-react';
+import { Menu, ChevronLeft, Cloud, CloudOff, RefreshCw, CheckCircle2, Mic, PenLine, Calendar } from 'lucide-react';
 import { QuotaBanner } from './QuotaBanner';
 import { getFirebaseQuotaStats, syncPriorityCollections, QuotaStats } from '../hooks/useFirebaseData';
 
@@ -169,30 +169,58 @@ export function Layout({ children, currentView, setCurrentView, onBack, canGoBac
         </div>
       </main>
 
-      {/* Floating Quick-Capture Bar when outside Journal */}
-      {currentView !== 'journal' && (
-        <div className="fixed bottom-4 right-4 z-40 flex items-center gap-2 print:hidden">
-          <button
-            type="button"
-            onClick={() => handleJumpToQuickNote(false)}
-            className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-full bg-white hover:bg-stone-50 text-stone-800 border border-stone-200 shadow-lg text-xs font-semibold transition-transform active:scale-95 cursor-pointer"
-            title="Ouvrir le Journal et saisir une note rapide"
-          >
-            <PenLine className="w-4 h-4 text-emerald-600" />
-            <span className="hidden sm:inline">+ Note journal</span>
-            <span className="sm:hidden">+ Note</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => handleJumpToQuickNote(true)}
-            className="flex items-center gap-1.5 px-4 py-2.5 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg shadow-emerald-600/30 text-xs font-bold transition-transform active:scale-95 cursor-pointer"
-            title="Dicter immédiatement une note vocale dans le Journal"
-          >
-            <Mic className="w-4 h-4" />
-            <span>Note vocale</span>
-          </button>
-        </div>
-      )}
+      {/* Floating Quick-Capture & Calendar Shortcut Bar */}
+      {(() => {
+        const isJournalView = currentView === 'journal';
+        const isCalendarView =
+          currentView === 'calendar' ||
+          currentView === 'calendar-perpetual' ||
+          currentView === 'perpetual' ||
+          currentView === 'calendar-multiplications' ||
+          currentView === 'multiplications' ||
+          currentView === 'calendar-harvest-storage';
+
+        if (isJournalView && isCalendarView) return null;
+
+        return (
+          <div className="fixed bottom-4 right-4 z-40 flex items-center gap-2 print:hidden">
+            {!isCalendarView && (
+              <button
+                type="button"
+                onClick={() => setCurrentView('calendar')}
+                className="flex items-center gap-1.5 px-3 sm:px-3.5 py-2.5 rounded-full bg-white hover:bg-stone-50 text-stone-800 border border-stone-200 shadow-lg text-xs font-semibold transition-transform active:scale-95 cursor-pointer"
+                title="Ouvrir les Calendriers (Agenda, Perpétuel, Multiplications, Récolte & Stockage)"
+              >
+                <Calendar className="w-4 h-4 text-amber-600" />
+                <span>Calendriers</span>
+              </button>
+            )}
+            {!isJournalView && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => handleJumpToQuickNote(false)}
+                  className="flex items-center gap-1.5 px-3 sm:px-3.5 py-2.5 rounded-full bg-white hover:bg-stone-50 text-stone-800 border border-stone-200 shadow-lg text-xs font-semibold transition-transform active:scale-95 cursor-pointer"
+                  title="Ouvrir le Journal et saisir une note rapide"
+                >
+                  <PenLine className="w-4 h-4 text-emerald-600" />
+                  <span className="hidden sm:inline">+ Note journal</span>
+                  <span className="sm:hidden">+ Note</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleJumpToQuickNote(true)}
+                  className="flex items-center gap-1.5 px-3.5 sm:px-4 py-2.5 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg shadow-emerald-600/30 text-xs font-bold transition-transform active:scale-95 cursor-pointer"
+                  title="Dicter immédiatement une note vocale dans le Journal"
+                >
+                  <Mic className="w-4 h-4" />
+                  <span>Note vocale</span>
+                </button>
+              </>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }

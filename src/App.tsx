@@ -535,6 +535,9 @@ export default function App() {
     if (currentView === 'calendar-multiplications' || currentView === 'multiplications') {
       return <CalendarView setCurrentView={handleNavigate} initialTab="multiplications" />;
     }
+    if (currentView === 'calendar-harvest-storage') {
+      return <CalendarView setCurrentView={handleNavigate} initialTab="harvest-storage" />;
+    }
     if (currentView === 'harvests') return <HarvestsView />;
     if (currentView === 'tasks') return <TasksView setCurrentView={handleNavigate} />;
     if (currentView === 'encyclopedia') return <EncyclopediaView setCurrentView={handleNavigate} />;

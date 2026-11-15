@@ -19,11 +19,12 @@ import { normalizeSpeciesName, normalizeVarietyKey } from '../utils/varietyNorma
 
 export interface HarvestStoragePlanningModalProps {
   isOpen: boolean;
-  onClose: () => void;
+  onClose?: () => void;
   allItems: HarvestStorageScheduleItem[];
   filteredItems: HarvestStorageScheduleItem[];
   activeFilterCategory?: string | string[];
   searchTerm?: string;
+  embedded?: boolean;
 }
 
 export function HarvestStoragePlanningModal({
@@ -32,7 +33,8 @@ export function HarvestStoragePlanningModal({
   allItems,
   filteredItems,
   activeFilterCategory,
-  searchTerm: parentSearchTerm
+  searchTerm: parentSearchTerm,
+  embedded = false
 }: HarvestStoragePlanningModalProps) {
   // Navigation & View Controls
   const [sortMode, setSortMode] = useState<'period' | 'variety'>('period');
@@ -86,7 +88,7 @@ export function HarvestStoragePlanningModal({
     return sortMode === 'period' ? sortScheduleByPeriod(base) : sortScheduleByVariety(base);
   }, [scope, filteredItems, allItems, statusFilter, selectedCategory, localSearch, sortMode]);
 
-  if (!isOpen) return null;
+  if (!embedded && !isOpen) return null;
 
   const handleOpenEdit = (item: HarvestStorageScheduleItem) => {
     setEditingItem(item);
@@ -197,6 +199,7 @@ export function HarvestStoragePlanningModal({
     });
   };
 
+
   const renderIcon = (item: HarvestStorageScheduleItem) => {
     if (item.icon && isEmoji(item.icon)) {
       return <span className="text-sm leading-none shrink-0">{item.icon}</span>;
@@ -205,9 +208,11 @@ export function HarvestStoragePlanningModal({
     return <IconComp className="w-3.5 h-3.5 shrink-0 text-stone-500" />;
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/50 backdrop-blur-xs animate-in fade-in duration-200">
-      <div className="bg-white rounded-2xl shadow-2xl border border-stone-200 w-full max-w-7xl max-h-[96vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+  const content = (
+    <div className={embedded
+      ? "bg-white rounded-2xl shadow-sm border border-stone-200/80 w-full flex flex-col overflow-hidden"
+      : "bg-white rounded-2xl shadow-2xl border border-stone-200 w-full max-w-7xl max-h-[96vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200"
+    }>
         
         {/* Header */}
         <div className="p-4 sm:p-5 border-b border-stone-200 flex items-center justify-between bg-stone-50/80 shrink-0">
@@ -241,12 +246,14 @@ export function HarvestStoragePlanningModal({
               <span>Imprimer (PDF)</span>
             </button>
 
-            <button
-              onClick={onClose}
-              className="p-2 text-stone-400 hover:text-stone-600 rounded-xl hover:bg-stone-200/60 transition-colors cursor-pointer"
-            >
-              <X className="w-5 h-5" />
-            </button>
+            {!embedded && onClose && (
+              <button
+                onClick={onClose}
+                className="p-2 text-stone-400 hover:text-stone-600 rounded-xl hover:bg-stone-200/60 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            )}
           </div>
         </div>
 
@@ -279,31 +286,33 @@ export function HarvestStoragePlanningModal({
             </div>
           </div>
 
-          {/* Scope Selector: Au Global vs Sélection Actuelle */}
-          <div className="flex items-center gap-2">
-            <span className="font-medium text-stone-500">Périmètre :</span>
-            <div className="flex items-center bg-white p-0.5 rounded-lg border border-stone-200 shadow-2xs">
-              <button
-                type="button"
-                onClick={() => setScope('all')}
-                className={`px-3 py-1.5 rounded-md font-medium transition-all cursor-pointer ${
-                  scope === 'all' ? 'bg-emerald-600 text-white font-semibold' : 'text-stone-600 hover:bg-stone-100'
-                }`}
-              >
-                Au global ({allItems.length})
-              </button>
-              <button
-                type="button"
-                onClick={() => setScope('filtered')}
-                className={`px-3 py-1.5 rounded-md font-medium transition-all cursor-pointer ${
-                  scope === 'filtered' ? 'bg-emerald-600 text-white font-semibold' : 'text-stone-600 hover:bg-stone-100'
-                }`}
-                title="Filtré par la sélection active du catalogue"
-              >
-                {activeFilterCategory ? `Sélection : ${Array.isArray(activeFilterCategory) ? activeFilterCategory.join(', ') : activeFilterCategory} (${filteredItems.length})` : `Sélection actuelle (${filteredItems.length})`}
-              </button>
+          {/* Scope Selector: Au Global vs Sélection Actuelle (only in modal mode when filtered) */}
+          {!embedded && (
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-stone-500">Périmètre :</span>
+              <div className="flex items-center bg-white p-0.5 rounded-lg border border-stone-200 shadow-2xs">
+                <button
+                  type="button"
+                  onClick={() => setScope('all')}
+                  className={`px-3 py-1.5 rounded-md font-medium transition-all cursor-pointer ${
+                    scope === 'all' ? 'bg-emerald-600 text-white font-semibold' : 'text-stone-600 hover:bg-stone-100'
+                  }`}
+                >
+                  Au global ({allItems.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setScope('filtered')}
+                  className={`px-3 py-1.5 rounded-md font-medium transition-all cursor-pointer ${
+                    scope === 'filtered' ? 'bg-emerald-600 text-white font-semibold' : 'text-stone-600 hover:bg-stone-100'
+                  }`}
+                  title="Filtré par la sélection active du catalogue"
+                >
+                  {activeFilterCategory ? `Sélection : ${Array.isArray(activeFilterCategory) ? activeFilterCategory.join(', ') : activeFilterCategory} (${filteredItems.length})` : `Sélection actuelle (${filteredItems.length})`}
+                </button>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Status Filter: Tous vs Catalogue vs En projet */}
           <div className="flex items-center gap-2">
@@ -724,6 +733,15 @@ export function HarvestStoragePlanningModal({
         )}
 
       </div>
+  );
+
+  if (embedded) {
+    return content;
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/50 backdrop-blur-xs animate-in fade-in duration-200">
+      {content}
     </div>
   );
 }
