@@ -6,7 +6,7 @@
 import { normalizeSpeciesName, normalizeVarietyKey, areVarietiesEquivalent, isTechnicalId } from './varietyNormalizer';
 import { getCanonicalCategory } from './categories';
 
-export type HarvestSource = 'manual' | 'reference' | 'species_default' | 'none';
+export type HarvestSource = 'manual' | 'reference' | 'species_default' | 'auto' | 'none';
 
 export interface HarvestStorageScheduleItem {
   id: string;
@@ -322,6 +322,7 @@ export function resolveVarietyHarvestAndStorage(
   const customHarvest = varietyAttributes?.harvestMonths;
   const customStorage = varietyAttributes?.storageMonths;
   const explicitManual = varietyAttributes?.harvestSource === 'manual' || varietyAttributes?.isManualHarvest === true;
+  const explicitAuto = varietyAttributes?.harvestSource === 'auto';
   const explicitReference = varietyAttributes?.harvestSource === 'reference';
 
   // If explicitly flagged as manual
@@ -335,6 +336,22 @@ export function resolveVarietyHarvestAndStorage(
       storageMonths: normS,
       source: 'manual',
       isManual: true,
+      defaultHarvestMonths: ref.harvestMonths,
+      defaultStorageMonths: ref.storageMonths
+    };
+  }
+
+  // If auto-filled via hybrid lookup (and not manually overridden)
+  if (explicitAuto && Array.isArray(customHarvest) && customHarvest.length > 0) {
+    const normH = Array.from(new Set(customHarvest.map(m => Math.floor(Number(m))))).filter(m => m >= 1 && m <= 12).sort((a, b) => a - b);
+    const normS = Array.isArray(customStorage)
+      ? Array.from(new Set(customStorage.map(m => Math.floor(Number(m))))).filter(m => m >= 1 && m <= 12).sort((a, b) => a - b)
+      : [];
+    return {
+      harvestMonths: normH,
+      storageMonths: normS,
+      source: 'auto',
+      isManual: false,
       defaultHarvestMonths: ref.harvestMonths,
       defaultStorageMonths: ref.storageMonths
     };

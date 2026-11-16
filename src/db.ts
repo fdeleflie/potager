@@ -167,6 +167,7 @@ export interface EncyclopediaEntry {
   goodCompanions: string[];
   badCompanions: string[];
   tips: string;
+  trackPlantingDate?: boolean;
   updatedAt: string;
   pricePerKg?: number;
   color?: string;

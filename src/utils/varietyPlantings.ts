@@ -1,7 +1,9 @@
 import { toDateKey } from './notes';
+import { fb } from '../hooks/useFirebaseData';
 
 export interface VarietyPlantingEntry {
   datePlanted: string;
+  dateUnknown?: boolean;
   location: string;
   rootstock: string;
 }
@@ -16,22 +18,32 @@ export function getVarietyPlantings(attributes?: Record<string, any>): VarietyPl
   const legacyRootstock = attributes.rootstock ? String(attributes.rootstock).trim() : '';
 
   if (Array.isArray(attributes.plantings) && attributes.plantings.length > 0) {
-    return attributes.plantings.map((entry: any, idx: number) => ({
-      datePlanted: entry?.datePlanted ? (toDateKey(entry.datePlanted) || String(entry.datePlanted).trim()) : '',
-      location: entry?.location ? String(entry.location).trim() : '',
-      rootstock: entry?.rootstock !== undefined
-        ? String(entry.rootstock).trim()
-        : (idx === 0 ? legacyRootstock : ''),
-    }));
+    return attributes.plantings.map((entry: any, idx: number) => {
+      const datePlanted = entry?.datePlanted ? (toDateKey(entry.datePlanted) || String(entry.datePlanted).trim()) : '';
+      return {
+        datePlanted,
+        dateUnknown: !datePlanted && Boolean(entry?.dateUnknown),
+        location: entry?.location ? String(entry.location).trim() : '',
+        rootstock: entry?.rootstock !== undefined
+          ? String(entry.rootstock).trim()
+          : (idx === 0 ? legacyRootstock : ''),
+      };
+    });
   }
 
   const legacyDate = attributes.datePlanted
     ? (toDateKey(attributes.datePlanted) || String(attributes.datePlanted).trim())
     : '';
+  const legacyDateUnknown = !legacyDate && Boolean(attributes.dateUnknown);
   const legacyLoc = attributes.location ? String(attributes.location).trim() : '';
 
-  if (legacyDate || legacyLoc || legacyRootstock) {
-    return [{ datePlanted: legacyDate, location: legacyLoc, rootstock: legacyRootstock }];
+  if (legacyDate || legacyDateUnknown || legacyLoc || legacyRootstock) {
+    return [{
+      datePlanted: legacyDate,
+      dateUnknown: legacyDateUnknown,
+      location: legacyLoc,
+      rootstock: legacyRootstock,
+    }];
   }
 
   return [];
@@ -69,11 +81,15 @@ export function resizePlantingsToQuantity(
   quantity: number
 ): VarietyPlantingEntry[] {
   const safeQty = Math.max(1, Math.floor(quantity) || 1);
-  return Array.from({ length: safeQty }, (_, idx) => ({
-    datePlanted: entries[idx]?.datePlanted || '',
-    location: entries[idx]?.location || '',
-    rootstock: entries[idx]?.rootstock || '',
-  }));
+  return Array.from({ length: safeQty }, (_, idx) => {
+    const datePlanted = entries[idx]?.datePlanted || '';
+    return {
+      datePlanted,
+      dateUnknown: !datePlanted && Boolean(entries[idx]?.dateUnknown),
+      location: entries[idx]?.location || '',
+      rootstock: entries[idx]?.rootstock || '',
+    };
+  });
 }
 
 /**
@@ -84,19 +100,27 @@ export function buildPlantingsPayload(
   entries: Partial<VarietyPlantingEntry>[],
   quantity: number
 ): {
-  plantings?: VarietyPlantingEntry[];
+  plantings?: Array<{ datePlanted: string; dateUnknown?: boolean; location: string; rootstock: string }>;
   datePlanted?: string;
   location?: string;
   rootstock?: string;
 } {
-  const resized = resizePlantingsToQuantity(entries, quantity).map(item => ({
-    datePlanted: (item.datePlanted || '').trim(),
-    location: (item.location || '').trim(),
-    rootstock: (item.rootstock || '').trim(),
-  }));
+  const resized = resizePlantingsToQuantity(entries, quantity).map(item => {
+    const datePlanted = (item.datePlanted || '').trim();
+    const dateUnknown = !datePlanted && Boolean(item.dateUnknown);
+    const cleaned: { datePlanted: string; dateUnknown?: boolean; location: string; rootstock: string } = {
+      datePlanted,
+      location: (item.location || '').trim(),
+      rootstock: (item.rootstock || '').trim(),
+    };
+    if (dateUnknown) {
+      cleaned.dateUnknown = true;
+    }
+    return cleaned;
+  });
 
   const hasAnyData = resized.some(
-    item => item.datePlanted !== '' || item.location !== '' || item.rootstock !== ''
+    item => item.datePlanted !== '' || Boolean(item.dateUnknown) || item.location !== '' || item.rootstock !== ''
   );
   if (!hasAnyData) {
     return {};
@@ -104,7 +128,7 @@ export function buildPlantingsPayload(
 
   let lastNonEmptyIdx = -1;
   resized.forEach((item, idx) => {
-    if (item.datePlanted || item.location || item.rootstock) lastNonEmptyIdx = idx;
+    if (item.datePlanted || item.dateUnknown || item.location || item.rootstock) lastNonEmptyIdx = idx;
   });
   const compact = resized.slice(0, lastNonEmptyIdx + 1);
 
@@ -123,13 +147,17 @@ export function buildPlantingsPayload(
 export interface VarietyMissingDateStats {
   total: number;
   filled: number;
+  unknown: number;
   missing: number;
+  isExcluded: boolean;
+  isTemporary: boolean;
   isMissingAny: boolean;
   isMissingAll: boolean;
 }
 
 /**
- * Computes how many specimens of a variety have or are missing a planting date.
+ * Computes how many specimens of a variety have a known/unknown date vs missing a date.
+ * Respects per-variety `excludePlantingDateTracking` opt-out and excludes temporary ("En projet") varieties.
  */
 export function getVarietyMissingDateStats(
   attributes?: Record<string, any>,
@@ -142,15 +170,159 @@ export function getVarietyMissingDateStats(
         ? Number(attributes.quantity)
         : 1;
   const safeQty = Math.max(1, Number.isFinite(rawQty) ? Math.floor(rawQty) : 1);
+
+  const isTemporary = Boolean(attributes?.isTemporary || attributes?.status === 'temporary');
+  const isManualExcluded = Boolean(attributes?.excludePlantingDateTracking);
+
+  if (isTemporary || isManualExcluded) {
+    return {
+      total: safeQty,
+      filled: safeQty,
+      unknown: 0,
+      missing: 0,
+      isExcluded: isManualExcluded,
+      isTemporary,
+      isMissingAny: false,
+      isMissingAll: false,
+    };
+  }
+
   const resized = resizePlantingsToQuantity(getVarietyPlantings(attributes), safeQty);
-  const filled = resized.filter(entry => Boolean((entry.datePlanted || '').trim())).length;
-  const missing = Math.max(0, safeQty - filled);
+  let dated = 0;
+  let unknown = 0;
+  for (const entry of resized) {
+    if ((entry.datePlanted || '').trim()) {
+      dated += 1;
+    } else if (entry.dateUnknown) {
+      unknown += 1;
+    }
+  }
+  const resolved = dated + unknown;
+  const missing = Math.max(0, safeQty - resolved);
   return {
     total: safeQty,
-    filled,
+    filled: dated,
+    unknown,
     missing,
+    isExcluded: false,
+    isTemporary: false,
     isMissingAny: missing > 0,
-    isMissingAll: filled === 0,
+    isMissingAll: resolved === 0,
   };
 }
 
+const TRACKED_PLANTING_CATEGORIES = new Set([
+  'arbre fruitier',
+  'arbres fruitiers',
+  'petits fruits',
+  'petit fruit',
+  'fruit',
+  'fruits',
+  'vigne',
+  'vignes',
+  'agrume',
+  'agrumes',
+  'arbuste',
+  'arbustes',
+  'vivace',
+  'vivaces',
+  'plante vivace',
+  'plantes vivaces',
+  'grimpant',
+  'grimpante',
+  'grimpants',
+  'grimpantes',
+]);
+
+function normalizeTrackingCategoryKey(str?: string | null): string {
+  if (!str) return '';
+  return str
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * Returns true when at least one plant category corresponds to a persistent/perennial plant
+ * (fruit trees, small fruits, fruits, vines, shrubs, etc.) tracked by default.
+ * Vegetables, tubers, roots, flowers and aromatics return false by default.
+ */
+export function isCategoryTrackedForPlantingByDefault(categories?: string | string[] | null): boolean {
+  const list = Array.isArray(categories)
+    ? categories
+    : categories
+      ? [categories]
+      : [];
+  return list.some(cat => TRACKED_PLANTING_CATEGORIES.has(normalizeTrackingCategoryKey(cat)));
+}
+
+/**
+ * Resolves whether catalog planting date tracking is active for a plant.
+ * Explicit `trackPlantingDate` boolean overrides the category default.
+ */
+export function isPlantTrackedForPlanting(plant?: {
+  trackPlantingDate?: boolean;
+  category?: string;
+  categories?: string[];
+} | null): boolean {
+  if (!plant) return false;
+  if (typeof plant.trackPlantingDate === 'boolean') {
+    return plant.trackPlantingDate;
+  }
+  const cats = plant.categories && plant.categories.length > 0
+    ? plant.categories
+    : plant.category
+      ? [plant.category]
+      : [];
+  return isCategoryTrackedForPlantingByDefault(cats);
+}
+
+export const DEFAULT_ROOTSTOCKS: Array<{ id: string; value: string }> = [
+  { id: 'rs_franc', value: '🌱 Franc (semis)' },
+  { id: 'rs_non_greffe', value: '🌱 Non greffé / Franc de pied' },
+  { id: 'rs_m9', value: '🌱 M9 (Pommier - faible vigueur)' },
+  { id: 'rs_m26', value: '🌱 M26 (Pommier - vigueur modérée)' },
+  { id: 'rs_mm106', value: '🌱 MM106 (Pommier - demi-tige)' },
+  { id: 'rs_mm111', value: '🌱 MM111 (Pommier - haute-tige)' },
+  { id: 'rs_ba29', value: '🌱 Cognassier de Provence BA29 (Poirier)' },
+  { id: 'rs_sydo', value: "🌱 Cognassier d'Angers Sydo (Poirier)" },
+  { id: 'rs_st_julien', value: '🌱 Saint-Julien A (Prunier / Pêcher)' },
+  { id: 'rs_myrobolan', value: '🌱 Myrobolan (Prunier / Abricotier)' },
+  { id: 'rs_gisela5', value: '🌱 Gisela 5 (Cerisier - nain)' },
+  { id: 'rs_maxma14', value: '🌱 MaxMa 14 (Cerisier - demi-tige)' },
+  { id: 'rs_mahaleb', value: '🌱 Sainte-Lucie / Mahaleb (Cerisier)' },
+  { id: 'rs_gf677', value: '🌱 GF 677 (Pêcher / Amandier)' },
+  { id: 'rs_montclar', value: '🌱 Montclar (Pêcher)' },
+];
+
+let isSeedingRootstocks = false;
+
+export async function ensureRootstocksInitialized(config: any[] | undefined | null): Promise<void> {
+  if (!config || config.length === 0 || isSeedingRootstocks) return;
+  const isInitialized = config.some((c: any) => c.id === 'rootstocks_initialized');
+  const existingRootstocks = config.filter((c: any) => c.type === 'rootstock');
+
+  if (!isInitialized && existingRootstocks.length === 0) {
+    isSeedingRootstocks = true;
+    try {
+      await fb.put('config', {
+        id: 'rootstocks_initialized',
+        type: 'setting',
+        value: 'true',
+      });
+      for (const def of DEFAULT_ROOTSTOCKS) {
+        await fb.put('config', {
+          id: def.id,
+          type: 'rootstock',
+          value: def.value,
+          attributes: { emoji: '🌱' },
+        });
+      }
+    } catch (err) {
+      console.error('Failed to seed default rootstocks:', err);
+    } finally {
+      isSeedingRootstocks = false;
+    }
+  }
+}

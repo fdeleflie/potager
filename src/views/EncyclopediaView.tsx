@@ -1,5 +1,5 @@
 import { useFirebaseData, fb } from '../hooks/useFirebaseData';
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { db, EncyclopediaEntry, HealthIssue, ConfigItem } from '../db';
 import { v4 as uuidv4 } from 'uuid';
 import { 
@@ -36,16 +36,24 @@ import {
 } from '../utils/categories';
 import { importOrchardPdfPlants, ImportResult } from '../utils/orchardImporter';
 import { isTechnicalId } from '../utils/varietyNormalizer';
-import { ensureRootstocksInitialized } from '../utils/rootstocks';
 import { formatDateShortFR, toDateKey } from '../utils/notes';
 import {
   VarietyPlantingEntry,
   VarietyMissingDateStats,
   getVarietyPlantings,
   getVarietyMissingDateStats,
+  isCategoryTrackedForPlantingByDefault,
+  isPlantTrackedForPlanting,
   resizePlantingsToQuantity,
-  buildPlantingsPayload
+  buildPlantingsPayload,
+  ensureRootstocksInitialized
 } from '../utils/varietyPlantings';
+import {
+  VarietyAttributeField,
+  autofillVarietyHybrid,
+  autofillVarietiesBatchHybrid,
+  hasMissingAutofillData
+} from '../utils/varietyAutofill';
 
 type Tab = 'vegetables' | 'health';
 type PlantSubTab = 'culture' | 'varieties';
@@ -109,6 +117,31 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
     { datePlanted: '', location: '', rootstock: '' }
   ]);
   const [newVarietyIsTemporary, setNewVarietyIsTemporary] = useState(false);
+  const [newVarietyExcludeDateTracking, setNewVarietyExcludeDateTracking] = useState(false);
+  const [newVarietyAutoFill, setNewVarietyAutoFill] = useState(true);
+  const [isAddingVarietyAutofill, setIsAddingVarietyAutofill] = useState(false);
+  const [isAutofillingEditForm, setIsAutofillingEditForm] = useState(false);
+  const [autofillingVarietyId, setAutofillingVarietyId] = useState<string | null>(null);
+  const [batchAutofillProgress, setBatchAutofillProgress] = useState<{
+    current: number;
+    total: number;
+    currentName: string;
+    waitSeconds?: number | null;
+  } | null>(null);
+  const batchAutofillAbortRef = useRef(false);
+  const [isGlobalAutofillModalOpen, setIsGlobalAutofillModalOpen] = useState(false);
+  const [globalAutofillOverwrite, setGlobalAutofillOverwrite] = useState(false);
+  const [globalAutofillResetManualHarvest, setGlobalAutofillResetManualHarvest] = useState(false);
+  const [globalAutofillProgress, setGlobalAutofillProgress] = useState<{
+    current: number;
+    total: number;
+    currentLabel: string;
+    updated: number;
+    errors: number;
+    waitSeconds?: number | null;
+  } | null>(null);
+  const [globalAutofillSummary, setGlobalAutofillSummary] = useState<string | null>(null);
+  const globalAutofillAbortRef = useRef(false);
   const [varietyError, setVarietyError] = useState<string | null>(null);
   const [editingVarietyId, setEditingVarietyId] = useState<string | null>(null);
   const [varietyEditForm, setVarietyEditForm] = useState<{
@@ -117,17 +150,19 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
     plantings: VarietyPlantingEntry[];
     comment: string;
     isTemporary?: boolean;
+    excludePlantingDateTracking?: boolean;
     harvestMonths?: number[];
     storageMonths?: number[];
-    harvestSource?: 'manual' | 'reference';
+    harvestSource?: 'manual' | 'reference' | 'auto';
     isManualHarvest?: boolean;
     attributes: any;
   }>({
     name: '',
     quantity: 1,
-    plantings: [{ datePlanted: '', location: '', rootstock: '' }],
+    plantings: [{ datePlanted: '', dateUnknown: false, location: '', rootstock: '' }],
     comment: '',
     isTemporary: false,
+    excludePlantingDateTracking: false,
     harvestMonths: [],
     storageMonths: [],
     harvestSource: 'reference',
@@ -232,6 +267,15 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
       const icon = enc?.icon || (primaryCategory === 'Arbre fruitier' ? (treeSample?.icon || 'Trees') : 'Sprout');
       const color = enc?.color || treeSample?.color || '#10b981';
 
+      const trackPlantingDate = typeof enc?.trackPlantingDate === 'boolean'
+        ? enc.trackPlantingDate
+        : (typeof conf?.trackPlantingDate === 'boolean' ? conf.trackPlantingDate : undefined);
+      const isPlantingTracked = isPlantTrackedForPlanting({
+        trackPlantingDate,
+        category: primaryCategory,
+        categories: canonicalCategories
+      });
+
       // Use a prefixed ID to avoid collisions between config and encyclopedia tables
       const id = conf ? `c-${conf.id}` : (enc ? `e-${enc.id}` : `v-${uuidv4()}`);
 
@@ -252,6 +296,8 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
         goodCompanions: enc?.goodCompanions || [],
         badCompanions: enc?.badCompanions || [],
         tips: enc?.tips || '',
+        trackPlantingDate,
+        isPlantingTracked,
         color,
         icon
       };
@@ -339,6 +385,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
     });
 
     unifiedPlants.forEach(plant => {
+      if (!plant.isPlantingTracked) return;
       const plantName = (plant.name || '').trim().toLowerCase();
       const ids = new Set<string>();
       if (plant.configId) ids.add(plant.configId);
@@ -1021,7 +1068,8 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
       setEditForm({
         ...veg,
         category: canonicalCats[0] || 'Légume',
-        categories: canonicalCats
+        categories: canonicalCats,
+        trackPlantingDate: typeof veg.trackPlantingDate === 'boolean' ? veg.trackPlantingDate : undefined
       });
     } else {
       const initialCats = selectedCategories.length > 0
@@ -1041,6 +1089,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
         goodCompanions: [],
         badCompanions: [],
         tips: '',
+        trackPlantingDate: undefined,
         pricePerKg: undefined,
         color: '#10b981',
         icon: isFruit ? 'Trees' : 'Sprout'
@@ -1105,6 +1154,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
       goodCompanions: editForm.goodCompanions || [],
       badCompanions: editForm.badCompanions || [],
       tips: editForm.tips || '',
+      trackPlantingDate: typeof editForm.trackPlantingDate === 'boolean' ? editForm.trackPlantingDate : undefined,
       color: editForm.color || '#10b981',
       icon: editForm.icon || (primaryCategory === 'Arbre fruitier' ? 'Trees' : 'Sprout'),
       updatedAt: new Date().toISOString()
@@ -1115,6 +1165,13 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
     } else {
       encId = uuidv4();
       await fb.add('encyclopedia', { id: encId, ...encData });
+    }
+
+    if (editForm.configId) {
+      const confItem = config?.find((c: any) => c.id === editForm.configId);
+      if (confItem && confItem.trackPlantingDate !== undefined) {
+        await fb.update('config', editForm.configId, { trackPlantingDate: undefined });
+      }
     }
 
     // Ensure all categories exist in config (accent- and case-insensitively)
@@ -1149,6 +1206,35 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
     // Set the selected ID with the correct prefix
     setSelectedVegId(`e-${encId}`);
     setIsEditing(false);
+  };
+
+  const handleTogglePlantPlantingTracking = async (plant: any, nextValue: boolean | undefined) => {
+    if (!plant) return;
+    if (plant.encyclopediaId) {
+      await fb.update('encyclopedia', plant.encyclopediaId, { trackPlantingDate: nextValue });
+    }
+    if (plant.configId) {
+      if (!plant.encyclopediaId || config?.find((c: any) => c.id === plant.configId)?.trackPlantingDate !== undefined) {
+        await fb.update('config', plant.configId, {
+          trackPlantingDate: !plant.encyclopediaId ? nextValue : undefined
+        });
+      }
+    }
+
+    const effectiveNext = isPlantTrackedForPlanting({
+      trackPlantingDate: nextValue,
+      category: plant.category,
+      categories: plant.categories
+    });
+    if (!effectiveNext) {
+      setFilterPlantVarietiesMissingDate(false);
+    }
+    setSuccessToast(
+      effectiveNext
+        ? `Suivi des dates de plantation activé pour « ${plant.name} ».`
+        : `Suivi des dates de plantation désactivé pour « ${plant.name} ».`
+    );
+    setTimeout(() => setSuccessToast(null), 4000);
   };
 
   const handleSaveHealth = async () => {
@@ -1229,6 +1315,41 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
       harvestMonths: defaultH,
       storageMonths: defaultS
     };
+
+    let autofillErrorMsg: string | undefined;
+    if (newVarietyAutoFill) {
+      setIsAddingVarietyAutofill(true);
+      try {
+        const autoRes = await autofillVarietyHybrid({
+          species: selectedVeg.name,
+          category: selectedVeg.category,
+          variety: trimmed,
+          speciesHarvestPeriod: selectedVeg.harvestPeriod,
+          attributeFields: varietyAttributeFields,
+          currentAttributes: {},
+          currentComment: '',
+          currentHarvestMonths: defaultH,
+          currentStorageMonths: defaultS,
+          isManualHarvest: false,
+          overwriteExisting: true,
+        });
+        Object.assign(newAttrs, autoRes.attributes);
+        if (autoRes.comment) newAttrs.comment = autoRes.comment;
+        if (autoRes.harvestMonths.length > 0) {
+          newAttrs.harvestMonths = autoRes.harvestMonths;
+          newAttrs.storageMonths = autoRes.storageMonths;
+          newAttrs.harvestSource = autoRes.harvestSource;
+          newAttrs.isManualHarvest = false;
+        }
+        autofillErrorMsg = autoRes.error;
+      } finally {
+        setIsAddingVarietyAutofill(false);
+      }
+    }
+
+    if (newVarietyExcludeDateTracking) {
+      newAttrs.excludePlantingDateTracking = true;
+    }
     if (plantingsPayload.plantings) {
       newAttrs.plantings = plantingsPayload.plantings;
     }
@@ -1252,8 +1373,16 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
     });
     setNewVarietyName("");
     setNewVarietyQuantity(1);
-    setNewVarietyPlantings([{ datePlanted: '', location: '', rootstock: '' }]);
+    setNewVarietyPlantings([{ datePlanted: '', dateUnknown: false, location: '', rootstock: '' }]);
     setNewVarietyIsTemporary(false);
+    setNewVarietyExcludeDateTracking(false);
+    if (newVarietyAutoFill && !autofillErrorMsg) {
+      setSuccessToast(`Variété « ${trimmed} » ajoutée et pré-remplie automatiquement !`);
+      setTimeout(() => setSuccessToast(null), 4000);
+    } else if (autofillErrorMsg) {
+      setSuccessToast(`Variété ajoutée (complétion auto partielle : ${autofillErrorMsg})`);
+      setTimeout(() => setSuccessToast(null), 5000);
+    }
   };
 
   const handleIntegrateVarietyToCatalog = async (varietyId: string) => {
@@ -1307,6 +1436,68 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
     config?.filter(c => c.type === 'variety_option') || []
   , [config]);
 
+  const varietyAttributeFields = useMemo<VarietyAttributeField[]>(() => {
+    return varietyAttrTypes.map((t: any) => ({
+      id: t.id,
+      label: t.value,
+      existingOptions: varietyOptions
+        .filter((o: any) => o.parentId === t.id)
+        .map((o: any) => (o.value || '').trim())
+        .filter(Boolean),
+    }));
+  }, [varietyAttrTypes, varietyOptions]);
+
+  const globalCatalogVarietyEntries = useMemo(() => {
+    if (!unifiedPlants || !config) return [];
+    const nameToIds = new Map<string, Set<string>>();
+    encyclopedia?.forEach((e: any) => {
+      const n = (e.name || '').trim().toLowerCase();
+      if (n && e.id) {
+        if (!nameToIds.has(n)) nameToIds.set(n, new Set());
+        nameToIds.get(n)!.add(e.id);
+      }
+    });
+    config.filter((c: any) => c.type === 'vegetable').forEach((c: any) => {
+      const n = (c.value || '').trim().toLowerCase();
+      if (n && c.id) {
+        if (!nameToIds.has(n)) nameToIds.set(n, new Set());
+        nameToIds.get(n)!.add(c.id);
+      }
+    });
+
+    const entries: Array<{ variety: any; plant: any; isIncomplete: boolean }> = [];
+    const seenVarietyIds = new Set<string>();
+
+    unifiedPlants.forEach((plant) => {
+      const plantName = (plant.name || '').trim().toLowerCase();
+      const ids = new Set<string>();
+      if (plant.configId) ids.add(plant.configId);
+      if (plant.encyclopediaId) ids.add(plant.encyclopediaId);
+      nameToIds.get(plantName)?.forEach((id) => ids.add(id));
+
+      const plantVars = config
+        .filter((c: any) => c.type === 'variety' && ids.has(c.parentId) && !isTechnicalId(c.value))
+        .sort((a: any, b: any) => (a.value || '').localeCompare(b.value || ''));
+
+      plantVars.forEach((v: any) => {
+        if (seenVarietyIds.has(v.id)) return;
+        seenVarietyIds.add(v.id);
+        entries.push({
+          variety: v,
+          plant,
+          isIncomplete: hasMissingAutofillData(v, plant, varietyAttributeFields),
+        });
+      });
+    });
+
+    return entries;
+  }, [unifiedPlants, config, encyclopedia, varietyAttributeFields]);
+
+  const globalIncompleteVarietyCount = useMemo(
+    () => globalCatalogVarietyEntries.filter((e) => e.isIncomplete).length,
+    [globalCatalogVarietyEntries]
+  );
+
   const rootstockOptions = useMemo(() => {
     if (!config) return [];
     return config
@@ -1323,7 +1514,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
     // Save new options to config
     for (const attrTypeId of Object.keys(varietyEditForm.attributes)) {
       const value = varietyEditForm.attributes[attrTypeId];
-      if (typeof value === 'string' && value.trim() && !['other', 'quantity', 'rootstock', 'datePlanted', 'location', 'plantings', 'comment', 'harvestSource', 'isManualHarvest'].includes(attrTypeId)) {
+      if (typeof value === 'string' && value.trim() && !['other', 'quantity', 'rootstock', 'datePlanted', 'dateUnknown', 'excludePlantingDateTracking', 'location', 'plantings', 'comment', 'harvestSource', 'isManualHarvest'].includes(attrTypeId)) {
         const attrType = varietyAttrTypes.find(t => t.id === attrTypeId);
         if (attrType) {
           const parts = value.split(',').map(p => p.trim()).filter(p => p);
@@ -1357,9 +1548,15 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
       status: varietyEditForm.isTemporary ? 'temporary' : 'confirmed',
       harvestMonths: varietyEditForm.harvestMonths || [],
       storageMonths: varietyEditForm.storageMonths || [],
-      harvestSource: isManual ? 'manual' : 'reference',
+      harvestSource: isManual ? 'manual' : (varietyEditForm.harvestSource === 'auto' ? 'auto' : 'reference'),
       isManualHarvest: isManual
     };
+
+    if (varietyEditForm.excludePlantingDateTracking) {
+      nextAttributes.excludePlantingDateTracking = true;
+    } else {
+      delete nextAttributes.excludePlantingDateTracking;
+    }
 
     if (plantingsPayload.rootstock) {
       nextAttributes.rootstock = plantingsPayload.rootstock;
@@ -1485,7 +1682,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
           ...(variety?.attributes || {}),
           harvestMonths: editingPeriodsVariety.harvestMonths,
           storageMonths: editingPeriodsVariety.storageMonths,
-          harvestSource: isManual ? 'manual' : 'reference',
+          harvestSource: isManual ? 'manual' : (editingPeriodsVariety.source === 'auto' ? 'auto' : 'reference'),
           isManualHarvest: isManual
         }
       });
@@ -1521,7 +1718,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
           ? Number(variety.attributes.quantity)
           : 1
     );
-    const { harvestMonths, storageMonths, isManual } = resolveVarietyHarvestAndStorage(
+    const { harvestMonths, storageMonths, isManual, source } = resolveVarietyHarvestAndStorage(
       targetPlant?.name || '',
       variety.value,
       variety.attributes,
@@ -1534,12 +1731,390 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
       plantings: resizePlantingsToQuantity(getVarietyPlantings(variety.attributes), vQty),
       comment: variety.attributes?.comment || '',
       isTemporary: Boolean(variety.attributes?.isTemporary || variety.attributes?.status === 'temporary'),
+      excludePlantingDateTracking: Boolean(variety.attributes?.excludePlantingDateTracking),
       harvestMonths: [...harvestMonths],
       storageMonths: [...storageMonths],
-      harvestSource: isManual ? 'manual' : 'reference',
+      harvestSource: isManual ? 'manual' : (source === 'auto' ? 'auto' : 'reference'),
       isManualHarvest: isManual,
       attributes: variety.attributes || {}
     });
+  };
+
+  const handleAutofillEditForm = async (overwriteExisting = false) => {
+    if (!selectedVeg || !varietyEditForm.name.trim() || isAutofillingEditForm) return;
+    setIsAutofillingEditForm(true);
+    try {
+      const res = await autofillVarietyHybrid({
+        species: selectedVeg.name,
+        category: selectedVeg.category,
+        variety: varietyEditForm.name.trim(),
+        speciesHarvestPeriod: selectedVeg.harvestPeriod,
+        attributeFields: varietyAttributeFields,
+        currentAttributes: varietyEditForm.attributes,
+        currentComment: varietyEditForm.comment,
+        currentHarvestMonths: varietyEditForm.harvestMonths || [],
+        currentStorageMonths: varietyEditForm.storageMonths || [],
+        isManualHarvest: Boolean(varietyEditForm.isManualHarvest) && !overwriteExisting,
+        overwriteExisting,
+      });
+
+      setVarietyEditForm((prev) => ({
+        ...prev,
+        attributes: {
+          ...prev.attributes,
+          ...res.attributes,
+        },
+        comment: res.comment,
+        harvestMonths: res.harvestMonths,
+        storageMonths: res.storageMonths,
+        harvestSource: res.harvestSource,
+        isManualHarvest: res.isManualHarvest,
+      }));
+
+      if (res.error) {
+        setSuccessToast(`Pré-remplissage partiel : ${res.error}`);
+      } else {
+        setSuccessToast(`Champs et périodes pré-remplis pour « ${varietyEditForm.name} » — vérifiez puis enregistrez.`);
+      }
+      setTimeout(() => setSuccessToast(null), 4000);
+    } finally {
+      setIsAutofillingEditForm(false);
+    }
+  };
+
+  const handleAutofillSingleVariety = async (variety: any, plantContext?: any) => {
+    const targetPlant = plantContext || selectedVeg;
+    if (!variety?.id || !targetPlant || autofillingVarietyId) return;
+    setAutofillingVarietyId(variety.id);
+    try {
+      const resolved = resolveVarietyHarvestAndStorage(
+        targetPlant.name,
+        variety.value,
+        variety.attributes,
+        targetPlant.harvestPeriod
+      );
+      const res = await autofillVarietyHybrid({
+        species: targetPlant.name,
+        category: targetPlant.category,
+        variety: variety.value,
+        speciesHarvestPeriod: targetPlant.harvestPeriod,
+        attributeFields: varietyAttributeFields,
+        currentAttributes: variety.attributes || {},
+        currentComment: variety.attributes?.comment || '',
+        currentHarvestMonths: resolved.harvestMonths,
+        currentStorageMonths: resolved.storageMonths,
+        isManualHarvest: resolved.isManual,
+        overwriteExisting: false,
+      });
+
+      const nextAttrs: Record<string, any> = {
+        ...(variety.attributes || {}),
+        ...res.attributes,
+        harvestMonths: res.harvestMonths,
+        storageMonths: res.storageMonths,
+        harvestSource: res.harvestSource,
+        isManualHarvest: res.isManualHarvest,
+      };
+      if (res.comment) {
+        nextAttrs.comment = res.comment;
+      }
+      for (const k of Object.keys(nextAttrs)) {
+        if (nextAttrs[k] === undefined) delete nextAttrs[k];
+      }
+      await fb.update('config', variety.id, { attributes: nextAttrs });
+
+      if (res.error) {
+        setSuccessToast(`Complétion partielle pour « ${variety.value} » : ${res.error}`);
+      } else {
+        setSuccessToast(`Fiche « ${variety.value} » complétée avec succès !`);
+      }
+      setTimeout(() => setSuccessToast(null), 3500);
+    } finally {
+      setAutofillingVarietyId(null);
+    }
+  };
+
+  const handleBatchAutofillPlantVarieties = async () => {
+    if (!selectedVeg || batchAutofillProgress) return;
+    const targets = plantVarieties.filter((v: any) =>
+      hasMissingAutofillData(v, selectedVeg, varietyAttributeFields)
+    );
+    if (targets.length === 0) return;
+
+    batchAutofillAbortRef.current = false;
+    const targetMap = new Map<string, any>();
+    const batchItems = targets.map((v: any) => {
+      targetMap.set(v.id, v);
+      const resolved = resolveVarietyHarvestAndStorage(
+        selectedVeg.name,
+        v.value,
+        v.attributes,
+        selectedVeg.harvestPeriod
+      );
+      return {
+        key: v.id,
+        species: selectedVeg.name,
+        category: selectedVeg.category,
+        variety: v.value,
+        speciesHarvestPeriod: selectedVeg.harvestPeriod,
+        currentAttributes: v.attributes || {},
+        currentComment: v.attributes?.comment || '',
+        currentHarvestMonths: resolved.harvestMonths,
+        currentStorageMonths: resolved.storageMonths,
+        isManualHarvest: resolved.isManual,
+      };
+    });
+
+    let completed = 0;
+    setBatchAutofillProgress({
+      current: 0,
+      total: targets.length,
+      currentName: targets[0].value,
+      waitSeconds: null,
+    });
+
+    const summary = await autofillVarietiesBatchHybrid({
+      items: batchItems,
+      attributeFields: varietyAttributeFields,
+      overwriteExisting: false,
+      batchSize: 12,
+      shouldAbort: () => batchAutofillAbortRef.current,
+      onChunkStart: (chunkItems) => {
+        const label =
+          chunkItems.length === 1
+            ? chunkItems[0].variety
+            : `${chunkItems[0].variety} (+${chunkItems.length - 1})`;
+        setBatchAutofillProgress((prev) =>
+          prev ? { ...prev, currentName: label, waitSeconds: null } : null
+        );
+      },
+      onWaitStatus: (remainingSeconds) => {
+        setBatchAutofillProgress((prev) =>
+          prev ? { ...prev, waitSeconds: remainingSeconds } : null
+        );
+      },
+      onChunkCompleted: async (chunkResults) => {
+        await Promise.all(
+          chunkResults.map(async ({ key, result }) => {
+            const v = targetMap.get(key);
+            if (!v) return;
+            const nextAttrs: Record<string, any> = {
+              ...(v.attributes || {}),
+              ...result.attributes,
+              harvestMonths: result.harvestMonths,
+              storageMonths: result.storageMonths,
+              harvestSource: result.harvestSource,
+              isManualHarvest: result.isManualHarvest,
+            };
+            if (result.comment) {
+              nextAttrs.comment = result.comment;
+            }
+            for (const k of Object.keys(nextAttrs)) {
+              if (nextAttrs[k] === undefined) delete nextAttrs[k];
+            }
+            await fb.update('config', v.id, { attributes: nextAttrs });
+          })
+        );
+        completed += chunkResults.length;
+        setBatchAutofillProgress((prev) =>
+          prev ? { ...prev, current: completed, waitSeconds: null } : null
+        );
+      },
+    });
+
+    setBatchAutofillProgress(null);
+    if (summary.aborted) {
+      setSuccessToast(`Complétion interrompue (${summary.updatedCount} variété(s) mise(s) à jour).`);
+    } else if (summary.errorCount > 0) {
+      setSuccessToast(
+        `${summary.updatedCount} variété(s) traitée(s) (${summary.errorCount} erreur(s) : ${summary.firstError || 'voir détails'})`
+      );
+    } else {
+      setSuccessToast(`${summary.updatedCount} variété(s) de ${selectedVeg.name} complétée(s) automatiquement !`);
+    }
+    setTimeout(() => setSuccessToast(null), 5000);
+  };
+
+  const handleGlobalBatchAutofill = async () => {
+    if (globalAutofillProgress) return;
+    const targets = globalAutofillOverwrite
+      ? globalCatalogVarietyEntries
+      : globalCatalogVarietyEntries.filter((e) => e.isIncomplete);
+
+    if (targets.length === 0) return;
+
+    globalAutofillAbortRef.current = false;
+    setGlobalAutofillSummary(null);
+
+    const entryMap = new Map<string, { variety: any; plant: any }>();
+    const batchItems = targets.map(({ variety, plant }) => {
+      entryMap.set(variety.id, { variety, plant });
+      const resolved = resolveVarietyHarvestAndStorage(
+        plant.name,
+        variety.value,
+        variety.attributes,
+        plant.harvestPeriod
+      );
+      const respectManualHarvest =
+        resolved.isManual && !(globalAutofillOverwrite && globalAutofillResetManualHarvest);
+
+      return {
+        key: variety.id,
+        species: plant.name,
+        category: plant.category,
+        variety: variety.value,
+        speciesHarvestPeriod: plant.harvestPeriod,
+        currentAttributes: variety.attributes || {},
+        currentComment: variety.attributes?.comment || '',
+        currentHarvestMonths: resolved.harvestMonths,
+        currentStorageMonths: resolved.storageMonths,
+        isManualHarvest: respectManualHarvest,
+      };
+    });
+
+    let completed = 0;
+    let updated = 0;
+    let errors = 0;
+
+    setGlobalAutofillProgress({
+      current: 0,
+      total: targets.length,
+      currentLabel: `${targets[0].plant.name} — ${targets[0].variety.value}`,
+      updated: 0,
+      errors: 0,
+      waitSeconds: null,
+    });
+
+    const summary = await autofillVarietiesBatchHybrid({
+      items: batchItems,
+      attributeFields: varietyAttributeFields,
+      overwriteExisting: globalAutofillOverwrite,
+      batchSize: 12,
+      shouldAbort: () => globalAutofillAbortRef.current,
+      onChunkStart: (chunkItems) => {
+        const first = chunkItems[0];
+        const label =
+          chunkItems.length === 1
+            ? `${first.species} — ${first.variety}`
+            : `Lot de ${chunkItems.length} variétés (${first.species} — ${first.variety}, ...)`;
+        setGlobalAutofillProgress((prev) =>
+          prev ? { ...prev, currentLabel: label, waitSeconds: null } : null
+        );
+      },
+      onWaitStatus: (remainingSeconds) => {
+        setGlobalAutofillProgress((prev) =>
+          prev ? { ...prev, waitSeconds: remainingSeconds } : null
+        );
+      },
+      onChunkCompleted: async (chunkResults) => {
+        await Promise.all(
+          chunkResults.map(async ({ key, result }) => {
+            const entry = entryMap.get(key);
+            if (!entry) return;
+            if (result.error) {
+              errors += 1;
+            } else {
+              updated += 1;
+            }
+            const nextAttrs: Record<string, any> = {
+              ...(entry.variety.attributes || {}),
+              ...result.attributes,
+              harvestMonths: result.harvestMonths,
+              storageMonths: result.storageMonths,
+              harvestSource: result.harvestSource,
+              isManualHarvest: result.isManualHarvest,
+            };
+            if (result.comment) {
+              nextAttrs.comment = result.comment;
+            }
+            for (const k of Object.keys(nextAttrs)) {
+              if (nextAttrs[k] === undefined) delete nextAttrs[k];
+            }
+            await fb.update('config', entry.variety.id, { attributes: nextAttrs });
+          })
+        );
+        completed += chunkResults.length;
+        const lastKey = chunkResults[chunkResults.length - 1]?.key;
+        const lastEntry = lastKey ? entryMap.get(lastKey) : undefined;
+        setGlobalAutofillProgress({
+          current: completed,
+          total: targets.length,
+          currentLabel: lastEntry
+            ? `${lastEntry.plant.name} — ${lastEntry.variety.value}`
+            : `${completed} traitée(s)`,
+          updated,
+          errors,
+          waitSeconds: null,
+        });
+      },
+    });
+
+    setGlobalAutofillProgress(null);
+    if (summary.aborted) {
+      const msg = `Génération interrompue après ${completed} / ${targets.length} variété(s) (${updated} mise(s) à jour).`;
+      setGlobalAutofillSummary(msg);
+      setSuccessToast(msg);
+    } else if (summary.errorCount > 0) {
+      const msg = `${summary.updatedCount} variété(s) générée(s), ${summary.errorCount} avec erreur (${summary.firstError || 'voir détails'}).`;
+      setGlobalAutofillSummary(msg);
+      setSuccessToast(msg);
+    } else {
+      const msg = `Terminé ! ${summary.updatedCount} variété(s) du catalogue complétée(s) et enregistrée(s).`;
+      setGlobalAutofillSummary(msg);
+      setSuccessToast(msg);
+    }
+    setTimeout(() => setSuccessToast(null), 6000);
+  };
+
+  const handleExcludeVarietyDateTracking = async (variety: any, exclude: boolean) => {
+    if (!variety?.id) return;
+    const nextAttrs: Record<string, any> = { ...(variety.attributes || {}) };
+    if (exclude) {
+      nextAttrs.excludePlantingDateTracking = true;
+    } else {
+      delete nextAttrs.excludePlantingDateTracking;
+    }
+    for (const k of Object.keys(nextAttrs)) {
+      if (nextAttrs[k] === undefined) delete nextAttrs[k];
+    }
+    await fb.update('config', variety.id, { attributes: nextAttrs });
+    setSuccessToast(
+      exclude
+        ? `Variété « ${variety.value} » exclue du suivi des dates de plantation.`
+        : `Variété « ${variety.value} » réincluse dans le suivi des dates.`
+    );
+    setTimeout(() => setSuccessToast(null), 3500);
+  };
+
+  const handleMarkVarietyDateUnknown = async (variety: any) => {
+    if (!variety?.id) return;
+    const safeQty = Math.max(
+      1,
+      variety.quantity !== undefined
+        ? Number(variety.quantity)
+        : variety.attributes?.quantity !== undefined
+          ? Number(variety.attributes.quantity)
+          : 1
+    );
+    const updatedSlots = resizePlantingsToQuantity(getVarietyPlantings(variety.attributes), safeQty).map(slot =>
+      slot.datePlanted ? slot : { ...slot, dateUnknown: true }
+    );
+    const payload = buildPlantingsPayload(updatedSlots, safeQty);
+    const nextAttrs: Record<string, any> = { ...(variety.attributes || {}) };
+    if (payload.plantings) nextAttrs.plantings = payload.plantings;
+    else delete nextAttrs.plantings;
+    if (payload.datePlanted) nextAttrs.datePlanted = payload.datePlanted;
+    else delete nextAttrs.datePlanted;
+    if (payload.location) nextAttrs.location = payload.location;
+    else delete nextAttrs.location;
+    if (payload.rootstock) nextAttrs.rootstock = payload.rootstock;
+    else delete nextAttrs.rootstock;
+    for (const k of Object.keys(nextAttrs)) {
+      if (nextAttrs[k] === undefined) delete nextAttrs[k];
+    }
+    await fb.update('config', variety.id, { attributes: nextAttrs });
+    setSuccessToast(`Date marquée comme inconnue pour « ${variety.value} ».`);
+    setTimeout(() => setSuccessToast(null), 3500);
   };
 
   const handleJumpToMissingDateVariety = (item: { variety: any; plant: any }) => {
@@ -1668,6 +2243,32 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
             }`}>
               {missingDateVarietiesList.length}
             </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setGlobalAutofillSummary(null);
+              setIsGlobalAutofillModalOpen(true);
+            }}
+            className="px-2 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 rounded-xl text-[11px] font-semibold transition-all flex items-center gap-1 shadow-xs cursor-pointer whitespace-nowrap"
+            title="Générer et pré-remplir automatiquement toutes les variétés du catalogue (attributs, notes, récolte & conservation)"
+          >
+            {globalAutofillProgress ? (
+              <RefreshCw className="w-3.5 h-3.5 text-emerald-600 shrink-0 animate-spin" />
+            ) : (
+              <Wand2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+            )}
+            <span>
+              {globalAutofillProgress
+                ? `${globalAutofillProgress.current}/${globalAutofillProgress.total}`
+                : 'Tout pré-remplir'}
+            </span>
+            {!globalAutofillProgress && globalIncompleteVarietyCount > 0 && (
+              <span className="px-1.5 py-0.2 bg-emerald-200 text-emerald-900 rounded-full text-[10px] font-bold">
+                {globalIncompleteVarietyCount}
+              </span>
+            )}
           </button>
 
           <button
@@ -2017,12 +2618,15 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                     <button
                       key={item.id}
                       onClick={() => { setSelectedVegId(item.id); setIsEditing(false); setPlantSubTab("culture"); setFilterPlantVarietiesMissingDate(false); }}
-                      className={`w-full text-left px-3 py-2.5 rounded-xl text-sm transition-all flex items-center justify-between group ${
+                      className={`w-full text-left px-3 py-2.5 rounded-xl text-sm transition-all flex flex-col gap-1.5 group ${
                         selectedVegId === item.id ? "bg-emerald-50 text-emerald-700 font-medium" : "text-stone-600 hover:bg-stone-50"
                       }`}
                     >
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <span className="truncate">{item.name}</span>
+                      <div className="flex items-start justify-between gap-2 w-full">
+                        <span className="font-medium leading-snug break-words">{item.name}</span>
+                        <span className="text-[10px] uppercase tracking-wider text-stone-400 group-hover:text-emerald-500 shrink-0 mt-0.5">{item.category}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <span 
                           className="inline-flex items-center gap-0.5 text-[10px] font-bold text-stone-700 bg-stone-100 px-1.5 py-0.5 rounded-full border border-stone-200 shrink-0" 
                           title={`${totalCount} plant(s) possédé(s) au total`}
@@ -2058,7 +2662,6 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                           </span>
                         )}
                       </div>
-                      <span className="text-[10px] uppercase tracking-wider text-stone-400 group-hover:text-emerald-500 shrink-0 ml-2">{item.category}</span>
                     </button>
                   );
                 })
@@ -2214,6 +2817,78 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                       )}
                     </div>
                   </div>
+
+                  {/* Planting date tracking preference (perennials / crops needing renewal) */}
+                  {(() => {
+                    const formCats = editForm.categories && editForm.categories.length > 0
+                      ? editForm.categories
+                      : (editForm.category ? [editForm.category] : ['Légume']);
+                    const defaultTracked = isCategoryTrackedForPlantingByDefault(formCats);
+                    const currentMode: 'auto' | 'include' | 'exclude' =
+                      editForm.trackPlantingDate === true
+                        ? 'include'
+                        : editForm.trackPlantingDate === false
+                          ? 'exclude'
+                          : 'auto';
+
+                    return (
+                      <div className="space-y-2 p-3 bg-stone-50/80 border border-stone-200/90 rounded-2xl">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <label className="text-xs font-bold text-stone-700 uppercase tracking-wider flex items-center gap-1.5">
+                            <Calendar className="w-3.5 h-3.5 text-emerald-600" />
+                            Suivi des dates de plantation (plantes persistantes / à renouveler)
+                          </label>
+                          <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border ${
+                            (currentMode === 'include' || (currentMode === 'auto' && defaultTracked))
+                              ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                              : 'bg-stone-100 text-stone-600 border-stone-200'
+                          }`}>
+                            {(currentMode === 'include' || (currentMode === 'auto' && defaultTracked))
+                              ? 'Suivi actif'
+                              : 'Non suivi (géré via Semis)'}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-stone-500 leading-snug">
+                          Actif par défaut pour les fruitiers et petits fruits. Utile à activer manuellement pour les légumes vivaces ou pluriannuels à renouveler (ex : asperges, artichauts, fraisiers...).
+                        </p>
+                        <div className="flex flex-wrap gap-1.5 pt-0.5">
+                          <button
+                            type="button"
+                            onClick={() => setEditForm({ ...editForm, trackPlantingDate: undefined })}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-medium border transition-all cursor-pointer ${
+                              currentMode === 'auto'
+                                ? 'bg-stone-800 text-white border-stone-800 shadow-2xs font-semibold'
+                                : 'bg-white text-stone-700 border-stone-200 hover:bg-stone-100'
+                            }`}
+                          >
+                            Par défaut ({defaultTracked ? 'Suivi actif' : 'Non suivi'})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditForm({ ...editForm, trackPlantingDate: true })}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-medium border transition-all cursor-pointer ${
+                              currentMode === 'include'
+                                ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs font-semibold'
+                                : 'bg-white text-emerald-800 border-emerald-200 hover:bg-emerald-50'
+                            }`}
+                          >
+                            Inclure dans le suivi
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditForm({ ...editForm, trackPlantingDate: false })}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-medium border transition-all cursor-pointer ${
+                              currentMode === 'exclude'
+                                ? 'bg-rose-600 text-white border-rose-600 shadow-2xs font-semibold'
+                                : 'bg-white text-stone-600 border-stone-200 hover:bg-stone-100'
+                            }`}
+                          >
+                            Exclure du suivi
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -2792,28 +3467,102 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                         <List className="w-4 h-4 text-stone-400" />
                         Variétés de {selectedVeg.name}
                       </h3>
-                      {(() => {
-                        const plantMissingCount = missingDateCountByPlantId.get(selectedVeg.id) || 0;
-                        if (plantMissingCount === 0 && !filterPlantVarietiesMissingDate) return null;
-                        return (
-                          <button
-                            type="button"
-                            onClick={() => setFilterPlantVarietiesMissingDate(prev => !prev)}
-                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
-                              filterPlantVarietiesMissingDate
-                                ? 'bg-rose-600 text-white border-rose-600 shadow-2xs'
-                                : 'bg-rose-50 text-rose-800 border-rose-200 hover:bg-rose-100'
-                            }`}
-                          >
-                            <Calendar className={`w-3.5 h-3.5 ${filterPlantVarietiesMissingDate ? 'text-white' : 'text-rose-600'}`} />
-                            <span>
-                              {filterPlantVarietiesMissingDate
-                                ? `Filtre : sans date (${plantMissingCount})`
-                                : `Sans date de plantation (${plantMissingCount})`}
-                            </span>
-                          </button>
-                        );
-                      })()}
+                      <div className="flex flex-wrap items-center gap-2">
+                        {(() => {
+                          const incompleteCount = plantVarieties.filter((v: any) =>
+                            hasMissingAutofillData(v, selectedVeg, varietyAttributeFields)
+                          ).length;
+                          if (batchAutofillProgress) {
+                            return (
+                              <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-lg text-xs font-semibold border border-emerald-300 bg-emerald-50 text-emerald-900">
+                                <RefreshCw className="w-3.5 h-3.5 text-emerald-600 animate-spin" />
+                                <span>
+                                  {batchAutofillProgress.waitSeconds
+                                    ? `Pause quota (${batchAutofillProgress.waitSeconds}s) — ${batchAutofillProgress.current}/${batchAutofillProgress.total}`
+                                    : `Complétion ${batchAutofillProgress.current}/${batchAutofillProgress.total} (${batchAutofillProgress.currentName})`}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => { batchAutofillAbortRef.current = true; }}
+                                  className="px-1.5 py-0.5 bg-white hover:bg-rose-50 text-rose-700 border border-rose-200 rounded text-[10px] cursor-pointer"
+                                >
+                                  Stop
+                                </button>
+                              </div>
+                            );
+                          }
+                          if (incompleteCount === 0) return null;
+                          return (
+                            <button
+                              type="button"
+                              onClick={handleBatchAutofillPlantVarieties}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold border border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 transition-all cursor-pointer"
+                              title="Pré-remplir automatiquement les champs vides, observations et périodes de récolte/conservation pour toutes les variétés incomplètes de cette plante"
+                            >
+                              <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>Compléter les variétés ({incompleteCount})</span>
+                            </button>
+                          );
+                        })()}
+
+                        {(() => {
+                          const plantMissingCount = missingDateCountByPlantId.get(selectedVeg.id) || 0;
+                          if (!selectedVeg.isPlantingTracked || (plantMissingCount === 0 && !filterPlantVarietiesMissingDate)) return null;
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => setFilterPlantVarietiesMissingDate(prev => !prev)}
+                              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                                filterPlantVarietiesMissingDate
+                                  ? 'bg-rose-600 text-white border-rose-600 shadow-2xs'
+                                  : 'bg-rose-50 text-rose-800 border-rose-200 hover:bg-rose-100'
+                              }`}
+                            >
+                              <Calendar className={`w-3.5 h-3.5 ${filterPlantVarietiesMissingDate ? 'text-white' : 'text-rose-600'}`} />
+                              <span>
+                                {filterPlantVarietiesMissingDate
+                                  ? `Filtre : sans date (${plantMissingCount})`
+                                  : `Sans date de plantation (${plantMissingCount})`}
+                              </span>
+                            </button>
+                          );
+                        })()}
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const defaultTracked = isCategoryTrackedForPlantingByDefault(
+                              selectedVeg.categories && selectedVeg.categories.length > 0 ? selectedVeg.categories : [selectedVeg.category]
+                            );
+                            if (selectedVeg.isPlantingTracked) {
+                              // If currently included manually on a non-default category, revert to undefined (default);
+                              // if included by default category, explicitly exclude (false)
+                              handleTogglePlantPlantingTracking(selectedVeg, defaultTracked ? false : undefined);
+                            } else {
+                              // If excluded manually on a default category, revert to undefined (default);
+                              // otherwise explicitly include (true)
+                              handleTogglePlantPlantingTracking(selectedVeg, defaultTracked ? undefined : true);
+                            }
+                          }}
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-all cursor-pointer ${
+                            selectedVeg.isPlantingTracked
+                              ? 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
+                              : 'bg-stone-100 text-stone-600 border-stone-200 hover:bg-stone-200/70'
+                          }`}
+                          title={
+                            selectedVeg.isPlantingTracked
+                              ? 'Date de plantation suivie pour cette plante — cliquer pour exclure du suivi'
+                              : 'Suivi désactivé (géré dans Mes Semis) — cliquer pour suivre la date de plantation (ex : asperges, artichauts, fraisiers)'
+                          }
+                        >
+                          <Calendar className={`w-3.5 h-3.5 ${selectedVeg.isPlantingTracked ? 'text-emerald-600' : 'text-stone-400'}`} />
+                          <span>
+                            {selectedVeg.isPlantingTracked
+                              ? (selectedVeg.trackPlantingDate === true ? 'Suivi dates : Inclus manuellement' : 'Suivi dates : Actif')
+                              : '+ Inclure suivi date de plantation'}
+                          </span>
+                        </button>
+                      </div>
                     </div>
 
                     {/* Summary Counters Banner */}
@@ -2891,127 +3640,173 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                               </div>
                               <button
                                 type="submit"
-                                disabled={!newVarietyName.trim()}
+                                disabled={!newVarietyName.trim() || isAddingVarietyAutofill}
                                 className="px-4 py-2 bg-emerald-600 text-white rounded-xl text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 transition-colors flex items-center gap-2 shadow-xs cursor-pointer shrink-0"
                               >
-                                <Plus className="w-4 h-4" />
-                                Ajouter
+                                {isAddingVarietyAutofill ? (
+                                  <RefreshCw className="w-4 h-4 animate-spin" />
+                                ) : (
+                                  <Plus className="w-4 h-4" />
+                                )}
+                                <span>{isAddingVarietyAutofill ? 'Pré-remplissage...' : 'Ajouter'}</span>
                               </button>
                             </div>
                           </div>
 
-                          {/* Adaptive Planting Date(s), Rootstock(s) & Terrain Location(s) */}
-                          <div className="bg-stone-50/90 border border-stone-200/90 rounded-xl p-2.5 space-y-2">
-                            <div className="flex items-center justify-between gap-2 flex-wrap">
-                              <span className="text-xs font-medium text-stone-600 flex items-center gap-1.5">
-                                <Calendar className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                                <span>
-                                  {newVarietyQuantity > 1
-                                    ? `Mise en terre, porte-greffe & endroit (${newVarietyQuantity} exemplaires, optionnel) :`
-                                    : 'Mise en terre, porte-greffe & endroit sur le terrain (optionnel) :'}
+                          {/* Adaptive Planting Date(s), Rootstock(s) & Terrain Location(s) — only when planting tracking is active */}
+                          {selectedVeg.isPlantingTracked && (
+                            <div className="bg-stone-50/90 border border-stone-200/90 rounded-xl p-2.5 space-y-2">
+                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                <span className="text-xs font-medium text-stone-600 flex items-center gap-1.5">
+                                  <Calendar className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                  <span>
+                                    {newVarietyQuantity > 1
+                                      ? `Mise en terre, porte-greffe & endroit (${newVarietyQuantity} exemplaires, optionnel) :`
+                                      : 'Mise en terre, porte-greffe & endroit sur le terrain (optionnel) :'}
+                                  </span>
                                 </span>
-                              </span>
-                              <div className="flex items-center gap-3 flex-wrap">
-                                {newVarietyQuantity > 1 && newVarietyPlantings[0]?.datePlanted && (
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      const d0 = newVarietyPlantings[0].datePlanted;
-                                      setNewVarietyPlantings(prev =>
-                                        resizePlantingsToQuantity(prev, newVarietyQuantity).map(p => ({
-                                          ...p,
-                                          datePlanted: p.datePlanted || d0
-                                        }))
-                                      );
-                                    }}
-                                    className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800 hover:underline cursor-pointer"
-                                  >
-                                    Appliquer date #1
-                                  </button>
-                                )}
-                                {newVarietyQuantity > 1 && newVarietyPlantings[0]?.rootstock && (
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      const r0 = newVarietyPlantings[0].rootstock;
-                                      setNewVarietyPlantings(prev =>
-                                        resizePlantingsToQuantity(prev, newVarietyQuantity).map(p => ({
-                                          ...p,
-                                          rootstock: p.rootstock || r0
-                                        }))
-                                      );
-                                    }}
-                                    className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800 hover:underline cursor-pointer"
-                                  >
-                                    Appliquer porte-greffe #1
-                                  </button>
-                                )}
+                                <div className="flex items-center gap-3 flex-wrap">
+                                  {newVarietyQuantity > 1 && newVarietyPlantings[0]?.datePlanted && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const d0 = newVarietyPlantings[0].datePlanted;
+                                        setNewVarietyPlantings(prev =>
+                                          resizePlantingsToQuantity(prev, newVarietyQuantity).map(p => ({
+                                            ...p,
+                                            datePlanted: p.datePlanted || d0
+                                          }))
+                                        );
+                                      }}
+                                      className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800 hover:underline cursor-pointer"
+                                    >
+                                      Appliquer date #1
+                                    </button>
+                                  )}
+                                  {newVarietyQuantity > 1 && newVarietyPlantings[0]?.rootstock && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const r0 = newVarietyPlantings[0].rootstock;
+                                        setNewVarietyPlantings(prev =>
+                                          resizePlantingsToQuantity(prev, newVarietyQuantity).map(p => ({
+                                            ...p,
+                                            rootstock: p.rootstock || r0
+                                          }))
+                                        );
+                                      }}
+                                      className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800 hover:underline cursor-pointer"
+                                    >
+                                      Appliquer porte-greffe #1
+                                    </button>
+                                  )}
+                                </div>
                               </div>
-                            </div>
 
-                            <div className="space-y-1.5">
-                              {Array.from({ length: Math.max(1, newVarietyQuantity) }, (_, idx) => {
-                                const entry = newVarietyPlantings[idx] || { datePlanted: '', location: '', rootstock: '' };
-                                const updateSlot = (patch: Partial<VarietyPlantingEntry>) => {
-                                  setNewVarietyPlantings(prev => {
-                                    const next = resizePlantingsToQuantity(prev, Math.max(prev.length, newVarietyQuantity));
-                                    next[idx] = { ...next[idx], ...patch };
-                                    return next;
-                                  });
-                                };
-                                return (
-                                  <div key={idx} className="flex flex-col sm:flex-row sm:items-center gap-1.5">
-                                    {newVarietyQuantity > 1 && (
-                                      <span className="text-[11px] font-bold text-stone-500 bg-white border border-stone-200 rounded-md px-2 py-1 shrink-0 w-fit">
-                                        #{idx + 1}
-                                      </span>
-                                    )}
-                                    <div className="flex items-center gap-1 bg-white border border-stone-200 rounded-lg px-2 py-1 text-xs shrink-0">
-                                      <input
-                                        type="date"
-                                        value={entry.datePlanted}
-                                        onChange={(e) => updateSlot({ datePlanted: e.target.value })}
-                                        className="bg-transparent text-xs font-medium text-stone-800 focus:outline-none"
-                                      />
-                                      {entry.datePlanted && (
+                              <div className="space-y-1.5">
+                                {Array.from({ length: Math.max(1, newVarietyQuantity) }, (_, idx) => {
+                                  const entry = newVarietyPlantings[idx] || { datePlanted: '', location: '', rootstock: '' };
+                                  const updateSlot = (patch: Partial<VarietyPlantingEntry>) => {
+                                    setNewVarietyPlantings(prev => {
+                                      const next = resizePlantingsToQuantity(prev, Math.max(prev.length, newVarietyQuantity));
+                                      next[idx] = { ...next[idx], ...patch };
+                                      return next;
+                                    });
+                                  };
+                                  return (
+                                    <div key={idx} className="flex flex-col sm:flex-row sm:items-center gap-1.5">
+                                      {newVarietyQuantity > 1 && (
+                                        <span className="text-[11px] font-bold text-stone-500 bg-white border border-stone-200 rounded-md px-2 py-1 shrink-0 w-fit">
+                                          #{idx + 1}
+                                        </span>
+                                      )}
+                                      <div className="flex items-center gap-1 shrink-0">
+                                        <div className={`flex items-center gap-1 border rounded-lg px-2 py-1 text-xs ${
+                                          entry.dateUnknown ? 'bg-stone-100 border-stone-200 text-stone-400' : 'bg-white border-stone-200'
+                                        }`}>
+                                          <input
+                                            type="date"
+                                            disabled={Boolean(entry.dateUnknown)}
+                                            value={entry.dateUnknown ? '' : entry.datePlanted}
+                                            onChange={(e) => updateSlot({ datePlanted: e.target.value, dateUnknown: false })}
+                                            className="bg-transparent text-xs font-medium text-stone-800 focus:outline-none disabled:opacity-50"
+                                          />
+                                          {entry.datePlanted && !entry.dateUnknown && (
+                                            <button
+                                              type="button"
+                                              onClick={() => updateSlot({ datePlanted: '' })}
+                                              className="text-stone-400 hover:text-stone-600 p-0.5 cursor-pointer"
+                                              title="Effacer la date"
+                                            >
+                                              <X className="w-3 h-3" />
+                                            </button>
+                                          )}
+                                        </div>
                                         <button
                                           type="button"
-                                          onClick={() => updateSlot({ datePlanted: '' })}
-                                          className="text-stone-400 hover:text-stone-600 p-0.5 cursor-pointer"
-                                          title="Effacer la date"
+                                          onClick={() => updateSlot({ dateUnknown: !entry.dateUnknown, datePlanted: '' })}
+                                          className={`px-2 py-1 rounded-lg text-[11px] font-semibold border transition-colors cursor-pointer shrink-0 ${
+                                            entry.dateUnknown
+                                              ? 'bg-stone-700 text-white border-stone-700'
+                                              : 'bg-white text-stone-600 border-stone-200 hover:bg-stone-100'
+                                          }`}
+                                          title="Marquer la date de plantation comme inconnue"
                                         >
-                                          <X className="w-3 h-3" />
+                                          {entry.dateUnknown ? 'Date inconnue ✓' : 'Inconnue'}
                                         </button>
-                                      )}
+                                      </div>
+                                      <select
+                                        value={entry.rootstock}
+                                        onChange={(e) => updateSlot({ rootstock: e.target.value })}
+                                        className="bg-white border border-stone-200 rounded-lg px-2 py-1 text-xs text-stone-800 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none cursor-pointer sm:w-44 shrink-0"
+                                        title="Porte-greffe"
+                                      >
+                                        <option value="">Porte-greffe...</option>
+                                        {rootstockOptions.map(opt => (
+                                          <option key={opt} value={opt}>{opt}</option>
+                                        ))}
+                                      </select>
+                                      <div className="relative flex-1">
+                                        <MapPin className="w-3.5 h-3.5 text-stone-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                                        <input
+                                          type="text"
+                                          value={entry.location}
+                                          onChange={(e) => updateSlot({ location: e.target.value })}
+                                          placeholder="Endroit sur le terrain (ex: Près du portail...)"
+                                          className="w-full pl-8 pr-2.5 py-1 bg-white border border-stone-200 rounded-lg text-xs text-stone-800 placeholder-stone-400 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none"
+                                        />
+                                      </div>
                                     </div>
-                                    <select
-                                      value={entry.rootstock}
-                                      onChange={(e) => updateSlot({ rootstock: e.target.value })}
-                                      className="bg-white border border-stone-200 rounded-lg px-2 py-1 text-xs text-stone-800 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none cursor-pointer sm:w-44 shrink-0"
-                                      title="Porte-greffe"
-                                    >
-                                      <option value="">Porte-greffe...</option>
-                                      {rootstockOptions.map(opt => (
-                                        <option key={opt} value={opt}>{opt}</option>
-                                      ))}
-                                    </select>
-                                    <div className="relative flex-1">
-                                      <MapPin className="w-3.5 h-3.5 text-stone-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                                      <input
-                                        type="text"
-                                        value={entry.location}
-                                        onChange={(e) => updateSlot({ location: e.target.value })}
-                                        placeholder="Endroit sur le terrain (ex: Près du portail...)"
-                                        className="w-full pl-8 pr-2.5 py-1 bg-white border border-stone-200 rounded-lg text-xs text-stone-800 placeholder-stone-400 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none"
-                                      />
-                                    </div>
-                                  </div>
-                                );
-                              })}
+                                  );
+                                })}
+                              </div>
                             </div>
-                          </div>
+                          )}
 
-                          <div className="flex flex-wrap items-center justify-end gap-2 pt-0.5">
+                          <div className="flex flex-wrap items-center justify-end gap-4 pt-0.5">
+                            <label className="flex items-center gap-1.5 cursor-pointer text-xs text-emerald-800 select-none">
+                              <input
+                                type="checkbox"
+                                checked={newVarietyAutoFill}
+                                onChange={(e) => setNewVarietyAutoFill(e.target.checked)}
+                                className="rounded border-emerald-300 text-emerald-600 focus:ring-emerald-500 w-3.5 h-3.5 cursor-pointer"
+                              />
+                              <span className="flex items-center gap-1 font-medium">
+                                <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                                <span>Pré-remplir auto (champs, notes, récolte &amp; conservation)</span>
+                              </span>
+                            </label>
+                            {selectedVeg.isPlantingTracked && (
+                              <label className="flex items-center gap-1.5 cursor-pointer text-xs text-stone-600 select-none">
+                                <input
+                                  type="checkbox"
+                                  checked={newVarietyExcludeDateTracking}
+                                  onChange={(e) => setNewVarietyExcludeDateTracking(e.target.checked)}
+                                  className="rounded border-stone-300 text-stone-700 focus:ring-stone-500 w-3.5 h-3.5 cursor-pointer"
+                                />
+                                <span className="font-medium">Exclure cette variété du suivi dates</span>
+                              </label>
+                            )}
                             <label className="flex items-center gap-1.5 cursor-pointer text-xs text-stone-600 select-none">
                               <input
                                 type="checkbox"
@@ -3140,7 +3935,42 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                       </div>
                                     </div>
 
+                                    {/* Barre de pré-remplissage hybride des champs, commentaires et périodes */}
+                                    <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-emerald-50/80 border border-emerald-200/80 rounded-xl">
+                                      <div className="flex items-center gap-2 text-xs text-emerald-900">
+                                        <Sparkles className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                        <span className="font-medium">
+                                          Pré-remplissage auto (tous les champs, observations, récolte &amp; conservation)
+                                        </span>
+                                      </div>
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <button
+                                          type="button"
+                                          disabled={isAutofillingEditForm || !varietyEditForm.name.trim()}
+                                          onClick={() => handleAutofillEditForm(false)}
+                                          className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                                        >
+                                          {isAutofillingEditForm ? (
+                                            <RefreshCw className="w-3 h-3 animate-spin" />
+                                          ) : (
+                                            <Wand2 className="w-3 h-3" />
+                                          )}
+                                          <span>{isAutofillingEditForm ? 'Recherche...' : 'Compléter les champs vides'}</span>
+                                        </button>
+                                        <button
+                                          type="button"
+                                          disabled={isAutofillingEditForm || !varietyEditForm.name.trim()}
+                                          onClick={() => handleAutofillEditForm(true)}
+                                          className="px-2.5 py-1 bg-white hover:bg-stone-100 disabled:opacity-50 text-stone-700 border border-stone-200 rounded-lg text-xs font-medium transition-colors cursor-pointer"
+                                          title="Remplacer aussi les champs et périodes déjà renseignés par de nouvelles suggestions"
+                                        >
+                                          Tout régénérer
+                                        </button>
+                                      </div>
+                                    </div>
+
                                     {/* Dates de plantation, porte-greffes & emplacements sur le terrain (adapté à la quantité) */}
+                                    {(selectedVeg.isPlantingTracked || getVarietyPlantings(variety.attributes).length > 0 || varietyEditForm.excludePlantingDateTracking) && (
                                     <div className="bg-white border border-stone-200 rounded-xl p-3 space-y-2.5">
                                       <div className="flex items-center justify-between gap-2 flex-wrap">
                                         <label className="text-xs font-semibold text-stone-700 flex items-center gap-1.5">
@@ -3152,6 +3982,20 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                           </span>
                                         </label>
                                         <div className="flex items-center gap-3 flex-wrap">
+                                          {selectedVeg.isPlantingTracked && (
+                                            <label className="inline-flex items-center gap-1.5 text-[11px] font-medium text-stone-600 cursor-pointer select-none px-2 py-0.5 rounded-md bg-stone-50 border border-stone-200 hover:bg-stone-100">
+                                              <input
+                                                type="checkbox"
+                                                checked={Boolean(varietyEditForm.excludePlantingDateTracking)}
+                                                onChange={(e) => setVarietyEditForm(prev => ({
+                                                  ...prev,
+                                                  excludePlantingDateTracking: e.target.checked
+                                                }))}
+                                                className="rounded border-stone-300 text-stone-700 focus:ring-stone-500 w-3.5 h-3.5 cursor-pointer"
+                                              />
+                                              <span>Exclure cette variété du suivi dates</span>
+                                            </label>
+                                          )}
                                           {varietyEditForm.quantity > 1 && varietyEditForm.plantings[0]?.datePlanted && (
                                             <button
                                               type="button"
@@ -3161,7 +4005,8 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                                   ...prev,
                                                   plantings: resizePlantingsToQuantity(prev.plantings, prev.quantity).map(p => ({
                                                     ...p,
-                                                    datePlanted: p.datePlanted || d0
+                                                    datePlanted: p.datePlanted || d0,
+                                                    dateUnknown: p.datePlanted ? false : (d0 ? false : p.dateUnknown)
                                                   }))
                                                 }));
                                               }}
@@ -3202,9 +4047,15 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                         </div>
                                       </div>
 
+                                      {varietyEditForm.excludePlantingDateTracking && (
+                                        <p className="text-[11px] text-stone-600 bg-stone-100 border border-stone-200 rounded-lg px-2.5 py-1.5">
+                                          Cette variété est exclue du suivi des dates de plantation (elle n&apos;apparaîtra pas dans « Sans date »).
+                                        </p>
+                                      )}
+
                                       <div className="space-y-2">
                                         {Array.from({ length: Math.max(1, varietyEditForm.quantity) }, (_, idx) => {
-                                          const entry = varietyEditForm.plantings[idx] || { datePlanted: '', location: '', rootstock: '' };
+                                          const entry = varietyEditForm.plantings[idx] || { datePlanted: '', dateUnknown: false, location: '', rootstock: '' };
                                           const updateEditSlot = (patch: Partial<VarietyPlantingEntry>) => {
                                             setVarietyEditForm(prev => {
                                               const nextPlantings = resizePlantingsToQuantity(
@@ -3221,7 +4072,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                               key={idx}
                                               className={`grid grid-cols-1 ${
                                                 varietyEditForm.quantity > 1
-                                                  ? 'md:grid-cols-[auto_165px_185px_1fr]'
+                                                  ? 'md:grid-cols-[auto_minmax(225px,1.1fr)_165px_1fr]'
                                                   : 'md:grid-cols-3'
                                               } gap-2 items-center ${
                                                 varietyEditForm.quantity > 1 ? 'p-2 bg-stone-50/80 rounded-lg border border-stone-200/70' : ''
@@ -3236,7 +4087,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                                 {varietyEditForm.quantity === 1 && (
                                                   <div className="flex items-center justify-between mb-1">
                                                     <span className="text-[11px] text-stone-500">Date de mise en terre</span>
-                                                    {entry.datePlanted && (
+                                                    {entry.datePlanted && !entry.dateUnknown && (
                                                       <button
                                                         type="button"
                                                         onClick={() => updateEditSlot({ datePlanted: '' })}
@@ -3247,23 +4098,40 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                                     )}
                                                   </div>
                                                 )}
-                                                <div className="flex items-center gap-1 bg-white border border-stone-200 rounded-lg px-2.5 py-1.5">
-                                                  <input
-                                                    type="date"
-                                                    value={entry.datePlanted}
-                                                    onChange={e => updateEditSlot({ datePlanted: e.target.value })}
-                                                    className="w-full bg-transparent text-xs sm:text-sm text-stone-800 outline-none"
-                                                  />
-                                                  {varietyEditForm.quantity > 1 && entry.datePlanted && (
-                                                    <button
-                                                      type="button"
-                                                      onClick={() => updateEditSlot({ datePlanted: '' })}
-                                                      className="text-stone-400 hover:text-stone-600 p-0.5 cursor-pointer shrink-0"
-                                                      title="Effacer la date"
-                                                    >
-                                                      <X className="w-3 h-3" />
-                                                    </button>
-                                                  )}
+                                                <div className="flex items-center gap-1.5">
+                                                  <div className={`flex-1 min-w-0 flex items-center gap-1 border rounded-lg px-2 py-1.5 ${
+                                                    entry.dateUnknown ? 'bg-stone-100 border-stone-200 text-stone-400' : 'bg-white border-stone-200'
+                                                  }`}>
+                                                    <input
+                                                      type="date"
+                                                      disabled={Boolean(entry.dateUnknown)}
+                                                      value={entry.dateUnknown ? '' : entry.datePlanted}
+                                                      onChange={e => updateEditSlot({ datePlanted: e.target.value, dateUnknown: false })}
+                                                      className="w-full min-w-0 bg-transparent text-xs sm:text-sm text-stone-800 outline-none disabled:opacity-50"
+                                                    />
+                                                    {varietyEditForm.quantity > 1 && entry.datePlanted && !entry.dateUnknown && (
+                                                      <button
+                                                        type="button"
+                                                        onClick={() => updateEditSlot({ datePlanted: '' })}
+                                                        className="text-stone-400 hover:text-stone-600 p-0.5 cursor-pointer shrink-0"
+                                                        title="Effacer la date"
+                                                      >
+                                                        <X className="w-3 h-3" />
+                                                      </button>
+                                                    )}
+                                                  </div>
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => updateEditSlot({ dateUnknown: !entry.dateUnknown, datePlanted: '' })}
+                                                    className={`px-2 py-1.5 rounded-lg text-[11px] font-semibold border transition-colors cursor-pointer shrink-0 whitespace-nowrap ${
+                                                      entry.dateUnknown
+                                                        ? 'bg-stone-700 text-white border-stone-700'
+                                                        : 'bg-white text-stone-600 border-stone-200 hover:bg-stone-100'
+                                                    }`}
+                                                    title="Marquer la date de plantation comme inconnue"
+                                                  >
+                                                    {entry.dateUnknown ? 'Date inconnue ✓' : 'Inconnue'}
+                                                  </button>
                                                 </div>
                                               </div>
                                               <div>
@@ -3323,6 +4191,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                         })}
                                       </div>
                                     </div>
+                                    )}
                                     
                                     {varietyAttrTypes.map(attrType => {
                                       const options = varietyOptions.filter(o => o.parentId === attrType.id);
@@ -3442,6 +4311,11 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-900 border border-amber-300">
                                               <Edit2 className="w-2.5 h-2.5" />
                                               Modifié manuellement
+                                            </span>
+                                          ) : varietyEditForm.harvestSource === 'auto' ? (
+                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                              <Sparkles className="w-2.5 h-2.5 text-emerald-600" />
+                                              Pré-rempli auto
                                             </span>
                                           ) : (
                                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-800 border border-emerald-200">
@@ -3619,25 +4493,57 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                                   0 / {currentQty} placé
                                                 </span>
                                               )}
-                                              {(() => {
+                                              {selectedVeg.isPlantingTracked && (() => {
                                                 const missingStats = getVarietyMissingDateStats(variety.attributes, currentQty);
+                                                if (missingStats.isTemporary) return null;
+                                                if (missingStats.isExcluded) {
+                                                  return (
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => handleExcludeVarietyDateTracking(variety, false)}
+                                                      className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full border border-stone-200 bg-stone-100 text-stone-600 hover:bg-stone-200 transition-colors cursor-pointer"
+                                                      title="Variété exclue du suivi dates — cliquer pour réactiver le suivi"
+                                                    >
+                                                      <Calendar className="w-2.5 h-2.5 shrink-0 text-stone-400" />
+                                                      Suivi date exclu
+                                                    </button>
+                                                  );
+                                                }
                                                 if (!missingStats.isMissingAny) return null;
                                                 return (
-                                                  <button
-                                                    type="button"
-                                                    onClick={() => openVarietyEditor(variety)}
-                                                    className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border transition-colors cursor-pointer ${
-                                                      missingStats.isMissingAll
-                                                        ? 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
-                                                        : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
-                                                    }`}
-                                                    title="Cliquer pour renseigner la ou les dates de plantation"
-                                                  >
-                                                    <Calendar className="w-2.5 h-2.5 shrink-0" />
-                                                    {missingStats.isMissingAll
-                                                      ? 'Sans date de plantation'
-                                                      : `${missingStats.missing}/${missingStats.total} date(s) manquante(s)`}
-                                                  </button>
+                                                  <div className="inline-flex items-center gap-1 flex-wrap">
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => openVarietyEditor(variety)}
+                                                      className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border transition-colors cursor-pointer ${
+                                                        missingStats.isMissingAll
+                                                          ? 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+                                                          : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
+                                                      }`}
+                                                      title="Cliquer pour renseigner la ou les dates de plantation"
+                                                    >
+                                                      <Calendar className="w-2.5 h-2.5 shrink-0" />
+                                                      {missingStats.isMissingAll
+                                                        ? 'Sans date de plantation'
+                                                        : `${missingStats.missing}/${missingStats.total} date(s) manquante(s)`}
+                                                    </button>
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => handleMarkVarietyDateUnknown(variety)}
+                                                      className="text-[10px] font-medium px-1.5 py-0.5 rounded-md border border-stone-200 bg-white text-stone-600 hover:bg-stone-100 transition-colors cursor-pointer"
+                                                      title="Marquer la ou les dates manquantes comme inconnues"
+                                                    >
+                                                      Date inconnue
+                                                    </button>
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => handleExcludeVarietyDateTracking(variety, true)}
+                                                      className="text-[10px] font-medium px-1.5 py-0.5 rounded-md border border-stone-200 bg-white text-stone-500 hover:text-stone-800 hover:bg-stone-100 transition-colors cursor-pointer"
+                                                      title="Exclure cette variété du suivi des dates de plantation"
+                                                    >
+                                                      Exclure suivi
+                                                    </button>
+                                                  </div>
                                                 );
                                               })()}
                                             </>
@@ -3707,7 +4613,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                               <Edit2 className="w-2.5 h-2.5 text-stone-400 group-hover/sbadge:text-sky-600 transition-colors ml-0.5" />
                                             </button>
 
-                                            {/* Source Indicator: Manual Modification vs Internet Reference */}
+                                            {/* Source Indicator: Manual Modification vs Auto vs Internet Reference */}
                                             {isManual ? (
                                               <span 
                                                 className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 border border-amber-300 text-amber-900 text-[10px] font-semibold"
@@ -3715,6 +4621,14 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                               >
                                                 <Edit2 className="w-2.5 h-2.5 text-amber-600" />
                                                 Modifié manuellement
+                                              </span>
+                                            ) : source === 'auto' ? (
+                                              <span 
+                                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-800 text-[10px] font-medium"
+                                                title="Période spécifique à cette variété pré-remplie automatiquement"
+                                              >
+                                                <Sparkles className="w-2.5 h-2.5 text-emerald-600" />
+                                                Pré-rempli auto
                                               </span>
                                             ) : (
                                               <span 
@@ -3758,7 +4672,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                         const varietyPlantings = getVarietyPlantings(variety.attributes);
                                         const filledPlantings = varietyPlantings
                                           .map((p, idx) => ({ ...p, num: idx + 1 }))
-                                          .filter(p => Boolean(p.datePlanted || p.location || p.rootstock));
+                                          .filter(p => Boolean(p.datePlanted || p.dateUnknown || p.location || p.rootstock));
                                         const currentQty = Math.max(
                                           1,
                                           variety.quantity !== undefined
@@ -3766,10 +4680,10 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                             : (variety.attributes?.quantity !== undefined ? Number(variety.attributes.quantity) : 1)
                                         );
                                         const showNumbered = currentQty > 1 || filledPlantings.length > 1 || filledPlantings.some(p => p.num > 1);
-                                        const planTreeDate = filledPlantings.every(p => !p.datePlanted)
+                                        const planTreeDate = filledPlantings.every(p => !p.datePlanted && !p.dateUnknown)
                                           ? plantOrchardTrees.find((t: any) => (t.variety || '').toLowerCase().trim() === vLower && t.datePlanted)?.datePlanted
                                           : undefined;
-                                        const hasOtherAttrs = variety.attributes && Object.keys(variety.attributes).filter(k => !['quantity', 'isTemporary', 'status', 'harvestMonths', 'storageMonths', 'harvestSource', 'isManualHarvest', 'rootstock', 'datePlanted', 'location', 'plantings', 'comment'].includes(k)).length > 0;
+                                        const hasOtherAttrs = variety.attributes && Object.keys(variety.attributes).filter(k => !['quantity', 'isTemporary', 'status', 'harvestMonths', 'storageMonths', 'harvestSource', 'isManualHarvest', 'rootstock', 'datePlanted', 'dateUnknown', 'excludePlantingDateTracking', 'location', 'plantings', 'comment'].includes(k)).length > 0;
 
                                         if (filledPlantings.length === 0 && !planTreeDate && !hasOtherAttrs) return null;
 
@@ -3777,12 +4691,17 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                           <div className="flex flex-wrap gap-1.5 mt-2">
                                             {filledPlantings.length > 0 && !showNumbered && (
                                               <>
-                                                {filledPlantings[0].datePlanted && (
+                                                {filledPlantings[0].datePlanted ? (
                                                   <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 bg-blue-50 text-blue-900 border border-blue-200 rounded-md">
                                                     <Calendar className="w-3 h-3 text-blue-600 shrink-0" />
                                                     <span>Planté le {formatDateShortFR(filledPlantings[0].datePlanted) || filledPlantings[0].datePlanted}</span>
                                                   </span>
-                                                )}
+                                                ) : filledPlantings[0].dateUnknown ? (
+                                                  <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 bg-stone-100 text-stone-700 border border-stone-200 rounded-md">
+                                                    <Calendar className="w-3 h-3 text-stone-500 shrink-0" />
+                                                    <span>Date inconnue</span>
+                                                  </span>
+                                                ) : null}
                                                 {filledPlantings[0].rootstock && (
                                                   <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 bg-emerald-50 text-emerald-900 border border-emerald-200 rounded-md">
                                                     <Trees className="w-3 h-3 text-emerald-600 shrink-0" />
@@ -3804,12 +4723,17 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                                 className="inline-flex items-center flex-wrap gap-1.5 text-[11px] font-medium px-2 py-0.5 bg-blue-50 text-blue-950 border border-blue-200 rounded-md"
                                               >
                                                 <span className="font-bold text-blue-700">#{p.num}</span>
-                                                {p.datePlanted && (
+                                                {p.datePlanted ? (
                                                   <span className="inline-flex items-center gap-1 font-semibold">
                                                     <Calendar className="w-3 h-3 text-blue-600 shrink-0" />
                                                     {formatDateShortFR(p.datePlanted) || p.datePlanted}
                                                   </span>
-                                                )}
+                                                ) : p.dateUnknown ? (
+                                                  <span className="inline-flex items-center gap-1 text-stone-600 font-medium">
+                                                    <Calendar className="w-3 h-3 text-stone-500 shrink-0" />
+                                                    Date inconnue
+                                                  </span>
+                                                ) : null}
                                                 {p.rootstock && (
                                                   <span className="inline-flex items-center gap-1 text-emerald-900 font-semibold">
                                                     <Trees className="w-3 h-3 text-emerald-600 shrink-0" />
@@ -3835,7 +4759,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                               </span>
                                             )}
                                             {Object.entries(variety.attributes || {}).map(([key, val]) => {
-                                              if (['quantity', 'isTemporary', 'status', 'harvestMonths', 'storageMonths', 'harvestSource', 'isManualHarvest', 'rootstock', 'datePlanted', 'location', 'plantings', 'comment'].includes(key)) return null;
+                                              if (['quantity', 'isTemporary', 'status', 'harvestMonths', 'storageMonths', 'harvestSource', 'isManualHarvest', 'rootstock', 'datePlanted', 'dateUnknown', 'excludePlantingDateTracking', 'location', 'plantings', 'comment'].includes(key)) return null;
                                               const attrType = varietyAttrTypes.find(t => t.id === key);
                                               if (!attrType || !val) return null;
                                               const isColor = attrType.value.toLowerCase().includes('couleur');
@@ -3874,6 +4798,24 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                       )}
                                     </div>
                                     <div className="flex items-center gap-1.5 shrink-0">
+                                      {hasMissingAutofillData(variety, selectedVeg, varietyAttributeFields) && (
+                                        <button
+                                          type="button"
+                                          disabled={autofillingVarietyId === variety.id || Boolean(batchAutofillProgress)}
+                                          onClick={() => handleAutofillSingleVariety(variety)}
+                                          className="px-2 py-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-all flex items-center gap-1 disabled:opacity-50 cursor-pointer"
+                                          title="Compléter automatiquement les champs vides, observations et périodes de récolte/conservation"
+                                        >
+                                          {autofillingVarietyId === variety.id ? (
+                                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                          ) : (
+                                            <Sparkles className="w-3.5 h-3.5" />
+                                          )}
+                                          <span className="hidden xl:inline">
+                                            {autofillingVarietyId === variety.id ? 'Complétion...' : 'Compléter'}
+                                          </span>
+                                        </button>
+                                      )}
                                       {setCurrentView && (
                                         <button
                                           type="button"
@@ -4390,6 +5332,11 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                     <Edit2 className="w-3 h-3 text-amber-600" />
                     Modifié manuellement
                   </span>
+                ) : editingPeriodsVariety.source === 'auto' ? (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-50 text-emerald-800 border border-emerald-200">
+                    <Sparkles className="w-3 h-3 text-emerald-600" />
+                    Pré-rempli auto
+                  </span>
                 ) : (
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-50 text-emerald-800 border border-emerald-200">
                     <Globe className="w-3 h-3 text-emerald-600" />
@@ -4521,8 +5468,8 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                   </h3>
                   <p className="text-xs text-stone-500 mt-0.5">
                     {missingDateVarietiesList.length > 0
-                      ? `${missingDateVarietiesList.length} variété(s) sur ${missingDateCountByPlantId.size} plante(s) • ${totalMissingDateSpecimens} exemplaire(s) à dater`
-                      : 'Toutes vos variétés ont leur date de plantation renseignée.'}
+                      ? `${missingDateVarietiesList.length} variété(s) sur ${missingDateCountByPlantId.size} plante(s) • ${totalMissingDateSpecimens} exemplaire(s) à dater (plantes persistantes & inclusions manuelles, hors variétés en projet)`
+                      : 'Toutes vos plantes persistantes et suivies (hors variétés en projet) ont leur date de plantation renseignée.'}
                   </p>
                 </div>
               </div>
@@ -4622,21 +5569,39 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                             ? item.stats.total > 1
                               ? `Aucune date saisie (${item.stats.total} exemplaires)`
                               : 'Aucune date saisie'
-                            : `${item.stats.filled} daté(s) sur ${item.stats.total} — ${item.stats.missing} manquant(s)`}
+                            : `${item.stats.filled + item.stats.unknown} renseigné(s)${item.stats.unknown > 0 ? ` (dont ${item.stats.unknown} inconnue${item.stats.unknown > 1 ? 's' : ''})` : ''} sur ${item.stats.total} — ${item.stats.missing} manquant(s)`}
                         </span>
                         <span className="text-stone-400">•</span>
                         <span className="text-stone-500">{item.plant.category}</span>
                       </div>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => handleJumpToMissingDateVariety(item)}
-                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold transition-colors flex items-center gap-1.5 shrink-0 shadow-2xs cursor-pointer"
-                    >
-                      <span>Saisir</span>
-                      <ArrowRight className="w-3.5 h-3.5" />
-                    </button>
+                    <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+                      <button
+                        type="button"
+                        onClick={() => handleMarkVarietyDateUnknown(item.variety)}
+                        className="px-2.5 py-1.5 bg-white hover:bg-stone-100 text-stone-700 border border-stone-200 rounded-xl text-xs font-medium transition-colors cursor-pointer"
+                        title="Marquer la ou les dates manquantes comme inconnues"
+                      >
+                        Date inconnue
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleExcludeVarietyDateTracking(item.variety, true)}
+                        className="px-2.5 py-1.5 bg-white hover:bg-stone-100 text-stone-500 hover:text-stone-800 border border-stone-200 rounded-xl text-xs font-medium transition-colors cursor-pointer"
+                        title="Exclure cette variété du suivi des dates de plantation"
+                      >
+                        Exclure
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleJumpToMissingDateVariety(item)}
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold transition-colors flex items-center gap-1.5 shrink-0 shadow-2xs cursor-pointer"
+                      >
+                        <span>Saisir</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
                 ))
               )}
@@ -4666,6 +5631,175 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
               >
                 Fermer
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Pré-remplissage automatique global du catalogue */}
+      {isGlobalAutofillModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/45 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl shadow-2xl border border-stone-200 w-full max-w-xl overflow-hidden animate-in zoom-in-95 duration-150">
+            <div className="p-5 border-b border-stone-100 flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-xl bg-emerald-100 text-emerald-700">
+                  <Wand2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-serif text-lg font-medium text-stone-900">
+                    Génération automatique du catalogue
+                  </h3>
+                  <p className="text-xs text-stone-500 mt-0.5">
+                    Complète en une seule fois toutes vos variétés enregistrées.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsGlobalAutofillModalOpen(false)}
+                className="text-stone-400 hover:text-stone-600 p-1.5 rounded-lg hover:bg-stone-100 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3 bg-stone-50 border border-stone-200/80 rounded-xl">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-stone-400">Total variétés</p>
+                  <p className="text-lg font-bold text-stone-800">{globalCatalogVarietyEntries.length}</p>
+                </div>
+                <div className="p-3 bg-emerald-50 border border-emerald-200/80 rounded-xl">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">Fiches incomplètes</p>
+                  <p className="text-lg font-bold text-emerald-900">{globalIncompleteVarietyCount}</p>
+                </div>
+              </div>
+
+              <div className="p-3.5 bg-stone-50 border border-stone-200/80 rounded-xl space-y-1.5 text-xs text-stone-700">
+                <p className="font-semibold text-stone-800">Champs ciblés automatiquement :</p>
+                <p className="leading-relaxed">
+                  {varietyAttributeFields.length > 0
+                    ? varietyAttributeFields.map((f) => f.label).join(', ')
+                    : 'Aucun champ personnalisé configuré pour l’instant (ajoutez-en dans Configuration → Champs Variétés)'}
+                  {' '}• <strong>Commentaire / Observations</strong> • <strong>Récolte &amp; Conservation</strong>.
+                </p>
+              </div>
+
+              {!globalAutofillProgress && (
+                <div className="space-y-2 pt-1">
+                  <label className="flex items-start gap-2.5 cursor-pointer text-xs text-stone-700 select-none">
+                    <input
+                      type="checkbox"
+                      checked={globalAutofillOverwrite}
+                      onChange={(e) => setGlobalAutofillOverwrite(e.target.checked)}
+                      className="mt-0.5 rounded border-stone-300 text-emerald-600 focus:ring-emerald-500 w-4 h-4 cursor-pointer"
+                    />
+                    <span>
+                      <strong className="text-stone-900">Tout régénérer ({globalCatalogVarietyEntries.length} variétés)</strong>
+                      <span className="block text-[11px] text-stone-500">
+                        Si décoché, seules les {globalIncompleteVarietyCount} fiche(s) avec champs ou périodes manquants sont complétées sans modifier vos saisies existantes.
+                      </span>
+                    </span>
+                  </label>
+
+                  {globalAutofillOverwrite && (
+                    <label className="flex items-start gap-2.5 pl-6 cursor-pointer text-xs text-stone-600 select-none">
+                      <input
+                        type="checkbox"
+                        checked={globalAutofillResetManualHarvest}
+                        onChange={(e) => setGlobalAutofillResetManualHarvest(e.target.checked)}
+                        className="mt-0.5 rounded border-stone-300 text-amber-600 focus:ring-amber-500 w-3.5 h-3.5 cursor-pointer"
+                      />
+                      <span>
+                        Remplacer aussi les périodes de récolte/conservation modifiées manuellement
+                      </span>
+                    </label>
+                  )}
+                </div>
+              )}
+
+              {globalAutofillProgress && (
+                <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl space-y-2.5">
+                  <div className="flex items-center justify-between text-xs font-semibold text-emerald-900">
+                    <span className="flex items-center gap-2">
+                      <RefreshCw className="w-3.5 h-3.5 text-emerald-600 animate-spin" />
+                      Génération en cours...
+                    </span>
+                    <span>
+                      {globalAutofillProgress.current} / {globalAutofillProgress.total} (
+                      {Math.round((globalAutofillProgress.current / Math.max(1, globalAutofillProgress.total)) * 100)}%)
+                    </span>
+                  </div>
+                  <div className="w-full h-2 bg-emerald-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-emerald-600 transition-all duration-200"
+                      style={{
+                        width: `${Math.min(
+                          100,
+                          Math.round((globalAutofillProgress.current / Math.max(1, globalAutofillProgress.total)) * 100)
+                        )}%`,
+                      }}
+                    />
+                  </div>
+                  {globalAutofillProgress.waitSeconds ? (
+                    <p className="text-[11px] font-medium text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                      Pause automatique anti-quota API — reprise automatique dans <strong>{globalAutofillProgress.waitSeconds}s</strong>...
+                    </p>
+                  ) : (
+                    <p className="text-[11px] text-emerald-800 truncate">
+                      En cours : <strong>{globalAutofillProgress.currentLabel}</strong>
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {globalAutofillSummary && !globalAutofillProgress && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-medium text-emerald-900 flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{globalAutofillSummary}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 bg-stone-50 border-t border-stone-100 flex items-center justify-end gap-2">
+              {globalAutofillProgress ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    globalAutofillAbortRef.current = true;
+                  }}
+                  className="px-4 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-semibold transition-colors cursor-pointer"
+                >
+                  Arrêter (sauvegarder la progression)
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setIsGlobalAutofillModalOpen(false)}
+                    className="px-4 py-1.5 bg-white hover:bg-stone-100 text-stone-700 border border-stone-200 rounded-xl text-xs font-medium transition-colors cursor-pointer"
+                  >
+                    Fermer
+                  </button>
+                  <button
+                    type="button"
+                    disabled={
+                      (globalAutofillOverwrite
+                        ? globalCatalogVarietyEntries.length
+                        : globalIncompleteVarietyCount) === 0
+                    }
+                    onClick={handleGlobalBatchAutofill}
+                    className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-semibold transition-colors flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>
+                      {globalAutofillOverwrite
+                        ? `Tout régénérer (${globalCatalogVarietyEntries.length})`
+                        : `Compléter tout (${globalIncompleteVarietyCount})`}
+                    </span>
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>

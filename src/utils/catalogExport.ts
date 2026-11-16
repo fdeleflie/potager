@@ -221,11 +221,14 @@ export function generatePlantVarietiesDetailedCSV(
 
         const plantingsList = getVarietyPlantings(v.attributes)
           .map((p, idx) => ({ ...p, num: idx + 1 }))
-          .filter(p => p.datePlanted || p.location || p.rootstock);
+          .filter(p => p.datePlanted || p.dateUnknown || p.location || p.rootstock);
+
+        const formatEntryDate = (p: { datePlanted: string; dateUnknown?: boolean }) =>
+          p.datePlanted || (p.dateUnknown ? 'Date inconnue' : '');
 
         const dateCell = plantingsList.length > 1 || plantingsList.some(p => p.num > 1)
-          ? plantingsList.filter(p => p.datePlanted).map(p => `#${p.num}: ${p.datePlanted}`).join(' | ')
-          : (plantingsList[0]?.datePlanted || '');
+          ? plantingsList.filter(p => p.datePlanted || p.dateUnknown).map(p => `#${p.num}: ${formatEntryDate(p)}`).join(' | ')
+          : formatEntryDate(plantingsList[0] || { datePlanted: '' });
 
         const locationCell = plantingsList.length > 1 || plantingsList.some(p => p.num > 1)
           ? plantingsList.filter(p => p.location).map(p => `#${p.num}: ${p.location}`).join(' | ')

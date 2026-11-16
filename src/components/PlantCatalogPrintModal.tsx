@@ -860,11 +860,11 @@ export function PlantCatalogPrintModal({
                               <tbody className="divide-y divide-stone-100">
                                 {p.varieties.map((v, i) => {
                                   const attrs = v.attributes || {};
-                                  const ignoredKeys = new Set(['quantity', 'isTemporary', 'status', 'harvestMonths', 'storageMonths', 'harvestSource', 'isManualHarvest', 'rootstock', 'datePlanted', 'location', 'plantings', 'comment']);
+                                  const ignoredKeys = new Set(['quantity', 'isTemporary', 'status', 'harvestMonths', 'storageMonths', 'harvestSource', 'isManualHarvest', 'rootstock', 'datePlanted', 'dateUnknown', 'location', 'plantings', 'comment', 'excludePlantingDateTracking']);
                                   const otherEntries = Object.entries(attrs).filter(([ak, av]) => !ignoredKeys.has(ak) && av !== undefined && av !== null && String(av).trim() !== '');
                                   const plantingsList = getVarietyPlantings(attrs)
                                     .map((p, idx) => ({ ...p, num: idx + 1 }))
-                                    .filter(p => Boolean(p.datePlanted || p.location || p.rootstock));
+                                    .filter(p => Boolean(p.datePlanted || p.dateUnknown || p.location || p.rootstock));
                                   const hasDisplayInfo = plantingsList.length > 0 || Boolean(attrs.comment) || otherEntries.length > 0;
 
                                   return (
@@ -878,7 +878,7 @@ export function PlantCatalogPrintModal({
                                                 <span key={p.num} className="px-1.5 py-0.5 bg-blue-50 text-blue-800 border border-blue-200 rounded text-[10px] font-semibold">
                                                   {plantingsList.length > 1 || p.num > 1 ? `#${p.num} : ` : ''}
                                                   {[
-                                                    p.datePlanted ? `Planté le ${p.datePlanted}` : '',
+                                                    p.datePlanted ? `Planté le ${p.datePlanted}` : (p.dateUnknown ? 'Date inconnue' : ''),
                                                     p.rootstock ? `PG : ${p.rootstock}` : '',
                                                     p.location ? `📍 ${p.location}` : ''
                                                   ].filter(Boolean).join(' • ')}

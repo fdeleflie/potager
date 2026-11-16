@@ -18,8 +18,7 @@ import {
   getCanonicalCategory 
 } from '../utils/categories';
 import { DEFAULT_WEATHER_INDICATORS, PRESET_WEATHER_COLOR_PALETTES } from '../utils/weatherIndicators';
-import { ensureRootstocksInitialized } from '../utils/rootstocks';
-import { getDistinctRootstocks } from '../utils/varietyPlantings';
+import { getDistinctRootstocks, ensureRootstocksInitialized } from '../utils/varietyPlantings';
 
 export function Config({ onNavigate, initialTab }: { onNavigate?: (view: any) => void; initialTab?: string }) {
   const { seasons, currentSeasonId, setCurrentSeasonId, createNewSeason, updateSeason, deleteSeason } = useSeason();

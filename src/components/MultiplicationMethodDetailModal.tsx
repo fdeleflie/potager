@@ -23,12 +23,10 @@ import {
 } from 'lucide-react';
 import { 
   MultiplicationMethod, 
-  METHOD_ICONS_AND_COLORS 
+  METHOD_ICONS_AND_COLORS,
+  MULTIPLICATION_METHODS_GUIDE,
+  MethodDetail
 } from '../data/multiplicationData';
-import { 
-  MULTIPLICATION_METHODS_GUIDE, 
-  MethodDetail 
-} from '../data/multiplicationMethodsGuide';
 import { JOURNAL_MONTHS } from '../views/Journal';
 
 interface Props {
