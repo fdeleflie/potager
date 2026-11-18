@@ -456,6 +456,72 @@ function mergeHybridVarietyData(
   };
 }
 
+async function postJsonWithAbort(
+  url: string,
+  body: unknown,
+  options?: { timeoutMs?: number; shouldAbort?: () => boolean }
+): Promise<{ ok: boolean; status: number; payload: any; aborted?: boolean; error?: string }> {
+  const timeoutMs = options?.timeoutMs ?? 35_000;
+  const controller = new AbortController();
+  let timedOut = false;
+  let abortedByUser = false;
+
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
+  const abortInterval = options?.shouldAbort
+    ? setInterval(() => {
+        if (options.shouldAbort?.()) {
+          abortedByUser = true;
+          controller.abort();
+        }
+      }, 200)
+    : null;
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+
+    const rawText = await response.text();
+    let payload: any = {};
+    if (rawText) {
+      try {
+        payload = JSON.parse(rawText);
+      } catch {
+        payload = { error: rawText.slice(0, 200) };
+      }
+    }
+    return { ok: response.ok, status: response.status, payload };
+  } catch (err) {
+    if (abortedByUser || options?.shouldAbort?.()) {
+      return { ok: false, status: 0, payload: {}, aborted: true, error: 'Opération interrompue.' };
+    }
+    if (timedOut) {
+      return {
+        ok: false,
+        status: 504,
+        payload: {},
+        error: 'Délai dépassé : le serveur met trop de temps à répondre. Réessayez.',
+      };
+    }
+    return {
+      ok: false,
+      status: 0,
+      payload: {},
+      error: err instanceof Error ? err.message : 'Erreur réseau lors du pré-remplissage.',
+    };
+  } finally {
+    clearTimeout(timeoutId);
+    if (abortInterval) clearInterval(abortInterval);
+  }
+}
+
 export async function autofillVarietyHybrid(
   params: HybridAutofillParams
 ): Promise<HybridAutofillResult> {
@@ -468,30 +534,27 @@ export async function autofillVarietyHybrid(
   let retryAfterSeconds: number | undefined;
 
   if (localState.needsServer) {
-    try {
-      const response = await fetch('/api/varieties/autofill', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          species,
-          category,
-          variety,
-          attributeFields: overwriteExisting ? attributeFields : localState.fieldsToFetch,
-        }),
-      });
+    const res = await postJsonWithAbort(
+      '/api/varieties/autofill',
+      {
+        species,
+        category,
+        variety,
+        attributeFields: overwriteExisting ? attributeFields : localState.fieldsToFetch,
+      },
+      { timeoutMs: 35_000 }
+    );
 
-      const payload = await response.json();
-      if (!response.ok) {
-        serverError = payload?.error || `Erreur serveur (${response.status})`;
-        if (typeof payload?.retryAfterSeconds === 'number') {
-          retryAfterSeconds = payload.retryAfterSeconds;
-        }
-      } else {
-        usedServer = true;
-        serverData = payload;
+    if (res.error) {
+      serverError = res.error;
+    } else if (!res.ok) {
+      serverError = res.payload?.error || `Erreur serveur (${res.status})`;
+      if (typeof res.payload?.retryAfterSeconds === 'number') {
+        retryAfterSeconds = res.payload.retryAfterSeconds;
       }
-    } catch (err) {
-      serverError = err instanceof Error ? err.message : 'Erreur réseau lors du pré-remplissage.';
+    } else {
+      usedServer = true;
+      serverData = res.payload;
     }
   }
 
@@ -563,7 +626,7 @@ export async function autofillVarietiesBatchHybrid(params: BatchAutofillParams):
     items,
     attributeFields,
     overwriteExisting = false,
-    batchSize = 12,
+    batchSize = 6,
     shouldAbort,
     onChunkStart,
     onChunkCompleted,
@@ -609,9 +672,9 @@ export async function autofillVarietiesBatchHybrid(params: BatchAutofillParams):
     updatedCount += localResults.length;
   }
 
-  // Group server-needing entries into chunks so 12 varieties = 1 API call
+  // Group server-needing entries into chunks so up to 6 varieties = 1 fast API call
   const remoteEntries = prepared.filter((entry) => entry.localState.needsServer);
-  const safeChunkSize = Math.max(1, Math.min(15, batchSize));
+  const safeChunkSize = Math.max(1, Math.min(12, batchSize));
 
   for (let i = 0; i < remoteEntries.length; i += safeChunkSize) {
     if (shouldAbort?.()) {
@@ -625,57 +688,55 @@ export async function autofillVarietiesBatchHybrid(params: BatchAutofillParams):
     let chunkError: string | undefined;
     let usedServer = false;
 
-    const maxAttempts = 3;
+    const maxAttempts = 2;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       if (shouldAbort?.()) {
         return { completedCount, updatedCount, errorCount, firstError, aborted: true };
       }
 
-      try {
-        const response = await fetch('/api/varieties/autofill-batch', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            items: chunk.map((c) => ({
-              key: c.item.key,
-              species: c.item.species,
-              category: c.item.category,
-              variety: c.item.variety,
-            })),
-            attributeFields,
-          }),
-        });
+      const res = await postJsonWithAbort(
+        '/api/varieties/autofill-batch',
+        {
+          items: chunk.map((c) => ({
+            key: c.item.key,
+            species: c.item.species,
+            category: c.item.category,
+            variety: c.item.variety,
+          })),
+          attributeFields,
+        },
+        { timeoutMs: 35_000, shouldAbort }
+      );
 
-        const payload = await response.json();
+      if (res.aborted) {
+        return { completedCount, updatedCount, errorCount, firstError, aborted: true };
+      }
 
-        if (response.status === 429) {
-          const retrySec =
-            typeof payload?.retryAfterSeconds === 'number' ? payload.retryAfterSeconds : 55;
-          if (attempt < maxAttempts) {
-            const resumed = await waitWithAbortCheck(retrySec, shouldAbort, onWaitStatus);
-            if (!resumed) {
-              return { completedCount, updatedCount, errorCount, firstError, aborted: true };
-            }
-            continue;
+      if (res.status === 429) {
+        const retrySec =
+          typeof res.payload?.retryAfterSeconds === 'number'
+            ? res.payload.retryAfterSeconds
+            : 55;
+        if (attempt < maxAttempts) {
+          const resumed = await waitWithAbortCheck(retrySec, shouldAbort, onWaitStatus);
+          if (!resumed) {
+            return { completedCount, updatedCount, errorCount, firstError, aborted: true };
           }
-          chunkError = payload?.error || 'Limite de requêtes atteinte (429).';
-          break;
+          continue;
         }
-
-        if (!response.ok) {
-          chunkError = payload?.error || `Erreur serveur (${response.status})`;
-          break;
-        }
-
-        serverResultsMap = payload?.results || {};
-        usedServer = true;
-        chunkError = undefined;
-        break;
-      } catch (err) {
-        chunkError =
-          err instanceof Error ? err.message : 'Erreur réseau lors du pré-remplissage groupé.';
+        chunkError = res.payload?.error || 'Limite de requêtes atteinte (429).';
         break;
       }
+
+      if (res.error || !res.ok) {
+        chunkError = res.payload?.error || res.error || `Erreur serveur (${res.status})`;
+        break;
+      }
+
+      serverResultsMap = res.payload?.results || {};
+      usedServer = true;
+      chunkError = undefined;
+      break;
     }
 
     const chunkResults: BatchAutofillChunkResult[] = chunk.map((entry) => {

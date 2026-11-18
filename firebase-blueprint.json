@@ -146,7 +146,9 @@
         "spacing": { "type": "number" },
         "isLocked": { "type": "boolean" },
         "isDeleted": { "type": "boolean" },
-        "notes": { "type": "array", "items": { "$ref": "#/entities/Note" } }
+        "notes": { "type": "array", "items": { "$ref": "#/entities/Note" } },
+        "encyclopediaId": { "type": "string" },
+        "varietyId": { "type": "string" }
       },
       "required": ["id", "userId", "terrainId", "species", "variety", "datePlanted", "comments", "positionX", "positionY", "isDeleted"]
     },

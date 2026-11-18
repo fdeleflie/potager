@@ -153,3 +153,70 @@ export function deduplicateCategories(
 
   return result.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
 }
+
+export const DEFAULT_ORCHARD_PLACEMENT_CATEGORY_KEYS = new Set([
+  'arbre fruitier',
+  'arbres fruitiers',
+  'petits fruits',
+  'petit fruit',
+  'fruit',
+  'fruits',
+]);
+
+function normalizeCategoryTextForLookup(str?: string | null): string {
+  if (!str) return '';
+  // Strip leading emoji/pictographs if any before normalizing
+  const stripped = str.replace(/^[\p{Extended_Pictographic}\p{Emoji_Presentation}\u200d\ufe0f\s]+/gu, '').trim();
+  return normalizeCategoryKey(stripped || str);
+}
+
+/**
+ * Default orchard/plan placement policy for a category when no explicit override exists in Config.
+ */
+export function isCategoryOrchardPlacementDefault(categoryName?: string | null): boolean {
+  const key = normalizeCategoryTextForLookup(categoryName);
+  if (!key) return false;
+  if (DEFAULT_ORCHARD_PLACEMENT_CATEGORY_KEYS.has(key)) return true;
+  return key.includes('fruitier');
+}
+
+/**
+ * Checks whether a category is enabled for placement on the orchard plan,
+ * honoring explicit `attributes.allowOrchardPlacement` from Config when present.
+ */
+export function isCategoryEnabledForOrchardPlan(
+  categoryName?: string | null,
+  config?: any[] | null
+): boolean {
+  const key = normalizeCategoryTextForLookup(categoryName);
+  if (!key) return false;
+
+  if (config && Array.isArray(config)) {
+    const match = config.find(
+      (c: any) => c.type === 'category' && normalizeCategoryTextForLookup(c.value) === key
+    );
+    if (match && typeof match.attributes?.allowOrchardPlacement === 'boolean') {
+      return match.attributes.allowOrchardPlacement;
+    }
+  }
+
+  return isCategoryOrchardPlacementDefault(categoryName);
+}
+
+/**
+ * Checks whether a plant belongs to at least one category configured for placement on the orchard plan.
+ */
+export function isPlantEnabledForOrchardPlan(
+  plant?: { category?: string; categories?: string[] } | null,
+  config?: any[] | null
+): boolean {
+  if (!plant) return false;
+  const cats =
+    plant.categories && plant.categories.length > 0
+      ? plant.categories
+      : plant.category
+      ? [plant.category]
+      : [];
+  return cats.some((cat) => isCategoryEnabledForOrchardPlan(cat, config));
+}
+

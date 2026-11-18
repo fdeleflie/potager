@@ -2,7 +2,7 @@ import { useFirebaseData, fb, getFirebaseWriteCount, getFirebaseQuotaStats, sync
 import React, { useState, useEffect, useMemo } from 'react';
 import { db, ConfigItem } from '../db';
 import { v4 as uuidv4 } from 'uuid';
-import { Settings, Plus, Trash2, Edit2, Palette, XCircle, CheckCircle2, Trees, BookOpen, Info, Activity, Calendar, RefreshCw, Sparkles, AlertCircle, AlertTriangle, Zap, ShieldCheck, Database, HardDrive, CheckCircle, ExternalLink, ArrowRight, Check, X, CheckSquare, Square } from 'lucide-react';
+import { Settings, Plus, Trash2, Edit2, Palette, XCircle, CheckCircle2, Trees, BookOpen, Info, Activity, Calendar, RefreshCw, Sparkles, AlertCircle, AlertTriangle, Zap, ShieldCheck, Database, HardDrive, CheckCircle, ExternalLink, ArrowRight, Check, X, CheckSquare, Square, MapPin } from 'lucide-react';
 import { ConfirmModal } from '../components/Modals';
 import { ICON_LIST, ICON_MAP, GARDEN_EMOJIS, GARDEN_EMOJI_CATEGORIES } from '../constants';
 import { getDistinctColor } from '../utils/colors';
@@ -15,7 +15,8 @@ import {
   areCategoriesEqual, 
   deduplicateCategories, 
   DEFAULT_PLANT_CATEGORIES, 
-  getCanonicalCategory 
+  getCanonicalCategory,
+  isCategoryEnabledForOrchardPlan
 } from '../utils/categories';
 import { DEFAULT_WEATHER_INDICATORS, PRESET_WEATHER_COLOR_PALETTES } from '../utils/weatherIndicators';
 import { getDistinctRootstocks, ensureRootstocksInitialized } from '../utils/varietyPlantings';
@@ -678,6 +679,23 @@ export function Config({ onNavigate, initialTab }: { onNavigate?: (view: any) =>
     });
   };
 
+  const handleToggleCategoryOrchardPlan = async (item: any) => {
+    const currentEnabled = isCategoryEnabledForOrchardPlan(item.value, config);
+    const nextEnabled = !currentEnabled;
+    await fb.update('config', item.id, {
+      attributes: {
+        ...(item.attributes || {}),
+        allowOrchardPlacement: nextEnabled,
+      },
+    });
+    setCleanFeedback(
+      nextEnabled
+        ? `Catégorie "${item.value}" activée pour le placement sur le plan (Verger).`
+        : `Catégorie "${item.value}" désactivée pour le placement sur le plan (Verger).`
+    );
+    setTimeout(() => setCleanFeedback(null), 3500);
+  };
+
   const handleSaveZone = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingZoneId) return;
@@ -1296,7 +1314,7 @@ export function Config({ onNavigate, initialTab }: { onNavigate?: (view: any) =>
                   <div className="flex items-center gap-2">
                     <Info className="w-4 h-4 text-stone-500 flex-shrink-0" />
                     <span>
-                      Les catégories classent vos plantes dans l'encyclopédie, les semis et le verger.
+                      Les catégories classent vos plantes. Activez <strong>« Placement sur plan »</strong> uniquement pour les catégories destinées à être positionnées dans <strong>Mon Verger</strong> (ex. <em>Arbre fruitier</em>, <em>Petits fruits</em>), afin de ne pas proposer le plan sur les légumes annuels.
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
@@ -1548,13 +1566,37 @@ export function Config({ onNavigate, initialTab }: { onNavigate?: (view: any) =>
                                 </span>
                               )}
                               {activeTab === 'category' && (
-                                <span className={`text-[10px] font-medium px-2 py-0.5 rounded-md ${
-                                  (plantCategoryUsage.get(normalizeCategoryKey(item.value)) || 0) > 0
-                                    ? 'text-emerald-700 bg-emerald-50 border border-emerald-200/80'
-                                    : 'text-stone-400 bg-stone-100'
-                                }`}>
-                                  {plantCategoryUsage.get(normalizeCategoryKey(item.value)) || 0} plante{(plantCategoryUsage.get(normalizeCategoryKey(item.value)) || 0) > 1 ? 's' : ''}
-                                </span>
+                                <>
+                                  <span className={`text-[10px] font-medium px-2 py-0.5 rounded-md ${
+                                    (plantCategoryUsage.get(normalizeCategoryKey(item.value)) || 0) > 0
+                                      ? 'text-emerald-700 bg-emerald-50 border border-emerald-200/80'
+                                      : 'text-stone-400 bg-stone-100'
+                                  }`}>
+                                    {plantCategoryUsage.get(normalizeCategoryKey(item.value)) || 0} plante{(plantCategoryUsage.get(normalizeCategoryKey(item.value)) || 0) > 1 ? 's' : ''}
+                                  </span>
+                                  {(() => {
+                                    const planEnabled = isCategoryEnabledForOrchardPlan(item.value, config);
+                                    return (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleToggleCategoryOrchardPlan(item)}
+                                        className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-0.5 rounded-full border transition-all cursor-pointer ${
+                                          planEnabled
+                                            ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100 shadow-2xs'
+                                            : 'bg-stone-100 text-stone-500 border-stone-200 hover:bg-stone-200/80'
+                                        }`}
+                                        title={
+                                          planEnabled
+                                            ? 'Placement sur le plan activé pour cette catégorie — cliquer pour désactiver'
+                                            : 'Placement sur le plan désactivé (ex. légumes annuels) — cliquer pour activer'
+                                        }
+                                      >
+                                        <MapPin className={`w-3 h-3 ${planEnabled ? 'text-emerald-600' : 'text-stone-400'}`} />
+                                        <span>Placement sur plan : {planEnabled ? 'Oui' : 'Non'}</span>
+                                      </button>
+                                    );
+                                  })()}
+                                </>
                               )}
                               {activeTab === 'journal_tag' && (
                                 <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200">

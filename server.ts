@@ -84,40 +84,81 @@ function extractRetryDelayMs(err: unknown): number | null {
   return null;
 }
 
-async function callGeminiWithRetry<T>(fn: () => Promise<T>): Promise<T> {
-  const maxAttempts = 3;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      return await fn();
-    } catch (err: unknown) {
-      const status = extractStatusCode(err);
-      const retryDelayMs = extractRetryDelayMs(err);
+const AUTOFILL_MODELS: Array<{ model: string; thinkingLevel: ThinkingLevel }> = [
+  { model: 'gemini-3.1-flash-lite', thinkingLevel: ThinkingLevel.MINIMAL },
+  { model: 'gemini-4-hydrogen', thinkingLevel: ThinkingLevel.LOW },
+];
 
-      if (status === 429) {
-        const waitMs = retryDelayMs !== null ? retryDelayMs + 400 : 2500 * attempt;
-        // Only sleep server-side for short burst limits (<= 12s).
-        // For longer Free Tier minute windows (~50s), return 429 immediately with retryAfterSeconds
-        // so the HTTP request never times out and the UI can display a clean countdown.
-        if (attempt < maxAttempts && waitMs <= 12000) {
-          await sleep(waitMs);
-          continue;
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          const err = new Error(`Délai d'attente dépassé (${label}).`) as ApiHttpError;
+          err.statusCode = 504;
+          reject(err);
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function callGeminiWithRetry<T>(
+  fn: (modelConfig: { model: string; thinkingLevel: ThinkingLevel }) => Promise<T>
+): Promise<T> {
+  let lastError: unknown;
+  for (let mIdx = 0; mIdx < AUTOFILL_MODELS.length; mIdx++) {
+    const modelCfg = AUTOFILL_MODELS[mIdx];
+    const maxAttempts = 2;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await withTimeout(
+          fn(modelCfg),
+          16000,
+          `${modelCfg.model}`
+        );
+      } catch (err: unknown) {
+        lastError = err;
+        const status = extractStatusCode(err);
+        const retryDelayMs = extractRetryDelayMs(err);
+
+        if (status === 429) {
+          const waitMs = retryDelayMs !== null ? retryDelayMs + 400 : 2000 * attempt;
+          // Only sleep server-side for very short burst limits (<= 6s).
+          if (attempt < maxAttempts && waitMs <= 6000) {
+            await sleep(waitMs);
+            continue;
+          }
+          // Try next fallback model if available before returning 429
+          if (mIdx < AUTOFILL_MODELS.length - 1) {
+            break;
+          }
+          const retryErr = new Error(
+            'Limite temporaire de requêtes atteinte. Patientez quelques secondes avant de relancer.'
+          ) as ApiHttpError;
+          retryErr.statusCode = 429;
+          retryErr.retryAfterSeconds = Math.max(5, Math.ceil(waitMs / 1000));
+          throw retryErr;
         }
-        const retryErr = new Error(
-          'Limite temporaire de requêtes atteinte. Patientez quelques secondes avant de relancer.'
-        ) as ApiHttpError;
-        retryErr.statusCode = 429;
-        retryErr.retryAfterSeconds = Math.max(5, Math.ceil(waitMs / 1000));
-        throw retryErr;
-      }
 
-      if (status === 503 && attempt < maxAttempts) {
-        await sleep(1500 * attempt);
-        continue;
-      }
+        if (status === 503 || status === 504 || status === 500) {
+          if (attempt < maxAttempts) {
+            await sleep(800);
+            continue;
+          }
+          // Try next fallback model
+          break;
+        }
 
-      throw err;
+        throw err;
+      }
     }
   }
+  if (lastError) throw lastError;
   throw new Error('Échec inattendu lors de la génération.');
 }
 
@@ -199,12 +240,12 @@ async function generateVarietyDetails(body: AutofillRequestBody) {
     `4. "comment" : 1 à 3 phrases synthétiques et pratiques en français (caractéristiques gustatives, port/vigueur, pollinisation si fruitier, résistance/sensibilité maladies, meilleur usage culinaire ou conseil de culture).`,
   ].join('\n');
 
-  const response = await callGeminiWithRetry(() =>
+  const response = await callGeminiWithRetry(({ model, thinkingLevel }) =>
     ai.models.generateContent({
-      model: 'gemini-4-hydrogen',
+      model,
       contents: prompt,
       config: {
-        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+        thinkingConfig: { thinkingLevel },
         systemInstruction:
           'Réponds uniquement en JSON valide selon le schéma demandé. Sois précis sur les variétés horticoles et fruitières françaises.',
         responseMimeType: 'application/json',
@@ -324,12 +365,12 @@ async function generateVarietiesBatch(body: BatchAutofillRequestBody) {
     `4. "comment" : 1 à 2 phrases synthétiques et pratiques en français (goût, port/vigueur, pollinisation si fruitier, résistance/sensibilité maladies, usage ou culture).`,
   ].join('\n');
 
-  const response = await callGeminiWithRetry(() =>
+  const response = await callGeminiWithRetry(({ model, thinkingLevel }) =>
     ai.models.generateContent({
-      model: 'gemini-4-hydrogen',
+      model,
       contents: prompt,
       config: {
-        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+        thinkingConfig: { thinkingLevel },
         systemInstruction:
           'Réponds uniquement en JSON valide selon le schéma demandé. Retourne exactement une entrée par "key" fourni.',
         responseMimeType: 'application/json',
@@ -438,6 +479,22 @@ function handleAutofillError(res: express.Response, err: unknown) {
       error: `Limite de requêtes par minute atteinte. Reprise possible dans ${retryAfterSeconds}s.`,
       code: 'RATE_LIMIT',
       retryAfterSeconds,
+    });
+  }
+
+  if (status === 400 || status === 403) {
+    console.error('Erreur clé/permission /api/varieties/autofill:', error);
+    return res.status(status).json({
+      error:
+        'Clé API Gemini invalide ou refusée. Vérifiez la clé configurée dans Settings > Secrets.',
+    });
+  }
+
+  if (status === 503 || status === 504) {
+    console.warn('Service Gemini temporairement surchargé ou timeout:', error?.message);
+    return res.status(status).json({
+      error:
+        'Le service d’IA est temporairement surchargé ou lent. Réessayez dans quelques instants.',
     });
   }
 

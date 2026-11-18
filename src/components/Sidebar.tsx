@@ -11,7 +11,6 @@ import {
   BarChart3,
   Scale,
   Map,
-  Trees,
   Calendar,
   Cloud,
   CheckSquare,
@@ -60,8 +59,7 @@ export function Sidebar({ currentView, setCurrentView }: SidebarProps) {
     { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard },
     { id: 'tasks', label: 'Tâches', icon: CheckSquare },
     { id: 'weather', label: 'Météo', icon: Cloud },
-    { id: 'plan', label: 'Plan du potager', icon: Map },
-    { id: 'orchard', label: 'Mon Verger', icon: Trees },
+    { id: 'plan', label: 'Plan', icon: Map },
     { id: 'config', label: 'Configuration', icon: Settings },
     { id: 'backup', label: 'Sauvegarde', icon: Save },
     { id: 'trash', label: 'Corbeille', icon: Trash2 },
@@ -111,6 +109,7 @@ export function Sidebar({ currentView, setCurrentView }: SidebarProps) {
           const Icon = item.icon;
           const isActive = currentView === item.id || 
             (currentView.startsWith('seedling-') && item.id === 'seedlings') ||
+            ((currentView === 'plan-potager' || currentView === 'plan-verger' || currentView === 'orchard' || currentView === 'garden-plan') && item.id === 'plan') ||
             ((currentView === 'calendar-perpetual' || currentView === 'perpetual' || currentView === 'calendar-multiplications' || currentView === 'multiplications' || currentView === 'calendar-harvest-storage') && item.id === 'calendar');
           return (
             <button

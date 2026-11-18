@@ -14,8 +14,7 @@ import { Config } from './views/Config';
 import { Trash } from './views/Trash';
 import { Backup } from './views/Backup';
 import { WeatherView } from './views/WeatherView';
-import { GardenPlan } from './views/GardenPlan';
-import { Orchard } from './views/Orchard';
+import { PlanView } from './views/PlanView';
 import { CalendarView } from './views/CalendarView';
 import { HarvestsView } from './views/HarvestsView';
 import { TasksView } from './views/TasksView';
@@ -77,7 +76,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    backupService.initAutoBackup();
+    const stopAutoBackup = backupService.initAutoBackup();
     
     // Create the specific L-shaped terrain if it doesn't exist
     const setupTerrain = async () => {
@@ -505,6 +504,9 @@ export default function App() {
     };
 
     init();
+    return () => {
+      stopAutoBackup();
+    };
   }, []);
 
   const renderView = () => {
@@ -541,8 +543,13 @@ export default function App() {
     if (currentView === 'harvests') return <HarvestsView />;
     if (currentView === 'tasks') return <TasksView setCurrentView={handleNavigate} />;
     if (currentView === 'encyclopedia') return <EncyclopediaView setCurrentView={handleNavigate} />;
-    if (currentView === 'plan') return <GardenPlan setCurrentView={handleNavigate} />;
-    if (currentView === 'orchard') return <Orchard setCurrentView={handleNavigate} />;
+    if (currentView === 'plan') return <PlanView setCurrentView={handleNavigate} />;
+    if (currentView === 'plan-potager' || currentView === 'garden-plan') {
+      return <PlanView setCurrentView={handleNavigate} initialTab="potager" />;
+    }
+    if (currentView === 'orchard' || currentView === 'plan-verger') {
+      return <PlanView setCurrentView={handleNavigate} initialTab="verger" />;
+    }
     if (currentView === 'weather' || currentView === 'weather-history') {
       return <WeatherView setCurrentView={handleNavigate} initialTab={currentView === 'weather-history' ? 'history' : 'forecast'} />;
     }

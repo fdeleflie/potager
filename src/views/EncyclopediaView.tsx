@@ -32,9 +32,9 @@ import {
   areCategoriesEqual, 
   deduplicateCategories, 
   normalizeCategoryKey, 
-  DEFAULT_PLANT_CATEGORIES 
+  DEFAULT_PLANT_CATEGORIES,
+  isPlantEnabledForOrchardPlan
 } from '../utils/categories';
-import { importOrchardPdfPlants, ImportResult } from '../utils/orchardImporter';
 import { isTechnicalId } from '../utils/varietyNormalizer';
 import { formatDateShortFR, toDateKey } from '../utils/notes';
 import {
@@ -67,11 +67,6 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
   const [selectedVegId, setSelectedVegId] = useState<string | null>(null);
   const [selectedHealthId, setSelectedHealthId] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
-  
-  // Orchard PDF Import states
-  const [importStatus, setImportStatus] = useState<string | null>(null);
-  const [isImporting, setIsImporting] = useState(false);
-  const [importReportModal, setImportReportModal] = useState<ImportResult | null>(null);
 
   // Global & Variety Duplicate Cleaning states
   const [isCleaningAll, setIsCleaningAll] = useState(false);
@@ -227,21 +222,6 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
   useEffect(() => {
     ensureRootstocksInitialized(config);
   }, [config]);
-
-  const handleManualImportOrchard = async () => {
-    if (isImporting) return;
-    setIsImporting(true);
-    try {
-      const res = await importOrchardPdfPlants(encyclopedia || [], config || []);
-      localStorage.setItem('orchard_pdf_plants_auto_synced_v3', 'true');
-      setImportReportModal(res);
-    } catch (err) {
-      console.error('Manual import error:', err);
-      alert('Une erreur est survenue lors de la synchronisation.');
-    } finally {
-      setIsImporting(false);
-    }
-  };
 
   const unifiedPlants = useMemo(() => {
     if (!config || !encyclopedia) return [];
@@ -551,6 +531,41 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
     });
     return toDelete;
   }, [plantVarieties]);
+
+  const isSelectedVegOrchardEnabled = useMemo(
+    () => isPlantEnabledForOrchardPlan(selectedVeg, config),
+    [selectedVeg, config]
+  );
+
+  // Open a specific plant when navigated from Orchard or another view
+  useEffect(() => {
+    if (!unifiedPlants || unifiedPlants.length === 0) return;
+    try {
+      const raw = localStorage.getItem('encyclopedia_focus_plant');
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      const targetEncId = (parsed?.encyclopediaId || '').trim();
+      const targetName = (parsed?.name || '').trim().toLowerCase();
+      const match = unifiedPlants.find(
+        (p) =>
+          (targetEncId && p.encyclopediaId === targetEncId) ||
+          (targetName && (p.name || '').trim().toLowerCase() === targetName)
+      );
+      if (match) {
+        setActiveTab('vegetables');
+        setSelectedVegId(match.id);
+        setIsEditing(false);
+        if (parsed?.subTab === 'varieties' || parsed?.subTab === 'culture') {
+          setPlantSubTab(parsed.subTab);
+        }
+      }
+      localStorage.removeItem('encyclopedia_focus_plant');
+    } catch {
+      try {
+        localStorage.removeItem('encyclopedia_focus_plant');
+      } catch {}
+    }
+  }, [unifiedPlants]);
 
   // Orchard trees placed on terrain for the selected plant
   const plantOrchardTrees = useMemo(() => {
@@ -897,7 +912,9 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
     const resolvedDatePlanted = datePlanted || varPlantings.find(p => p.datePlanted)?.datePlanted || matchedVar?.attributes?.datePlanted;
     const placementData = {
       species: plant.name,
-      variety: varietyName || '',
+      variety: matchedVar?.value || varietyName || '',
+      encyclopediaId: plant.encyclopediaId || undefined,
+      varietyId: matchedVar?.id || undefined,
       datePlanted: resolvedDatePlanted || undefined,
       color: plant.color || '#10b981',
       icon: plant.icon || 'Trees',
@@ -1877,7 +1894,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
       items: batchItems,
       attributeFields: varietyAttributeFields,
       overwriteExisting: false,
-      batchSize: 12,
+      batchSize: 6,
       shouldAbort: () => batchAutofillAbortRef.current,
       onChunkStart: (chunkItems) => {
         const label =
@@ -1898,6 +1915,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
           chunkResults.map(async ({ key, result }) => {
             const v = targetMap.get(key);
             if (!v) return;
+            if (result.error && result.filledFieldCount === 0) return;
             const nextAttrs: Record<string, any> = {
               ...(v.attributes || {}),
               ...result.attributes,
@@ -1932,7 +1950,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
     } else {
       setSuccessToast(`${summary.updatedCount} variété(s) de ${selectedVeg.name} complétée(s) automatiquement !`);
     }
-    setTimeout(() => setSuccessToast(null), 5000);
+    setTimeout(() => setSuccessToast(null), 6500);
   };
 
   const handleGlobalBatchAutofill = async () => {
@@ -1989,7 +2007,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
       items: batchItems,
       attributeFields: varietyAttributeFields,
       overwriteExisting: globalAutofillOverwrite,
-      batchSize: 12,
+      batchSize: 6,
       shouldAbort: () => globalAutofillAbortRef.current,
       onChunkStart: (chunkItems) => {
         const first = chunkItems[0];
@@ -2013,6 +2031,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
             if (!entry) return;
             if (result.error) {
               errors += 1;
+              if (result.filledFieldCount === 0) return;
             } else {
               updated += 1;
             }
@@ -2165,26 +2184,6 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
         </div>
       )}
 
-      {importStatus && (
-        <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 px-4 py-3 rounded-2xl text-sm flex items-center justify-between shadow-sm animate-fadeIn">
-          <div className="flex items-center gap-2.5">
-            <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-            <span className="font-medium">{importStatus}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => { setSelectedCategories(['Arbre fruitier']); setImportStatus(null); }}
-              className="text-xs font-medium text-emerald-700 underline hover:text-emerald-900"
-            >
-              Voir les fruitiers
-            </button>
-            <button onClick={() => setImportStatus(null)} className="text-emerald-600 hover:text-emerald-800 p-1">
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      )}
-
       <header className="flex flex-col lg:flex-row lg:items-center justify-between gap-2.5 bg-white px-3.5 py-2.5 rounded-2xl shadow-sm border border-stone-200/60">
         <div className="flex items-center gap-2.5 shrink-0">
           <div className="p-1.5 bg-emerald-100 text-emerald-600 rounded-xl shrink-0">
@@ -2310,17 +2309,6 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
               <span>{isCleaningAll ? 'Nettoyage...' : `Nettoyer (${totalGlobalDuplicates})`}</span>
             </button>
           )}
-
-          <button
-            type="button"
-            onClick={handleManualImportOrchard}
-            disabled={isImporting}
-            className="px-2 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200/80 rounded-xl text-[11px] font-semibold transition-all flex items-center gap-1 shadow-2xs disabled:opacity-50 cursor-pointer whitespace-nowrap"
-            title="Alimenter et synchroniser les 46 fruitiers et variétés relevés sur le plan du verger"
-          >
-            <Trees className={`w-3.5 h-3.5 text-emerald-600 shrink-0 ${isImporting ? 'animate-spin' : ''}`} />
-            <span>{isImporting ? 'Import...' : 'Fruitiers (46)'}</span>
-          </button>
 
           <div className="flex bg-stone-100 p-0.5 rounded-xl shrink-0">
             <button
@@ -3303,7 +3291,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                       <h2 className="text-3xl font-serif font-medium">{selectedVeg.name}</h2>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                      {setCurrentView && (
+                      {setCurrentView && isSelectedVegOrchardEnabled && (
                         <button
                           onClick={() => handlePlaceOnOrchardPlan(selectedVeg)}
                           className="px-3 py-2 bg-white/20 hover:bg-white/30 active:scale-95 text-white rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 backdrop-blur-xs border border-white/20 shadow-xs cursor-pointer"
@@ -4458,40 +4446,42 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                               </div>
 
                                               {/* Plan Placement Status */}
-                                              {placedCount > currentQty ? (
-                                                <div className="flex items-center gap-1.5 flex-wrap">
+                                              {(isSelectedVegOrchardEnabled || placedCount > 0) && (
+                                                placedCount > currentQty ? (
+                                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                                    <span 
+                                                      className="inline-flex items-center gap-1 text-[11px] font-semibold bg-amber-100 text-amber-900 px-2 py-0.5 rounded-full border border-amber-300 shadow-2xs" 
+                                                      title={`${placedCount} exemplaire(s) sur le plan pour ${currentQty} déclaré(s) possédé(s).`}
+                                                    >
+                                                      <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
+                                                      {placedCount} / {currentQty} sur le plan (dépassement)
+                                                    </span>
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => handleUpdateVarietyQuantity(variety.id, placedCount)}
+                                                      className="px-2 py-0.5 text-[10px] font-semibold text-amber-800 bg-amber-200/70 hover:bg-amber-300 rounded-md transition-colors cursor-pointer"
+                                                      title={`Ajuster la quantité déclarée de cette variété à ${placedCount}`}
+                                                    >
+                                                      Ajuster à {placedCount}
+                                                    </button>
+                                                  </div>
+                                                ) : placedCount > 0 ? (
                                                   <span 
-                                                    className="inline-flex items-center gap-1 text-[11px] font-semibold bg-amber-100 text-amber-900 px-2 py-0.5 rounded-full border border-amber-300 shadow-2xs" 
-                                                    title={`${placedCount} exemplaire(s) sur le plan pour ${currentQty} déclaré(s) possédé(s).`}
+                                                    className="inline-flex items-center gap-1 text-[11px] font-semibold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full border border-emerald-200" 
+                                                    title={`${placedCount} sur ${currentQty} plant(s) de cette variété placé(s) sur le plan`}
                                                   >
-                                                    <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
-                                                    {placedCount} / {currentQty} sur le plan (dépassement)
+                                                    <MapPin className="w-3 h-3 text-emerald-600" />
+                                                    {placedCount} / {currentQty} sur le plan
                                                   </span>
-                                                  <button
-                                                    type="button"
-                                                    onClick={() => handleUpdateVarietyQuantity(variety.id, placedCount)}
-                                                    className="px-2 py-0.5 text-[10px] font-semibold text-amber-800 bg-amber-200/70 hover:bg-amber-300 rounded-md transition-colors cursor-pointer"
-                                                    title={`Ajuster la quantité déclarée de cette variété à ${placedCount}`}
+                                                ) : (
+                                                  <span 
+                                                    className="inline-flex items-center gap-1 text-[10px] text-stone-400 bg-stone-100 px-1.5 py-0.5 rounded-full border border-stone-200"
+                                                    title={`0 sur ${currentQty} plant(s) placé(s) sur le plan`}
                                                   >
-                                                    Ajuster à {placedCount}
-                                                  </button>
-                                                </div>
-                                              ) : placedCount > 0 ? (
-                                                <span 
-                                                  className="inline-flex items-center gap-1 text-[11px] font-semibold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full border border-emerald-200" 
-                                                  title={`${placedCount} sur ${currentQty} plant(s) de cette variété placé(s) sur le plan`}
-                                                >
-                                                  <MapPin className="w-3 h-3 text-emerald-600" />
-                                                  {placedCount} / {currentQty} sur le plan
-                                                </span>
-                                              ) : (
-                                                <span 
-                                                  className="inline-flex items-center gap-1 text-[10px] text-stone-400 bg-stone-100 px-1.5 py-0.5 rounded-full border border-stone-200"
-                                                  title={`0 sur ${currentQty} plant(s) placé(s) sur le plan`}
-                                                >
-                                                  <MapPinOff className="w-2.5 h-2.5" />
-                                                  0 / {currentQty} placé
-                                                </span>
+                                                    <MapPinOff className="w-2.5 h-2.5" />
+                                                    0 / {currentQty} placé
+                                                  </span>
+                                                )
                                               )}
                                               {selectedVeg.isPlantingTracked && (() => {
                                                 const missingStats = getVarietyMissingDateStats(variety.attributes, currentQty);
@@ -4816,7 +4806,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                           </span>
                                         </button>
                                       )}
-                                      {setCurrentView && (
+                                      {setCurrentView && isSelectedVegOrchardEnabled && (
                                         <button
                                           type="button"
                                           onClick={() => handlePlaceOnOrchardPlan(selectedVeg, variety.value)}
@@ -4917,7 +4907,14 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                                         value={currentTreeVariety}
                                         onChange={async (e) => {
                                           const newVar = e.target.value;
-                                          await fb.update('trees', tree.id, { variety: newVar });
+                                          const matchedVar = plantVarieties.find(
+                                            (pv: any) => (pv.value || '').trim().toLowerCase() === newVar.trim().toLowerCase()
+                                          );
+                                          await fb.update('trees', tree.id, {
+                                            variety: matchedVar?.value || newVar,
+                                            encyclopediaId: selectedVeg.encyclopediaId || '',
+                                            varietyId: matchedVar?.id || ''
+                                          });
                                         }}
                                         className="px-2.5 py-1.5 bg-white border border-stone-300 rounded-lg text-xs font-semibold text-stone-800 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 cursor-pointer"
                                       >
@@ -4955,7 +4952,7 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
                               {setCurrentView && (
                                 <button
                                   type="button"
-                                  onClick={() => setCurrentView('garden-plan')}
+                                  onClick={() => setCurrentView('plan-potager')}
                                   className="text-xs text-emerald-600 hover:text-emerald-700 font-medium flex items-center gap-1 self-start sm:self-auto cursor-pointer"
                                 >
                                   <span>Voir sur le plan du potager</span>
@@ -5203,97 +5200,6 @@ export function EncyclopediaView({ setCurrentView }: { setCurrentView?: (view: s
         allHarvestStorageItems={allHarvestStorageItems}
         filteredHarvestStorageItems={filteredHarvestStorageItems}
       />
-
-      {importReportModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl shadow-xl border border-stone-200 w-full max-w-lg overflow-hidden animate-in fade-in zoom-in duration-200">
-            <div className="p-6 border-b border-stone-100 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-emerald-100 text-emerald-700 rounded-xl">
-                  <Trees className="w-6 h-6" />
-                </div>
-                <div>
-                  <h3 className="font-serif text-lg font-medium text-stone-900">Alimentation des Fruitiers du Verger</h3>
-                  <p className="text-xs text-stone-500">Plan aérien du verger (Catégorie : Arbre fruitier)</p>
-                </div>
-              </div>
-              <button
-                onClick={() => setImportReportModal(null)}
-                className="text-stone-400 hover:text-stone-600 p-1.5 rounded-lg hover:bg-stone-100"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-4 max-h-[65vh] overflow-y-auto custom-scrollbar">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-xl">
-                  <p className="text-xs text-emerald-600 font-medium">Espèces ajoutées</p>
-                  <p className="text-2xl font-bold text-emerald-700 mt-1">{importReportModal.speciesAdded}</p>
-                </div>
-                <div className="p-3 bg-teal-50 border border-teal-100 rounded-xl">
-                  <p className="text-xs text-teal-600 font-medium">Variétés ajoutées</p>
-                  <p className="text-2xl font-bold text-teal-700 mt-1">{importReportModal.varietiesAdded}</p>
-                </div>
-              </div>
-
-              {importReportModal.alreadyExistingCount > 0 && (
-                <div className="p-3 bg-stone-50 border border-stone-200 rounded-xl flex items-center gap-2 text-xs text-stone-600">
-                  <ShieldCheck className="w-4 h-4 text-stone-500 shrink-0" />
-                  <span><strong>{importReportModal.alreadyExistingCount}</strong> élément(s) déjà présent(s) ignoré(s) pour garantir zéro doublon.</span>
-                </div>
-              )}
-
-              {importReportModal.speciesNamesAdded.length > 0 && (
-                <div>
-                  <h4 className="text-xs font-semibold text-stone-700 uppercase tracking-wider mb-2">Espèces fruitières créées</h4>
-                  <div className="flex flex-wrap gap-1.5">
-                    {importReportModal.speciesNamesAdded.map((name, i) => (
-                      <span key={i} className="px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs rounded-lg font-medium">
-                        {name}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {importReportModal.varietiesNamesAdded.length > 0 && (
-                <div>
-                  <h4 className="text-xs font-semibold text-stone-700 uppercase tracking-wider mb-2">Variétés ajoutées</h4>
-                  <div className="space-y-1 max-h-40 overflow-y-auto pr-1 custom-scrollbar">
-                    {importReportModal.varietiesNamesAdded.map((name, i) => (
-                      <div key={i} className="text-xs text-stone-600 bg-stone-50 px-2.5 py-1 rounded-md border border-stone-100 flex items-center gap-2">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
-                        <span>{name}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="p-4 bg-stone-50 border-t border-stone-100 flex justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedCategories(['Arbre fruitier']);
-                  setImportReportModal(null);
-                }}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium rounded-xl shadow-sm transition-colors"
-              >
-                Filtrer sur les Arbres fruitiers
-              </button>
-              <button
-                type="button"
-                onClick={() => setImportReportModal(null)}
-                className="px-4 py-2 bg-white hover:bg-stone-100 text-stone-700 border border-stone-200 text-xs font-medium rounded-xl transition-colors"
-              >
-                Fermer
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Quick Edit Harvest & Storage Periods Modal */}
       {editingPeriodsVariety && (

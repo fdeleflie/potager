@@ -82,6 +82,8 @@ export interface Tree {
   expectedYield?: number;
   expectedYieldUnit?: string;
   harvestMonths?: number[];
+  encyclopediaId?: string;
+  varietyId?: string;
 }
 
 export interface Structure {
@@ -322,29 +324,31 @@ function createFirebaseTable<T, Key>(collectionName: string): FakeTable<T, Key> 
       return await fb.get<T>(collectionName, id as any);
     },
     clear: async () => {
-      const { fb } = await import('./hooks/useFirebaseData');
-      const all = await fb.getAll<T>(collectionName);
-      for (const item of all) {
-        await fb.delete(collectionName, (item as any).id);
+      const { fb, getFirebaseQuotaStats } = await import('./hooks/useFirebaseData');
+      const quotaExceeded = getFirebaseQuotaStats().isQuotaExceeded;
+      const all = await fb.getAll<T>(collectionName, !quotaExceeded);
+      const ids = all.map((item: any) => item?.id).filter((id: any) => id !== undefined && id !== null).map(String);
+      if (ids.length > 0) {
+        await fb.batchDelete(collectionName, ids);
       }
     },
     bulkDelete: async (ids: Key[]) => {
       const { fb } = await import('./hooks/useFirebaseData');
-      for (const id of ids) {
-        await fb.delete(collectionName, id as any);
+      const validIds = (ids || []).filter(id => id !== undefined && id !== null).map(String);
+      if (validIds.length > 0) {
+        await fb.batchDelete(collectionName, validIds);
       }
     },
     bulkAdd: async (items: any[]) => {
       const { fb } = await import('./hooks/useFirebaseData');
-      for (const item of items) {
-        await fb.add(collectionName, item);
-      }
+      if (!items || items.length === 0) return;
+      const prepared = items.map(item => ({ ...item, id: item?.id ?? crypto.randomUUID() }));
+      await fb.batchPut(collectionName, prepared);
     },
     bulkPut: async (items: any[]) => {
       const { fb } = await import('./hooks/useFirebaseData');
-      for (const item of items) {
-        await fb.put(collectionName, item);
-      }
+      if (!items || items.length === 0) return;
+      await fb.batchPut(collectionName, items);
     },
     count: async () => {
       const { fb } = await import('./hooks/useFirebaseData');

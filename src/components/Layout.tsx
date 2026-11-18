@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Sidebar } from './Sidebar';
 import { Menu, ChevronLeft, Cloud, CloudOff, RefreshCw, CheckCircle2, Mic, PenLine, Calendar } from 'lucide-react';
 import { QuotaBanner } from './QuotaBanner';
+import { ManualExportReminderBanner } from './ManualExportReminderBanner';
 import { getFirebaseQuotaStats, syncPriorityCollections, QuotaStats } from '../hooks/useFirebaseData';
 
 interface LayoutProps {
@@ -165,6 +166,7 @@ export function Layout({ children, currentView, setCurrentView, onBack, canGoBac
 
         <div className="max-w-6xl mx-auto w-full pb-16 lg:pb-6">
           <QuotaBanner />
+          <ManualExportReminderBanner setCurrentView={setCurrentView} />
           {children}
         </div>
       </main>
